@@ -22,15 +22,13 @@ from PIL import Image
 ##############################################
 # GLOBALS
 ##############################################
+PATH_TO_MATERIAL_CLASS_FILE = 'categories/materials-minc.csv'
+PATH_TO_PHOTOS = '../data/photos-resized/'
+PATH_TO_MASKS = '../data/photos-labels/'
 
-PATH_TO_PHOTOS = '/Volumes/Omenakori/opensurfaces/photos-resized/'
-PATH_TO_MASKS = '/Volumes/Omenakori/opensurfaces/photos-labels/'
-SAVED_WEIGHTS_PATH = 'unet/weights/'
-SAVED_CHECKPOINTS_PATH = 'unet/checkpoints/'
-
-KERAS_TENSORBOARD_LOG_PATH = 'unet/logs/tensorboard/'
-KERAS_MODEL_CHECKPOINT_FILE_PATH = 'unet/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5'
-KERAS_CSV_LOG_FILE_PATH = 'unet/logs/unet-per-epoch-data.csv'
+KERAS_TENSORBOARD_LOG_PATH = 'logs/tensorboard/'
+KERAS_MODEL_CHECKPOINT_FILE_PATH = 'checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5'
+KERAS_CSV_LOG_FILE_PATH = 'logs/unet-per-epoch-data.csv'
 
 LOG_FILE_PATH = 'unet/logs/log.txt'
 LOG_FILE = None
@@ -38,11 +36,12 @@ LOG_TO_STDOUT = True
 
 IMAGE_DATA_FORMAT = 'channels_last' 							# Image data format for Keras. Tensorflow uses channels last, Theano channels first
 
+CONTINUE_FROM_LAST_CHECKPOINT = True
 NUM_EPOCHS = 200 												# How many epochs are we training for?
-BATCH_SIZE = 1 													# Batch size for training - power of 2s are faster
+BATCH_SIZE = 8 													# Batch size for training - power of 2s are faster
 LEARNING_RATE = 10e-4											# Learning rate, also known as step size
-TILE_WIDTH = 512 												# Width of a single input image tile when training the network, original U-net: 572px
-TILE_HEIGHT = 512												# Height of a single input image tile when training the network, original U-net: 572px
+TILE_WIDTH = 256 												# Width of a single input image tile when training the network, original U-net: 572px
+TILE_HEIGHT = 256												# Height of a single input image tile when training the network, original U-net: 572px
 
 DATASET_SPLITS = [0.8, 0.05, 0.15] 								# Sizes (%) of training, validation and test set
 NUM_CHANNELS = 3 												# 3 for RGB, 4 for RGB+NIR
@@ -609,7 +608,7 @@ if __name__ == '__main__':
 	K.set_image_data_format(IMAGE_DATA_FORMAT)
 
 	log('Loading material class information')
-	material_class_information = load_material_class_information('materials-minc.csv')
+	material_class_information = load_material_class_information(PATH_TO_MATERIAL_CLASS_FILE)
 	num_classes = len(material_class_information)
 	log('Loaded {} material classes successfully'.format(num_classes))
 
@@ -715,9 +714,27 @@ if __name__ == '__main__':
 		separator=',',
 		append=False)
 
+	# Load existing weights to cotinue training
+	initial_epoch = 0
+
+	if (CONTINUE_FROM_LAST_CHECKPOINT):
+		# Try to find weights from the checkpoint path
+		log('Searching for existing weights from the checkpoint path: {}'.format(os.path.dirname(KERAS_MODEL_CHECKPOINT_FILE_PATH)))
+		weight_files = get_files(os.path.dirname(KERAS_MODEL_CHECKPOINT_FILE_PATH))
+		log('Found {} existing weight files'.format(len(weight_files)))
+
+		if len(weight_files) > 0:
+			weight_file = weight_files[0]
+			log('Loading weights from file: {}'.format(weight_file))
+			model.load_weights(os.path.join(os.path.dirname(KERAS_MODEL_CHECKPOINT_FILE_PATH), weight_file))
+			epoch_val_loss = weight_file.split('.')[1]
+			initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
+			log('Continuing training from epoch: {}'.format(initial_epoch))
+
 	model.fit_generator(train_generator,
 		steps_per_epoch=steps_per_epoch,
 		epochs=NUM_EPOCHS,
+		initial_epoch=initial_epoch,
 		validation_data=validation_generator,
 		validation_steps=validation_steps,
 		verbose=1,
@@ -726,4 +743,5 @@ if __name__ == '__main__':
 	log('U-net session ended at local time {}\n'.format(datetime.datetime.now()))
 
 	# Close the log file
-	LOG_FILE.close()
+	if LOG_FILE:
+		LOG_FILE.close()
