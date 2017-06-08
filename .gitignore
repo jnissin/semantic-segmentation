@@ -1,2 +1,6 @@
-unet/logs
+data/*
+
 unet/logs/*
+unet/checkpoints/*
+
+unet/test-photos

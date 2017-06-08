@@ -8,6 +8,7 @@ import time
 
 from PIL import Image
 from joblib import Parallel, delayed
+from keras.preprocessing.image import load_img, img_to_array, array_to_img
 
 PATH_TO_PHOTOS = '/Volumes/Omenakori/opensurfaces/photos/'
 PATH_TO_MASKS = '/Volumes/Omenakori/opensurfaces/photos-labels/'
@@ -25,7 +26,9 @@ def resize(path_to_photos, photo_filename, path_to_masks, mask_filename, path_to
 		raise ValueError('Unmatching photo and mask filenames: {} vs {}'.format(photo_filename.split('.')[0], mask_filename.split('.')[0]))
 
 	photo = Image.open(os.path.join(path_to_photos, photo_filename))
-	mask = Image.open(os.path.join(path_to_masks, mask_filename))
+	mask = img_to_array(load_img(os.path.join(path_to_masks, mask_filename)))
+
+
 
 	start_time = time.time()
 	origina_size = photo.size
