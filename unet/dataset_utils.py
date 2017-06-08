@@ -7,10 +7,9 @@ import numpy as np
 
 from PIL import Image
 from joblib import Parallel, delayed
-from keras.preprocessing.image import load_img, img_to_array, array_to_img
+from keras.preprocessing.image import load_img, img_to_array
 from keras.preprocessing.image import flip_axis, apply_transform, transform_matrix_offset_center
 from keras import backend as K
-
 
 ##############################################
 # UTILITY CLASSES
@@ -20,6 +19,8 @@ from keras import backend as K
 Takes an iterator/generator and makes it thread-safe by
 serializing call to the `next` method of given iterator/generator.
 """
+
+
 class threadsafe_iter:
     def __init__(self, it):
         self.it = it
@@ -32,12 +33,16 @@ class threadsafe_iter:
         with self.lock:
             return self.it.next()
 
+
 """
 A decorator that takes a generator function and makes it thread-safe.
 """
+
+
 def threadsafe_flow(f):
     def g(*a, **kw):
         return threadsafe_iter(f(*a, **kw))
+
     return g
 
 
@@ -46,45 +51,42 @@ def unwrap_get_segmentation_data_pair(arg, **kwarg):
 
 
 class MaterialClassInformation(object):
-
     def __init__(
-        self,
-        material_id,
-        substance_ids,
-        substance_names,
-        color_values):
-
+            self,
+            material_id,
+            substance_ids,
+            substance_names,
+            color_values):
         self.id = material_id
 
         self.substance_ids = substance_ids
         self.substance_names = substance_names
-        self.color_values = color_values    
+        self.color_values = color_values
 
         self.name = substance_names[0]
 
 
 class SegmentationDataGenerator(object):
-
     def __init__(
-        self,
-        photo_files_folder_path,
-        mask_files_folder_path,
-        photo_mask_files,
-        material_class_information,
-        random_seed=None,
-        per_channel_mean_normalization=True,
-        per_channel_mean=None,
-        per_channel_stddev_normalization=True,
-        per_channel_stddev=None,
-        use_data_augmentation=False,
-        augmentation_probability=0.5,
-        rotation_range=0.,
-        zoom_range=0.,
-        horizontal_flip=False,
-        vertical_flip=False,
-        fill_mode='constant',
-        photo_cval=None,
-        mask_cval=None):
+            self,
+            photo_files_folder_path,
+            mask_files_folder_path,
+            photo_mask_files,
+            material_class_information,
+            random_seed=None,
+            per_channel_mean_normalization=True,
+            per_channel_mean=None,
+            per_channel_stddev_normalization=True,
+            per_channel_stddev=None,
+            use_data_augmentation=False,
+            augmentation_probability=0.5,
+            rotation_range=0.,
+            zoom_range=0.,
+            horizontal_flip=False,
+            vertical_flip=False,
+            fill_mode='constant',
+            photo_cval=None,
+            mask_cval=None):
 
         self.img_data_format = K.image_data_format()
 
@@ -92,7 +94,7 @@ class SegmentationDataGenerator(object):
             self.channel_axis = 1
             self.row_axis = 2
             self.col_axis = 3
-        
+
         if self.img_data_format == 'channels_last':
             self.channel_axis = 3
             self.row_axis = 1
@@ -104,7 +106,7 @@ class SegmentationDataGenerator(object):
         self.material_class_information = material_class_information
 
         self.per_channel_mean_normalization = per_channel_mean_normalization
-        
+
         # Ensure the per_channel_mean is a numpy tensor
         if (per_channel_mean is not None):
             self.per_channel_mean = np.array(per_channel_mean)
@@ -140,11 +142,11 @@ class SegmentationDataGenerator(object):
         # The normalization is done to the whole batch after transformations so
         # the images are not in range [-1,1] before transformations.
         if (self.photo_cval is None):
-            self.photo_cval = ((np.array(self.per_channel_mean)+1.0)/2.0)*255.0
+            self.photo_cval = ((np.array(self.per_channel_mean) + 1.0) / 2.0) * 255.0
 
         # Use black (background)
         if (self.mask_cval is None):
-            self.mask_cval = (0.0,0.0,0.0)
+            self.mask_cval = (0.0, 0.0, 0.0)
 
         # Use the given random seed for reproducibility
         if (random_seed is not None):
@@ -168,6 +170,7 @@ class SegmentationDataGenerator(object):
         # Returns
             Inputs (x, y) with the same random transform applied.
     """
+
     def apply_random_transform(self, x, y):
 
         # x and y are a single images, so they don't have the batch dimension
@@ -213,12 +216,12 @@ class SegmentationDataGenerator(object):
             transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
             x = apply_transform(x, transform_matrix, img_channel_axis,
                                 fill_mode=self.fill_mode, cval=temp_cval)
-            mask = x[:,:,0] == temp_cval
+            mask = x[:, :, 0] == temp_cval
             x[mask] = self.photo_cval
-    
+
             y = apply_transform(y, transform_matrix, img_channel_axis,
                                 fill_mode=self.fill_mode, cval=temp_cval)
-            mask = y[:,:,0] == temp_cval
+            mask = y[:, :, 0] == temp_cval
             y[mask] = self.mask_cval
 
         # Apply at random a horizontal flip to the image
@@ -239,10 +242,10 @@ class SegmentationDataGenerator(object):
 
         return x, y
 
-
     """
     Standardizes a photo batch
     """
+
     def standardize_batch(self, batch):
         # Standardizes the color channels from the given image to zero-centered
         # range [-1, 1] from the original [0, 255] range.
@@ -255,7 +258,8 @@ class SegmentationDataGenerator(object):
             if self.per_channel_mean is not None:
                 batch -= self.per_channel_mean
             else:
-                raise ValueError('SegmentationDataGenerator specifies `per_channel_mean_normalization` but has not been fit on any training data.')
+                raise ValueError(
+                    'SegmentationDataGenerator specifies `per_channel_mean_normalization` but has not been fit on any training data.')
 
         # Additionally, you ideally would like to divide by the stddev of
         # that feature or pixel as well if you want to normalize each feature
@@ -264,10 +268,10 @@ class SegmentationDataGenerator(object):
             if self.per_channel_stddev is not None:
                 batch /= (self.per_channel_stddev + 1e-7)
             else:
-                raise ValueError('SegmentationDataGenerator specifies `per_channel_stddev_normalization` but has not been fit on any training data.')
+                raise ValueError(
+                    'SegmentationDataGenerator specifies `per_channel_stddev_normalization` but has not been fit on any training data.')
 
         return batch
-
 
     def get_segmentation_data_pair(self, photo_mask_pair, crop_size, div2_constraint=4):
 
@@ -283,7 +287,7 @@ class SegmentationDataGenerator(object):
 
         if (image.size != mask.size):
             raise ValueError('Non-matching image and mask dimensions after resize: {} vs {}'
-                .format(image.size, mask.size))
+                             .format(image.size, mask.size))
 
         # Convert to numpy array
         image = img_to_array(image)
@@ -292,20 +296,20 @@ class SegmentationDataGenerator(object):
         # If we are using data augmentation apply the random tranformation
         # to both the image and mask now. We apply the transformation to the
         # whole image to decrease the number of 'dead' pixels due to tranformations
-        # within the possible crop. 
+        # within the possible crop.
         if (self.use_data_augmentation and
-            np.random.random() <= self.augmentation_probability):
-                image, mask = self.apply_random_transform(image, mask)
-                # Save augmented images for debug
-                # array_to_img(image).save('aug_{}'.format(photo_mask_pair[0]))
-                # array_to_img(mask).save('aug_{}'.format(photo_mask_pair[1]))
-    
+                    np.random.random() <= self.augmentation_probability):
+            image, mask = self.apply_random_transform(image, mask)
+            # Save augmented images for debug
+            # array_to_img(image).save('aug_{}'.format(photo_mask_pair[0]))
+            # array_to_img(mask).save('aug_{}'.format(photo_mask_pair[1]))
+
         # If a crop size is given: Take a random crop
         # of both the image and the mask
         if crop_size is not None:
 
             if (count_trailing_zeroes(crop_size[0]) < div2_constraint or
-                count_trailing_zeroes(crop_size[1]) < div2_constraint):
+                        count_trailing_zeroes(crop_size[1]) < div2_constraint):
                 raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(div2_constraint))
 
             try:
@@ -314,23 +318,24 @@ class SegmentationDataGenerator(object):
                 attempts = 5
 
                 for i in range(0, attempts):
-                    x1 = np.random.randint(0, image.shape[1]-crop_size[0])
-                    y1 = np.random.randint(0, image.shape[0]-crop_size[1])
+                    x1 = np.random.randint(0, image.shape[1] - crop_size[0])
+                    y1 = np.random.randint(0, image.shape[0] - crop_size[1])
                     x2 = x1 + crop_size[0]
                     y2 = y1 + crop_size[1]
 
                     mask_crop = np_crop_image(mask, x1, y1, x2, y2)
-                    
+
                     # If the mask crop is only background (all R channel is zero) - try another crop
-                    if (np.max(mask_crop[:,:,0]) == 0 and i < attempts-1):
+                    if (np.max(mask_crop[:, :, 0]) == 0 and i < attempts - 1):
                         continue
-                    
+
                     mask = mask_crop
                     image = np_crop_image(image, x1, y1, x2, y2)
                     break
 
             except IOError:
-                raise IOError('Could not load image or mask from pair: {}, {}'.format(photo_mask_pair[0], photo_mask_pair[1]))
+                raise IOError(
+                    'Could not load image or mask from pair: {}, {}'.format(photo_mask_pair[0], photo_mask_pair[1]))
 
         # Save crops for debug
         # array_to_img(image).save('crop_{}'.format(photo_mask_pair[0]))
@@ -340,27 +345,27 @@ class SegmentationDataGenerator(object):
         # the div2_constraint i.e. are n times divisible by 2 to work within
         # the network. If the dimensions are not ok pad the images.
         if (count_trailing_zeroes(image.shape[0]) < div2_constraint or
-            count_trailing_zeroes(image.shape[1]) < div2_constraint):
+                    count_trailing_zeroes(image.shape[1]) < div2_constraint):
             padded_height = get_closest_number_with_n_trailing_zeroes(image.shape[0], div2_constraint)
             padded_width = get_closest_number_with_n_trailing_zeroes(image.shape[1], div2_constraint)
-            
-            v_diff = padded_height-image.shape[0]
-            h_diff = padded_width-image.shape[1]
 
-            v_pad_before = v_diff/2
-            v_pad_after = (v_diff/2) + (v_diff%2)
+            v_diff = padded_height - image.shape[0]
+            h_diff = padded_width - image.shape[1]
 
-            h_pad_before = h_diff/2
-            h_pad_after = (h_diff/2) + (h_diff%2)
+            v_pad_before = v_diff / 2
+            v_pad_after = (v_diff / 2) + (v_diff % 2)
+
+            h_pad_before = h_diff / 2
+            h_pad_after = (h_diff / 2) + (h_diff % 2)
 
             # Mask should be padded with the mask_cval color if
             # available if not, use black
-            mask_cval = self.mask_cval if (self.mask_cval is not None) else (0,0,0)
+            mask_cval = self.mask_cval if (self.mask_cval is not None) else (0, 0, 0)
             mask = np_pad_image(mask, v_pad_before, v_pad_after, h_pad_before, h_pad_after, mask_cval)
 
             # Image needs to be filled with the photo_cval color if
             # available if not, use black
-            img_cval = self.photo_cval if (self.photo_cval is not None) else (0,0,0)
+            img_cval = self.photo_cval if (self.photo_cval is not None) else (0, 0, 0)
             image = np_pad_image(image, v_pad_before, v_pad_after, h_pad_before, h_pad_after, img_cval)
 
         # Expand the mask image to accommodate different classes
@@ -368,7 +373,6 @@ class SegmentationDataGenerator(object):
         mask = expand_mask(mask, self.material_class_information)
 
         return image, mask
-
 
     @threadsafe_flow
     def get_flow(self, batch_size, crop_size=None):
@@ -384,7 +388,7 @@ class SegmentationDataGenerator(object):
 
             for i in range(0, num_batches):
                 # The files for this batch
-                batch_files = self.photo_mask_files[i*batch_size:(i+1)*batch_size]
+                batch_files = self.photo_mask_files[i * batch_size:(i + 1) * batch_size]
 
                 # Parallel processing of the files in this batch
                 data = Parallel(n_jobs=n_jobs, backend='threading')(
@@ -397,7 +401,6 @@ class SegmentationDataGenerator(object):
                 yield X, Y
 
 
-
 ##############################################
 # UTILITY FUNCTIONS
 ##############################################
@@ -406,6 +409,8 @@ class SegmentationDataGenerator(object):
 Returns all the files (filenames) found in the path.
 Does not include subdirectories.
 """
+
+
 def get_files(path, ignore_hidden_files=True):
     files = [f for f in os.listdir(path) if os.path.isfile(os.path.join(path, f))]
 
@@ -418,20 +423,20 @@ def get_files(path, ignore_hidden_files=True):
 def get_closest_number_with_n_trailing_zeroes(num, n):
     if (count_trailing_zeroes(num) >= n):
         return num
-    
+
     smallest_num_with_n_zeros = 1 << n
-    
+
     if (num < smallest_num_with_n_zeros):
         return smallest_num_with_n_zeros
 
-    remainder = num%smallest_num_with_n_zeros
-    return num + (smallest_num_with_n_zeros-remainder)
+    remainder = num % smallest_num_with_n_zeros
+    return num + (smallest_num_with_n_zeros - remainder)
 
 
 def count_trailing_zeroes(num):
     zeroes = 0
     while (((num >> zeroes) & 1) == 0):
-        zeroes = zeroes+1
+        zeroes = zeroes + 1
     return zeroes
 
 
@@ -439,23 +444,25 @@ def count_trailing_zeroes(num):
 Crops an image represented as a Numpy array. Note that when handling images
 as a Numpy arrays the dimensions are HxWxC
 """
+
+
 def np_crop_image(np_img, x1, y1, x2, y2):
     y_size = np_img.shape[0]
     x_size = np_img.shape[1]
 
     # Sanity check
     if (x1 >= x_size or
-        x2 >= x_size or
-        x1 < 0 or
-        x2 < 0 or
-        y1 >= y_size or
-        y2 >= y_size or
-        y1 < 0 or
-        y2 < 0):
+                x2 >= x_size or
+                x1 < 0 or
+                x2 < 0 or
+                y1 >= y_size or
+                y2 >= y_size or
+                y1 < 0 or
+                y2 < 0):
         raise ValueError('Invalid crop parameters for image shape: {}, ({}, {}, {}, {}'
-            .format(np_img.shape, x1, y1, x2, y2))
+                         .format(np_img.shape, x1, y1, x2, y2))
 
-    return np_img[y1:y2,x1:x2]
+    return np_img[y1:y2, x1:x2]
 
 
 def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cval):
@@ -464,26 +471,33 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
 
     np_img = np.pad(
         np_img,
-        [(v_pad_before,v_pad_after),(h_pad_before,h_pad_after),(0,0)],
+        [(v_pad_before, v_pad_after), (h_pad_before, h_pad_after), (0, 0)],
         'constant',
         constant_values=temp_cval)
-    
+
     # Create a mask for all the temporary cvalues
-    cval_mask = np_img[:,:,0] == temp_cval
+    cval_mask = np_img[:, :, 0] == temp_cval
 
     # Replace the temporary cvalues with real color values
     np_img[cval_mask] = cval
 
     return np_img
 
-'''
+
+"""
 Normalizes the color channels from the given image to zero-centered
 range [-1, 1] from the original [0, 255] range. If the per channels
 mean is provided it is subtracted from the image after zero-centering.
 Furthermore if the per channel standard deviation is given it is
 used to normalize each feature value to a z-score by dividing the given
 data.
-'''
+    # Arguments
+        TODO
+    # Returns
+        TODO
+"""
+
+
 def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None):
     img_array -= 128
     img_array /= 128
@@ -497,7 +511,7 @@ def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stdde
         # Additionally, you ideally would like to divide by the sttdev of
         # that feature or pixel as well if you want to normalize each feature
         # value to a z-score.
-        img_array /= (per_channel_stddev+1e-7)
+        img_array /= (per_channel_stddev + 1e-7)
 
     # Sanity check for the image values, we shouldn't have any NaN or inf values
     if (np.any(np.isnan(img_array))):
@@ -509,7 +523,7 @@ def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stdde
     return img_array
 
 
-'''
+"""
 Calculates the per-channel mean from all the images in the given
 path and returns it as a 3 dimensional numpy array.
 
@@ -517,7 +531,9 @@ Parameters to the function:
 
 path - the path to the image files
 files - the files to be used in the calculation
-'''
+"""
+
+
 def calculate_per_channel_mean(path, files):
     # Continue from saved data if there is
     px_tot = 0.0
@@ -526,9 +542,9 @@ def calculate_per_channel_mean(path, files):
     for idx in range(0, len(files)):
         f = files[idx]
 
-        if idx%10 == 0 and idx != 0:
+        if idx % 10 == 0 and idx != 0:
             print 'Processed {} images: px_tot: {}, color_tot: {}'.format(idx, px_tot, color_tot)
-            print 'Current per-channel mean: {}'.format(color_tot/px_tot)
+            print 'Current per-channel mean: {}'.format(color_tot / px_tot)
 
         # Load the image as numpy array
         img = load_img(os.path.join(path, f))
@@ -536,14 +552,14 @@ def calculate_per_channel_mean(path, files):
 
         # Normalize colors to zero-centered range [-1, 1]
         img_array = normalize_image_channels(img_array)
-        
+
         # Accumulate the number of total pixels
         px_tot += img_array.shape[0] * img_array.shape[1]
 
         # Accumulate the sums of the different color channels
-        color_tot[0] += np.sum(img_array[:,:,0])
-        color_tot[1] += np.sum(img_array[:,:,1])
-        color_tot[2] += np.sum(img_array[:,:,2])
+        color_tot[0] += np.sum(img_array[:, :, 0])
+        color_tot[1] += np.sum(img_array[:, :, 1])
+        color_tot[2] += np.sum(img_array[:, :, 2])
 
     # Calculate the final value
     per_channel_mean = color_tot / px_tot
@@ -555,6 +571,8 @@ def calculate_per_channel_mean(path, files):
 '''
 Calculates the per-channel-stddev
 '''
+
+
 def calculate_per_channel_stddev(path, files, per_channel_mean):
     # Calculate variance
     px_tot = 0.0
@@ -563,9 +581,9 @@ def calculate_per_channel_stddev(path, files, per_channel_mean):
     for idx in range(0, len(files)):
         f = files[idx]
 
-        if idx%10 == 0 and idx != 0:
+        if idx % 10 == 0 and idx != 0:
             print 'Processed {} images: px_tot: {}, var_tot: {}\n'.format(idx, px_tot, var_tot)
-            print 'Current per channel variance: {}\n'.format(var_tot/px_tot)
+            print 'Current per channel variance: {}\n'.format(var_tot / px_tot)
 
         # Load the image as numpy array
         img = load_img(os.path.join(path, f))
@@ -573,17 +591,17 @@ def calculate_per_channel_stddev(path, files, per_channel_mean):
 
         # Normalize colors to zero-centered range [-1, 1]
         img_array = normalize_image_channels(img_array)
-        
+
         # Accumulate the number of total pixels
         px_tot += img_array.shape[0] * img_array.shape[1]
 
         # Var: SUM_0..N {(val-mean)^2} / N
-        var_tot[0] += np.sum(np.square(img_array[:,:,0] - per_channel_mean[0]))
-        var_tot[1] += np.sum(np.square(img_array[:,:,1] - per_channel_mean[1]))
-        var_tot[2] += np.sum(np.square(img_array[:,:,2] - per_channel_mean[2]))
+        var_tot[0] += np.sum(np.square(img_array[:, :, 0] - per_channel_mean[0]))
+        var_tot[1] += np.sum(np.square(img_array[:, :, 1] - per_channel_mean[1]))
+        var_tot[2] += np.sum(np.square(img_array[:, :, 2] - per_channel_mean[2]))
 
     # Calculate final variance value
-    per_channel_var = var_tot/px_tot
+    per_channel_var = var_tot / px_tot
     print 'Final per-channel variance: {}'.format(per_channel_var)
 
     # Calculate the stddev
@@ -596,11 +614,11 @@ def calculate_per_channel_stddev(path, files, per_channel_mean):
 def calculate_mask_class_frequencies(mask_file_path, material_class_information):
     img_array = img_to_array(load_img(mask_file_path))
     expanded_mask = expand_mask(img_array, material_class_information)
-    class_pixels = np.sum(expanded_mask, axis=(0,1))
+    class_pixels = np.sum(expanded_mask, axis=(0, 1))
 
     # Select all classes which appear in the picture i.e.
     # have a value over zero
-    num_pixels = img_array.shape[0]*img_array.shape[1]
+    num_pixels = img_array.shape[0] * img_array.shape[1]
     img_pixels = (class_pixels > 0.0) * num_pixels
 
     return (class_pixels, img_pixels)
@@ -609,6 +627,8 @@ def calculate_mask_class_frequencies(mask_file_path, material_class_information)
 """
 Calculates the median frequency balancing weights
 """
+
+
 def calculate_median_frequency_balancing_weights(path, files, material_class_information):
     num_cores = multiprocessing.cpu_count()
     n_jobs = min(32, num_cores)
@@ -627,9 +647,9 @@ def calculate_median_frequency_balancing_weights(path, files, material_class_inf
     # freq(c) is the number of pixels of class c divided
     # by the total number of pixels in images where c is present.
     # Median freq is the median of these frequencies.
-    class_frequencies = class_pixels/img_pixels
+    class_frequencies = class_pixels / img_pixels
     median_frequency = np.median(class_frequencies)
-    median_frequency_weights = median_frequency/class_frequencies
+    median_frequency_weights = median_frequency / class_frequencies
 
     return median_frequency_weights
 
@@ -639,19 +659,18 @@ def load_material_class_information(material_labels_file_path):
 
     with open(material_labels_file_path, 'r') as f:
         content = f.readlines()
-    
+
     # Remove whitespace characters like `\n` at the end of each line
     content = [x.strip() for x in content]
 
     # First line is header so start from 1
     for i in range(1, len(content)):
-        
         # Each line is of form
         #
         # substance_id,substance_name,red_color;substance_id,substance_name,red_color
         # The semicolon ';' is used to combine multiple material colors under a
         # single category. In case materials are combined under one category
-        subcategories = content[i].split(';')       
+        subcategories = content[i].split(';')
         material_params = [f.split(',') for f in subcategories]
         material_params = zip(*material_params)
 
@@ -661,12 +680,13 @@ def load_material_class_information(material_labels_file_path):
 
         # The id is the index of the material in the file, this index will determine
         # the dimension index in the mask image for this material class
-        materials.append(MaterialClassInformation(i-1, tuple(substance_ids), tuple(substance_names), tuple(color_values)))
+        materials.append(
+            MaterialClassInformation(i - 1, tuple(substance_ids), tuple(substance_names), tuple(color_values)))
 
     return materials
 
 
-'''
+"""
 The material information in the mask is encoded into the red color channel.
 Parameters to the function:
 
@@ -676,7 +696,9 @@ material_class_information - an array which has the relevent MaterialClassInform
 The functions returns an object of size:
 
 MASK_HEIGHT x MASK_WIDTH x NUM_MATERIAL CLASSES
-'''
+"""
+
+
 def expand_mask(mask, material_class_information, verbose=False):
     num_material_classes = len(material_class_information)
     expanded_mask = np.zeros(shape=(mask.shape[0], mask.shape[1], num_material_classes), dtype='float32')
@@ -695,14 +717,14 @@ def expand_mask(mask, material_class_information, verbose=False):
         for color in material_class.color_values:
             # The substance/material category information is in the red
             # color channel in the opensurfaces dataset
-            class_mask |= mask[:,:,0] == color
+            class_mask |= mask[:, :, 0] == color
 
         # Set the activations of all the pixels that match the color mask to 1
         # on the dimension that matches the material class id
         if (np.any(class_mask)):
             if (found_materials != None):
                 found_materials.append(material_class.substance_ids)
-            expanded_mask[:,:,material_class.id][class_mask] = 1.0
+            expanded_mask[:, :, material_class.id][class_mask] = 1.0
 
     if (verbose):
         print 'Found {} materials with the following substance ids: {}\n'.format(len(found_materials), found_materials)
@@ -722,7 +744,7 @@ def flatten_mask(expanded_mask, material_class_information, verbose=False):
         material_class_id = material_class.id
 
         # Select all the pixels with the corresponding id values
-        class_mask = predictions[:,:] == material_class_id
+        class_mask = predictions[:, :] == material_class_id
 
         # Set all the corresponding pixels in the flattened image
         # to the material color. If there are many colors for one
@@ -750,7 +772,7 @@ def flatten_mask(expanded_mask, material_class_information, verbose=False):
     return flattened_mask
 
 
-'''
+"""
 Splits the whole dataset randomly into three different groups: training,
 validation and test, according to the split provided as the parameter.
 
@@ -759,14 +781,16 @@ Returns three lists of photo - mask pairs:
 0 training
 1 validation
 2 test
-'''
-def split_dataset(
-    photo_files,
-    mask_files,
-    split):
+"""
 
+
+def split_dataset(
+        photo_files,
+        mask_files,
+        split):
     if (len(photo_files) != len(mask_files)):
-        raise ValueError('Unmatching photo - mask file list sizes: photos: {}, masks: {}'.format(len(photo_files), len(mask_files)))
+        raise ValueError(
+            'Unmatching photo - mask file list sizes: photos: {}, masks: {}'.format(len(photo_files), len(mask_files)))
 
     if (sum(split) != 1.0):
         raise ValueError('The given dataset split does not sum to 1: {}'.format(sum(split)))
@@ -787,7 +811,7 @@ def split_dataset(
     training_set_size = int(round(split[0] * dataset_size))
     validation_set_size = int(round(split[1] * dataset_size))
     test_set_size = int(round(split[2] * dataset_size))
-    
+
     # If the sizes don't match exactly add/subtract the different
     # from the training set
     if (training_set_size + validation_set_size + test_set_size != dataset_size):
@@ -795,10 +819,15 @@ def split_dataset(
         training_set_size += diff
 
     if (training_set_size + validation_set_size + test_set_size != dataset_size):
-        raise ValueError('The split set sizes do not sum to total dataset size: {} + {} + {} = {} != {}'.format(training_set_size, validation_set_size, test_set_size, training_set_size + validation_set_size + test_set_size, dataset_size))
+        raise ValueError(
+            'The split set sizes do not sum to total dataset size: {} + {} + {} = {} != {}'.format(training_set_size,
+                                                                                                   validation_set_size,
+                                                                                                   test_set_size,
+                                                                                                   training_set_size + validation_set_size + test_set_size,
+                                                                                                   dataset_size))
 
     training_set = photo_mask_files[0:training_set_size]
-    validation_set = photo_mask_files[training_set_size:training_set_size+validation_set_size]
-    test_set = photo_mask_files[training_set_size+validation_set_size:]
+    validation_set = photo_mask_files[training_set_size:training_set_size + validation_set_size]
+    test_set = photo_mask_files[training_set_size + validation_set_size:]
 
     return training_set, validation_set, test_set

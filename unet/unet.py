@@ -1,11 +1,8 @@
 from keras.models import Model
-from keras.layers import Input, Conv2D, Activation, MaxPooling2D, ZeroPadding2D, BatchNormalization, Dropout, concatenate, UpSampling2D, Lambda
-from keras.initializers import he_normal
+from keras.layers import Input, Conv2D, MaxPooling2D, ZeroPadding2D, BatchNormalization, Dropout, \
+    concatenate, UpSampling2D, Lambda
 from keras.layers.advanced_activations import LeakyReLU
-
 from keras import backend as K
-
-import numpy as np
 
 ##############################################
 # METRICS
@@ -21,6 +18,8 @@ Calculates the accuracy for each class, then takes the mean of that.
 # Returns
     The mean class accuracy.
 """
+
+
 def mean_per_class_accuracy(num_classes):
     def mpca(y_true, y_pred):
         labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
@@ -49,6 +48,8 @@ for segmentation accuracy.
 # Returns
     The mean of IoU metrics over all classes
 """
+
+
 def mean_iou(num_classes):
     def miou(y_true, y_pred):
         labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
@@ -81,6 +82,8 @@ Convert the input `x` to a tensor of type `dtype`.
 # Returns
     A tensor.
 """
+
+
 def _to_tensor(x, dtype):
     x = K.tf.convert_to_tensor(x)
     if x.dtype != dtype:
@@ -101,6 +104,8 @@ class probabilities for each pixel sum to one.
 # Arguments
     matrix: A tensor from a network layer with dimensions HxWxNUM_CLASSES
 """
+
+
 def depth_softmax(matrix):
     sigmoid = lambda x: 1.0 / (1.0 + K.exp(-x))
     sigmoided_matrix = sigmoid(matrix)
@@ -118,12 +123,16 @@ tensor and a target tensor.
 # Returns
     Output tensor.
 """
+
+
 def pixelwise_crossentropy(y_true, y_pred):
     labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
     return K.tf.reduce_sum(K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred, labels=labels))
-#epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
-#y_pred = K.tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
-#return - K.tf.reduce_sum(y_true * tf.log(y_pred))
+
+
+# epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
+# y_pred = K.tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
+# return - K.tf.reduce_sum(y_true * tf.log(y_pred))
 
 
 """
@@ -137,8 +146,9 @@ output tensor and a target tensor.
 # Returns
     Output tensor.
 """
+
+
 def weighted_pixelwise_crossentropy(class_weights):
-    
     def loss(y_true, y_pred):
         # Try to increase numerical stability by adding epsilon to predictions
         # to counter very small predictions
@@ -156,10 +166,11 @@ def weighted_pixelwise_crossentropy(class_weights):
 
     return loss
 
+
 #        epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
 #        y_pred = K.tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
 #        return - K.tf.reduce_sum(K.tf.multiply(y_true * K.tf.log(y_pred), class_weights))
-        #labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
+# labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
 
 
 ##############################################
@@ -167,21 +178,20 @@ def weighted_pixelwise_crossentropy(class_weights):
 ##############################################
 
 def get_convolution_block(
-    num_filters,
-    input_layer,
-    name,
-    use_batch_normalization=True,
-    use_activation=True,
-    use_dropout=True,
-    kernel_size=(3,3),
-    padding='valid',
-    conv2d_kernel_initializer='he_normal',
-    conv2d_bias_initializer='zeros',
-    relu_alpha=0.01,
-    dropout_rate=0.2):
-
+        num_filters,
+        input_layer,
+        name,
+        use_batch_normalization=True,
+        use_activation=True,
+        use_dropout=True,
+        kernel_size=(3, 3),
+        padding='valid',
+        conv2d_kernel_initializer='he_normal',
+        conv2d_bias_initializer='zeros',
+        relu_alpha=0.01,
+        dropout_rate=0.2):
     conv = ZeroPadding2D(
-        (1,1),
+        (1, 1),
         name='{}_padding'.format(name))(input_layer)
 
     conv = Conv2D(
@@ -218,14 +228,13 @@ def get_convolution_block(
 
 
 def get_encoder_block(
-    name_prefix,
-    num_convolutions,
-    num_filters,
-    input_layer,
-    kernel_size=(3,3),
-    pool_size=(2,2),
-    strides=(2,2)):
-
+        name_prefix,
+        num_convolutions,
+        num_filters,
+        input_layer,
+        kernel_size=(3, 3),
+        pool_size=(2, 2),
+        strides=(2, 2)):
     previous_layer = input_layer
 
     # Add the convolution blocks
@@ -234,7 +243,7 @@ def get_encoder_block(
             num_filters=num_filters,
             input_layer=previous_layer,
             kernel_size=kernel_size,
-            name='{}_conv{}'.format(name_prefix, i+1))
+            name='{}_conv{}'.format(name_prefix, i + 1))
 
         previous_layer = conv
 
@@ -243,27 +252,26 @@ def get_encoder_block(
         pool_size=pool_size,
         strides=strides,
         name='{}_pool'.format(name_prefix))(previous_layer)
-    
+
     return previous_layer, pool
 
 
 def get_decoder_block(
-    name_prefix,
-    num_convolutions,
-    num_filters,
-    input_layer,
-    concat_layer,
-    upsampling_size=(2,2),
-    kernel_size=(3,3),
-    pool_size=(2,2)):
-
+        name_prefix,
+        num_convolutions,
+        num_filters,
+        input_layer,
+        concat_layer,
+        upsampling_size=(2, 2),
+        kernel_size=(3, 3),
+        pool_size=(2, 2)):
     # Add upsampling layer
     up = UpSampling2D(size=upsampling_size)(input_layer)
 
     # Add concatenation layer to pass features from encoder path
     # to the decoder path
     concat = concatenate([up, concat_layer], axis=-1)
-    
+
     # Add convolution layers
     previous_layer = concat
 
@@ -272,7 +280,7 @@ def get_decoder_block(
             num_filters=num_filters,
             input_layer=previous_layer,
             kernel_size=kernel_size,
-            name='{}_conv{}'.format(name_prefix, i+1))
+            name='{}_conv{}'.format(name_prefix, i + 1))
 
         previous_layer = conv
 
@@ -280,39 +288,38 @@ def get_decoder_block(
 
 
 def get_segnet(input_shape, num_classes):
-    
     # H x W x CHANNELS
     # None, None - means we support variable sized images, however
     # each image within one minibatch during training has to have
     # the same dimensions
     inputs = Input(shape=input_shape)
 
-    '''
+    """
     Encoder path
-    '''
+    """
     conv1, pool1 = get_encoder_block('encoder_block1', 2, 64, inputs)
     conv2, pool2 = get_encoder_block('encoder_block2', 2, 128, conv1)
     conv3, pool3 = get_encoder_block('encoder_block3', 3, 256, conv2)
     conv4, pool4 = get_encoder_block('encoder_block4', 3, 512, conv3)
     conv5, pool5 = get_encoder_block('encoder_block5', 3, 1024, conv4)
 
-    '''
+    """
     Decoder path
-    '''
+    """
     conv6 = get_decoder_block('decoder_block1', 3, 1024, conv5, conv5)
     conv7 = get_decoder_block('decoder_block2', 3, 512, conv6, conv4)
     conv8 = get_decoder_block('decoder_block3', 3, 256, conv7, conv3)
     conv9 = get_decoder_block('decoder_block4', 2, 128, conv8, conv2)
     conv10 = get_decoder_block('decoder_block5', 2, 64, conv9, conv1)
 
-    '''
+    """
     Last convolutional layer and softmax activation for
     per-pixel classification
-    '''
-    conv11 = Conv2D(num_classes, (1,1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv10)
-    softmax = Lambda(depth_softmax, name='softmax')(conv11)
+    """
+    conv11 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv10)
+    #softmax = Lambda(depth_softmax, name='softmax')(conv11)
 
-    model = Model(inputs=inputs, outputs=softmax, name='SegNet')
+    model = Model(inputs=inputs, outputs=conv11, name='SegNet')
 
     return model
 
@@ -321,8 +328,9 @@ def get_segnet(input_shape, num_classes):
 The functions builds the U-net model presented in the paper:
 https://arxiv.org/pdf/1505.04597.pdf
 '''
+
+
 def get_unet(input_shape, num_classes):
-    
     # H x W x CHANNELS
     # None, None - means we support variable sized images, however
     # each image within one minibatch during training has to have
@@ -331,7 +339,7 @@ def get_unet(input_shape, num_classes):
 
     '''
     Contracting path
-    ''' 
+    '''
     conv1, pool1 = get_encoder_block('encoder_block1', 2, 64, inputs)
     conv2, pool2 = get_encoder_block('encoder_block2', 2, 128, pool1)
     conv3, pool3 = get_encoder_block('encoder_block3', 2, 256, pool2)
@@ -363,7 +371,7 @@ def get_unet(input_shape, num_classes):
     per-pixel classification
     '''
     conv10 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
-    #softmax = Lambda(depth_softmax, name='softmax')(conv10)
+    # softmax = Lambda(depth_softmax, name='softmax')(conv10)
 
     model = Model(inputs=inputs, outputs=conv10, name='U-net')
 

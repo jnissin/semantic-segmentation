@@ -4,7 +4,4 @@ data/*
 
 unet/logs/*
 unet/checkpoints/*
-
-unet/test-photos
-unet/augmented-photo
-unet/augmented-photos
+unet/photos/*

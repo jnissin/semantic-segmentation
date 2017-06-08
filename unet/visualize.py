@@ -4,7 +4,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from vis.utils import utils
-from vis.utils.vggnet import VGG16
 from vis.visualization import visualize_activation, get_num_filters
 
 import unet
@@ -23,7 +22,7 @@ def read_config_json(path):
 
 def get_config_value(key):
 	global CONFIG
-	return CONFIG[key] if key in CONFIG else None 
+	return CONFIG[key] if key in CONFIG else None
 
 def set_config_value(key, value):
 	global CONFIG
@@ -56,7 +55,7 @@ if __name__ == '__main__':
 	print 'Loaded {} material classes'.format(len(material_class_information))
 
 	print 'Loading the model'
-	model = unet.get_unet((256, 256 get_config_value('num_channels')), len(material_class_information))
+	model = unet.get_unet((256, 256, get_config_value('num_channels')), len(material_class_information))
 
 	print 'Loading weights from file: {}'.format(weights_file)
 	model.load_weights(weights_file)
@@ -81,7 +80,7 @@ if __name__ == '__main__':
 		vis_images.append(img)
 
 	# Generate stitched image palette with 8 cols.
-	stitched = utils.stitch_images(vis_images, cols=8)    
+	stitched = utils.stitch_images(vis_images, cols=8)
 	plt.axis('off')
 	plt.imshow(stitched)
 	plt.title(layer_name)
