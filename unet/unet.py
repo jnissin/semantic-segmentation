@@ -119,12 +119,11 @@ tensor and a target tensor.
     Output tensor.
 """
 def pixelwise_crossentropy(y_true, y_pred):
-    #epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
-    #y_pred = K.tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
-    #return - K.tf.reduce_sum(y_true * tf.log(y_pred))
-
     labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
-    return K.tf.reduce_sum(K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred,labels=labels))
+    return K.tf.reduce_sum(K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred, labels=labels))
+#epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
+#y_pred = K.tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
+#return - K.tf.reduce_sum(y_true * tf.log(y_pred))
 
 
 """
@@ -141,11 +140,26 @@ output tensor and a target tensor.
 def weighted_pixelwise_crossentropy(class_weights):
     
     def loss(y_true, y_pred):
-        epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
-        y_pred = K.tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
-        return - K.tf.reduce_sum(K.tf.multiply(y_true * K.tf.log(y_pred), class_weights))
+        # Try to increase numerical stability by adding epsilon to predictions
+        # to counter very small predictions
+        epsilon = K.tf.constant(value=0.00001, shape=shape)
+        y_pred = y_pred + epsilon
+
+        # Calculate cross-entropy loss
+        softmax = K.tf.nn.softmax(y_pred)
+        xent = -K.tf.reduce_sum(K.tf.multiply(y_true * K.tf.log(softmax), class_weights))
+
+        # NaN protection
+        xent = K.tf.where(K.tf.is_nan(xent), K.tf.ones_like(xent) * _EPSILON, xent);
+
+        return xent
 
     return loss
+
+#        epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
+#        y_pred = K.tf.clip_by_value(y_pred, epsilon, 1. - epsilon)
+#        return - K.tf.reduce_sum(K.tf.multiply(y_true * K.tf.log(y_pred), class_weights))
+        #labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
 
 
 ##############################################

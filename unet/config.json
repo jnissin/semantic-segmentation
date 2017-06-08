@@ -26,6 +26,8 @@
 	"momentum": 0.9,
 	"decay": 1e-6,
 
+	"loss_function": "weighted_pixelwise_crossentropy",
+
 	"per_channel_mean": [-0.0748563, -0.20287086, -0.3310074],
 	"per_channel_mean_255": [118, 102, 85],
 	"per_channel_variance": [0.28665781, 0.27211733, 0.27841234],

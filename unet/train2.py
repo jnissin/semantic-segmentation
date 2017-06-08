@@ -12,6 +12,8 @@ import sys
 import unet
 import dataset_utils
 
+from dataset_utils import SegmentationDataGenerator
+
 from joblib import Parallel, delayed
 
 from keras import backend as K
@@ -86,163 +88,6 @@ def get_latest_weights_file_path(weights_folder_path):
 
 	return None
 
-##############################################
-# GENERATOR FUNCTIONS
-##############################################
-
-def get_photo_mask_crop_pair(
-	photos_files_folder_path,
-	mask_files_folder_path,
-	photo_mask_pair,
-	per_channel_mean,
-	per_channel_stddev,
-	material_class_information,
-	crop_size):
-
-	image = load_img(os.path.join(photos_files_folder_path, photo_mask_pair[0]))
-	mask = load_img(os.path.join(mask_files_folder_path, photo_mask_pair[1]))
-
-	# Resize the image to match the mask size if necessary, since
-	# the original photos are sometimes huge
-	if (image.size != mask.size):
-		orig_size = image.size
-		image = image.resize(mask.size, Image.ANTIALIAS)
-
-	if (image.size != mask.size):
-		raise ValueError('Non-matching image and mask dimensions after resize: {} vs {}'
-			.format(image.size, mask.size))
-
-	# If a crop size is given:
-	# Take a random crop of both the image and the mask
-	if crop_size != None:
-
-		if (crop_size[0]%2 != 0 or crop_size[1]%2 != 0):
-			raise ValueError('The crop size is not a multiple of two - this will cause problems during upsampling')
-
-		try:
-			# Re-attempt crops if the crops end up getting only black pixels
-			attempts = 5
-
-			for i in range(0, attempts):
-				x1 = np.random.randint(0, image.size[0]-crop_size[0])
-				y1 = np.random.randint(0, image.size[1]-crop_size[1])
-				x2 = x1 + crop_size[0]
-				y2 = y1 + crop_size[1]
-
-				mask_crop = img_to_array(mask.crop((x1, y1, x2, y2)))
-				
-				# If the mask crop is only background (all R channel is zero) - try another crop
-				if (np.max(mask_crop[:,:,0]) == 0 and i < attempts-1):
-					continue
-				
-				mask = mask_crop
-				image = img_to_array(image.crop((x1, y1, x2, y2)))
-				break
-
-		except IOError:
-			log('ERROR: Could not load image or mask from pair: {}, {}'.format(photo_mask_pair[0], photo_mask_pair[1]))
-			raise IOError('Could not load image or mask from pair: {}, {}'.format(photo_mask_pair[0], photo_mask_pair[1]))
-
-	# If a crop size is not given:
-	# Make sure the image has height and width that are divisible by two
-	# otherwise the upsampling is going to screw up the dimensions
-	else:
-		image = img_to_array(image)
-		mask = img_to_array(mask)
-
-		if (image.shape[0]%2 != 0):
-			image = image[:-1]
-			mask = mask[:-1]
-
-		if (image.shape[1]%2 != 0):
-			image = image[:,:-1]
-			mask = mask[:,:-1]
-
-	# Normalize the color channels of the original images
-	# to zero centered range [-1,1]
-	image = dataset_utils.normalize_image_channels(image, per_channel_mean, per_channel_stddev)
-
-	# Expand the mask image to accommodate different classes
-	# H x W x NUM_CLASSES
-	mask = dataset_utils.expand_mask(mask, material_class_information)
-
-	return image, mask
-
-
-'''
-Takes an iterator/generator and makes it thread-safe by
-serializing call to the `next` method of given iterator/generator.
-'''
-class threadsafe_iter:
-    def __init__(self, it):
-        self.it = it
-        self.lock = threading.Lock()
-
-    def __iter__(self):
-        return self
-
-    def next(self):
-        with self.lock:
-            return self.it.next()
-
-
-'''
-A decorator that takes a generator function and makes it thread-safe.
-'''
-def threadsafe_generator(f):
-    def g(*a, **kw):
-        return threadsafe_iter(f(*a, **kw))
-    return g
-
-
-'''
-Generates inifinite batches of data for training/validation from the files
-provided to the generator. Use this to get generators for validation and
-training data sets.
-'''
-@threadsafe_generator
-def get_generator(
-	photos_files_folder_path,
-	mask_files_folder_path,
-	photo_mask_files,
-	per_channel_mean,
-	per_channel_stddev,
-	material_class_information,
-	crop_size,
-	batch_size):
-
-	# Calculate the number of batches that we can create from this data
-	num_batches = len(photo_mask_files) // batch_size
-
-	# Calculate number of cores available
-	num_cores = multiprocessing.cpu_count()
-	n_jobs = min(32, num_cores)
-
-	while True:
-		# Shuffle the photo - mask pairs
-		random.shuffle(photo_mask_files)
-
-		for i in range(0, num_batches):
-			# The files for this batch
-			batch_files = photo_mask_files[i*batch_size:(i+1)*batch_size]
-
-			# Parallel processing of the files in this batch
-			data = Parallel(n_jobs=n_jobs, backend='threading')(
-				delayed(get_photo_mask_crop_pair)(
-					photos_files_folder_path,
-					mask_files_folder_path,
-					pair,
-					per_channel_mean,
-					per_channel_stddev,
-					material_class_information,
-					crop_size) for pair in batch_files)
-
-			# Note: all the examples in the batch have to have the same dimensions
-			X, Y = zip(*data)
-			X, Y = np.array(X), np.array(Y)
-
-			yield X, Y
-
 
 ##############################################
 # MAIN
@@ -310,32 +155,6 @@ if __name__ == '__main__':
 	log('validation_set: {}\n'.format(validation_set), False)
 	log('test_set: {}\n'.format(test_set), False)
 
-	# Calculate the per-channel mean of the training set photos
-	if get_config_value('per_channel_mean') == None:
-		log('Existing per-channel mean was not found')
-		log('Calculating per-channel mean from {} training set photos'.format(len(training_set)))
-		
-		training_set_photos = [sample[0] for sample in training_set]
-		pcm = dataset_utils.calculate_per_channel_mean(get_config_value('path_to_photos'), training_set_photos)
-		set_config_value('per_channel_mean', pcm)
-		
-		log('Per-channel mean calculation complete: {}'.format(pcm))
-	else:
-		log('Using existing per-channel mean: {}'.format(get_config_value('per_channel_mean')))
-
-	# Calculate the per-channel standard deviation of the training set photos
-	if get_config_value('per_channel_stddev') == None:
-		log('Existing per-channel stddev was not found')
-		log('Calculating per-channel stddev from {} training set photos with per-channel mean: {}'.format(len(training_set), get_config_value('per_channel_mean')))
-		
-		training_set_photos = [sample[0] for sample in training_set]
-		pcs = dataset_utils.calculate_per_channel_stddev(get_config_value('path_to_photos'), training_set_photos, get_config_value('per_channel_mean'))
-		set_config_value('per_channel_stddev', pcs)
-
-		log('Per-channel stddev calculation complete: {}'.format(pcs))
-	else:
-		log('Using existing per-channel stddev: {}'.format(get_config_value('per_channel_stddev')))
-
 	# Calculate the median frequency balancing weights
 	median_frequency_balancing_weights = get_config_value('median_frequency_balancing_weights')
 
@@ -367,6 +186,18 @@ if __name__ == '__main__':
 		log('Unknown optimizer: {} exiting'.format(get_config_value('optimizer')))
 		sys.exit(0)
 
+	loss_function = None
+
+	if (get_config_value('loss_function') == 'pixelwise_crossentropy'):
+		loss_function = unet.pixelwise_crossentropy
+		log('Using pixelwise cross-entropy loss function')
+	elif (get_config_value('loss_function') == 'weighted_pixelwise_crossentropy'):
+		loss_function = unet.weighted_pixelwise_crossentropy(median_frequency_balancing_weights)
+		log('Using weighted pixelwise corss-entropy loss function with median frequency balancing weights')
+	else:
+		log('Unknown loss function: {} exiting').format(get_config_value('loss_function'))
+		sys.exi(0)
+
 	log('Creating model instance with {} input channels and {} classes'.format(get_config_value('num_channels'), num_classes))
 	model = unet.get_unet((None, None, get_config_value('num_channels')), num_classes)
 
@@ -374,7 +205,7 @@ if __name__ == '__main__':
 	median_frequency_balancing_weights = K.constant(value=median_frequency_balancing_weights)
 	model.compile(
     	optimizer=optimizer,
-        loss=unet.weighted_pixelwise_crossentropy(median_frequency_balancing_weights),#unet.pixelwise_crossentropy,
+        loss=loss_function,
         metrics=['accuracy', unet.mean_iou(num_classes), unet.mean_per_class_accuracy(num_classes)])
     
 	model.summary()
@@ -388,27 +219,43 @@ if __name__ == '__main__':
 	else:
 		crop_size = (get_config_value('crop_width'), get_config_value('crop_height'))
 
+	use_data_augmentation = get_config_value('use_data_augmentation')
+	if (use_data_augmentation is None):
+		use_data_augmentation = False
+
 	log('Creating training data generator')
-	train_generator = get_generator(
-		get_config_value('path_to_photos'),
-		get_config_value('path_to_masks'),
-		training_set,
-		get_config_value('per_channel_mean'),
-		get_config_value('per_channel_stddev'),
-		material_class_information,
-		crop_size,
-		get_config_value('batch_size'))
+	training_data_generator = SegmentationDataGenerator(
+		photo_files_folder_path=get_config_value('path_to_photos'),
+        mask_files_folder_path=get_config_value('path_to_masks'),
+        photo_mask_files=training_set,
+        material_class_information=material_class_information,
+        random_seed=get_config_value('random_seed'),
+        per_channel_mean_normalization=True,
+        per_channel_mean=get_config_value('per_channel_mean'),
+        per_channel_stddev_normalization=True,
+        per_channel_stddev=get_config_value('per_channel_stddev'),
+        use_data_augmentation=use_data_augmentation,
+        augmentation_probability=0.5,
+        rotation_range=40.0,
+        zoom_range=0.5,
+        horizontal_flip=True,
+        vertical_flip=False)
 
 	log('Creating validation data generator')
-	validation_generator = get_generator(
-		get_config_value('path_to_photos'),
-		get_config_value('path_to_masks'),
-		validation_set,
-		get_config_value('per_channel_mean'),
-		get_config_value('per_channel_stddev'),
-		material_class_information,
-		crop_size,
-		get_config_value('batch_size'))
+	validation_data_generator = SegmentationDataGenerator(
+		photo_files_folder_path=get_config_value('path_to_photos'),
+        mask_files_folder_path=get_config_value('path_to_masks'),
+        photo_mask_files=validation_set,
+        material_class_information=material_class_information,
+        random_seed=get_config_value('random_seed'),
+        per_channel_mean_normalization=True,
+        per_channel_mean=get_config_value('per_channel_mean'),#training_data_generator.per_channel_mean,
+        per_channel_stddev_normalization=True,
+        per_channel_stddev=get_config_value('per_channel_stddev'),#training_data_generator.per_channel_stddev,
+        use_data_augmentation=False)
+
+	log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
+	log('Using per-channel stddev: {}'.format(training_data_generator.per_channel_stddev))
 
 	num_epochs = get_config_value('num_epochs')
 	batch_size = get_config_value('batch_size')
@@ -468,11 +315,12 @@ if __name__ == '__main__':
 		else:
 			log('No existing weights were found')
 
-	model.fit_generator(train_generator,
+	model.fit_generator(
+		generator=training_data_generator.get_flow(batch_size, crop_size),
 		steps_per_epoch=steps_per_epoch,
 		epochs=num_epochs,
 		initial_epoch=initial_epoch,
-		validation_data=validation_generator,
+		validation_data=validation_data_generator.get_flow(batch_size, crop_size),
 		validation_steps=validation_steps,
 		verbose=1,
 		callbacks=[model_checkpoint_callback, tensorboard_checkpoint_callback, csv_logger_callback])

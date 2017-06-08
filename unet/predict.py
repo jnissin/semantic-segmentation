@@ -1,14 +1,16 @@
 import sys
 import os
 import json
+import time
 
 import unet
 import dataset_utils
 
 import numpy as np
 
-from keras.preprocessing.image import load_img, img_to_array
+from keras.preprocessing.image import load_img, img_to_array, array_to_img
 from keras.optimizers import SGD, Adam
+from PIL import Image
 
 CONFIG = None
 
@@ -46,9 +48,8 @@ def get_latest_weights_file_path(weights_folder_path):
 if __name__ == '__main__':
 
 	if len(sys.argv) < 3:
-		print 'Invalid number of arguments, usage: ./{} <path_to_config> <path_to_image> <opt: path_to_weights>'.format(sys.argv[0])
+		print 'Invalid number of arguments, usage: ./{} <path_to_config> <path_to_image> <opt: saved_mask_name> <opt: path_to_weights>'.format(sys.argv[0])
 		sys.exit(0)
-
 
 	# Read the configuration file
 	print 'Loading the configuration from file: {}'.format(sys.argv[1])
@@ -68,8 +69,8 @@ if __name__ == '__main__':
 	# checkpoint path	
 	weights_file_path = None
 	
-	if (len(sys.argv) >= 4):
-		weights_file_path = sys.argv[3]
+	if (len(sys.argv) > 4):
+		weights_file_path = sys.argv[4]
 
 	if not weights_file_path:
 		weights_directory_path = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
@@ -98,13 +99,22 @@ if __name__ == '__main__':
 
 	# The model is expecting a batch size, even if it's one so append
 	# one new dimension to the beginning to mark batch size of one
-	print 'Predicting'
+	print 'Predicting segmentation for {} size image'.format(image.size)
+	start_time = time.time()
 	expanded_mask = model.predict(image_array[np.newaxis,:])
-	print expanded_mask
-	expanded_mask = np.argmax(expanded_mask, axis=-1)
-	print expanded_mask
-	s = np.sum(expanded_mask, axis=(0,1,2)) == 0.0
-	print s
-	print np.sum(expanded_mask != 0)
+	end_time = time.time()
+	print 'Prediction finished in time: {} s'.format(end_time-start_time)
+
+	# Select the only image from the batch
+	expanded_mask = expanded_mask[0]
+
+	flattened_mask = dataset_utils.flatten_mask(expanded_mask, material_class_information, True)
+	flattened_img = array_to_img(flattened_mask, scale=False)
+	flattened_img.show()
+
+	if (len(sys.argv) > 3):
+		save_file = sys.argv[3]
+		print 'Saving predicted mask to: {}'.format(save_file)
+		flattened_img.save(save_file)
 
 	print 'Done'
