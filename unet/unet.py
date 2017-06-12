@@ -181,7 +181,7 @@ def weighted_pixelwise_crossentropy(class_weights):
         xent = _tf_filter_nans(xent, _EPSILON)
         xent = -K.tf.reduce_sum(xent)
 
-        if (math.isnan(xent)):
+        if (K.tf.is_nan(xent)):
             raise ValueError('Cross-entropy loss is NaN, cannot continue training')
 
         return xent
