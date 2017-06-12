@@ -345,7 +345,8 @@ class SegmentationDataGenerator(object):
         # the div2_constraint i.e. are n times divisible by 2 to work within
         # the network. If the dimensions are not ok pad the images.
         if (count_trailing_zeroes(image.shape[0]) < div2_constraint or
-                    count_trailing_zeroes(image.shape[1]) < div2_constraint):
+            count_trailing_zeroes(image.shape[1]) < div2_constraint):
+
             padded_height = get_closest_number_with_n_trailing_zeroes(image.shape[0], div2_constraint)
             padded_width = get_closest_number_with_n_trailing_zeroes(image.shape[1], div2_constraint)
 
