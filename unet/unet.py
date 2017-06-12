@@ -177,7 +177,8 @@ def weighted_pixelwise_crossentropy(class_weights):
         softmax = K.tf.nn.softmax(y_pred)
         softmax = _tf_filter_nans(softmax, _EPSILON)
 
-        xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
+        #xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
+        xent = y_true * class_weights * K.tf.log(softmax)
         xent = _tf_filter_nans(xent, _EPSILON)
         xent = -K.tf.reduce_sum(xent)
 
