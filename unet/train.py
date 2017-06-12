@@ -213,7 +213,7 @@ if __name__ == '__main__':
     crop_size = None
 
     if (get_config_value('crop_width') == None or
-                get_config_value('crop_height') == None):
+        get_config_value('crop_height') == None):
         crop_size = None
     else:
         crop_size = (get_config_value('crop_width'), get_config_value('crop_height'))
@@ -318,14 +318,13 @@ if __name__ == '__main__':
         weight_file = weight_file_path.split('/')[-1]
 
         if weight_file:
-            log('Loading weights from file: {}'.format(weight_file_path))
+            log('Loading network weights from file: {}'.format(weight_file_path))
             model.load_weights(weight_file_path)
 
             # Parse the epoch number: <epoch>-<vloss>
             epoch_val_loss = weight_file.split('.')[1]
             initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
             log('Continuing training from epoch: {}'.format(initial_epoch))
-
         else:
             log('No existing weights were found')
 

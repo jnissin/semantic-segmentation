@@ -4,11 +4,13 @@ from keras.layers import Input, Conv2D, MaxPooling2D, ZeroPadding2D, BatchNormal
 from keras.layers.advanced_activations import LeakyReLU
 from keras import backend as K
 
+import math
+
 ##############################################
 # GLOBALS
 ##############################################
 
-_EPSILON = 10e-6
+_EPSILON = 10e-8
 
 ##############################################
 # UTILITIES
@@ -107,11 +109,9 @@ def mean_iou(num_classes):
 
         labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
         predictions = K.tf.cast(K.tf.argmax(y_pred, axis=-1), K.tf.int32)
-        K.tf.Print(predictions, [predictions], "Predictions")
 
         result, _ = K.tf.metrics.mean_iou(
             labels=labels, predictions=predictions, num_classes=num_classes)
-        K.tf.Print(result, [result], "Result")
 
         _tf_initialize_local_variables()
 
@@ -173,12 +173,6 @@ def weighted_pixelwise_crossentropy(class_weights):
         # Returns
             Output tensor.
         """
-
-        # Try to increase numerical stability by adding epsilon to predictions
-        # to counter very small predictions
-        epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
-        y_pred = y_pred + epsilon
-
         # Calculate cross-entropy loss
         softmax = K.tf.nn.softmax(y_pred)
         softmax = _tf_filter_nans(softmax, _EPSILON)
@@ -186,6 +180,9 @@ def weighted_pixelwise_crossentropy(class_weights):
         xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
         xent = _tf_filter_nans(xent, _EPSILON)
         xent = -K.tf.reduce_sum(xent)
+
+        if (math.isnan(xent)):
+            raise ValueError('Cross-entropy loss is NaN, cannot continue training')
 
         return xent
 

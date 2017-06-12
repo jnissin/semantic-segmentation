@@ -15,7 +15,7 @@
 	"use_data_augmentation": true,
 
 	"num_epochs": 100,
-	"batch_size": 1,
+	"batch_size": 2,
 	"crop_width": 512,
 	"crop_height": 512,
 
@@ -24,7 +24,7 @@
 	"random_seed": 14874,
 
 	"optimizer": "adam",
-	"learning_rate": 10e-5,
+	"learning_rate": 10e-7,
 	"momentum": 0.9,
 	"decay": 1e-6,
 
@@ -37,7 +37,4 @@
 
 	"_comment": "real background weight: 0.25513968",
 	"median_frequency_balancing_weights": [0.25513968, 0.69867323, 0.87813273, 1.47356357, 1.68282925, 0.69860207, 2.6173504, 0.80557909, 2.17893877, 0.95019173, 0.57413411, 1.98314874, 1.26091871, 1.05531896, 1.4541204, 0.53323283, 3.20121307, 2.6615092, 1.80038467, 0.38530667, 0.73727117, 0.69914208, 2.26591706, 0.90046664],
-
-	"image_mask_pair_save_path": "logs/img_mask_crop_pairs/",
-	"num_image_mask_pairs_to_save": 25000
 }
