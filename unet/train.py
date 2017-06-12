@@ -9,6 +9,7 @@ import unet
 import dataset_utils
 
 from dataset_utils import SegmentationDataGenerator
+from unet_callbacks import FileMonitor
 
 from keras import backend as K
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger
@@ -265,6 +266,8 @@ if __name__ == '__main__':
     log('Starting training for {} epochs with batch size: {}, crop_size: {}, steps per epoch: {}, validation steps: {}'
         .format(num_epochs, batch_size, crop_size, steps_per_epoch, validation_steps))
 
+    callbacks = []
+
     # Model checkpoint callback to save model on every epoch
     model_checkpoint_callback = ModelCheckpoint(
         filepath=get_config_value('keras_model_checkpoint_file_path'),
@@ -275,21 +278,34 @@ if __name__ == '__main__':
         mode='auto',
         period=1)
 
+    callbacks.append(model_checkpoint_callback)
+
     # Tensorboard checkpoint callback to save on every epoch
-    tensorboard_checkpoint_callback = TensorBoard(
-        log_dir=get_config_value('keras_tensorboard_log_path'),
-        histogram_freq=1,
-        write_graph=True,
-        write_images=True,
-        embeddings_freq=0,
-        embeddings_layer_names=None,
-        embeddings_metadata=None)
+    if get_config_value('keras_tensorboard_log_path') is not None:
+        tensorboard_checkpoint_callback = TensorBoard(
+            log_dir=get_config_value('keras_tensorboard_log_path'),
+            histogram_freq=1,
+            write_graph=True,
+            write_images=True,
+            embeddings_freq=0,
+            embeddings_layer_names=None,
+            embeddings_metadata=None)
+
+        callbacks.append(tensorboard_checkpoint_callback)
 
     # CSV logger for streaming epoch results
-    csv_logger_callback = CSVLogger(
-        get_config_value('keras_csv_log_file_path'),
-        separator=',',
-        append=False)
+    if get_config_value('keras_csv_log_file_path') is not None:
+        csv_logger_callback = CSVLogger(
+            get_config_value('keras_csv_log_file_path'),
+            separator=',',
+            append=False)
+
+        callbacks.append(csv_logger_callback)
+
+    # Interactive File Monitor
+    if get_config_value('interactive_log_file_path'):
+        file_monitor_callback = FileMonitor(get_config_value('interactive_log_file_path'), steps_per_epoch)
+        callbacks.append(file_monitor_callback)
 
     # Load existing weights to cotinue training
     initial_epoch = 0
@@ -321,7 +337,7 @@ if __name__ == '__main__':
         validation_data=validation_data_generator.get_flow(batch_size, crop_size),
         validation_steps=validation_steps,
         verbose=1,
-        callbacks=[model_checkpoint_callback, tensorboard_checkpoint_callback, csv_logger_callback])
+        callbacks=callbacks)
 
     log('The session ended at local time {}\n'.format(datetime.datetime.now()))
 
