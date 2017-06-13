@@ -186,7 +186,7 @@ def weighted_pixelwise_crossentropy(class_weights):
 
         xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
         xent = _tf_filter_nans(xent, epsilon)
-        xent = -K.tf.reduce_sum(xent)
+        xent = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2)))
 
         return xent
 
@@ -392,7 +392,7 @@ def get_unet(input_shape, num_classes):
     # softmax = Lambda(depth_softmax, name='softmax')(conv10)
 
     conv10 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
-    conv10 = BatchNormalization(name='fc1_normalization')(conv10)
+    #conv10 = BatchNormalization(name='fc1_normalization')(conv10)
 
     model = Model(inputs=inputs, outputs=conv10, name='U-net')
 
