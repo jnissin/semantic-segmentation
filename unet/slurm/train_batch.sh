@@ -10,4 +10,5 @@
 module load anaconda2 CUDA/7.5.18 cudnn/4
 source activate semantic-segmentation
 
-python /scratch/work/jhnissin/semantic-segmentation/unet/train.py /scratch/work/jhnissin/semantic-segmentation/unet/config/config-filtered.json
+cd /scratch/work/jhnissin/semantic-segmentation/unet
+python train.py config/config-filtered.json
