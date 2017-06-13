@@ -86,11 +86,24 @@ def mean_per_class_accuracy(num_classes):
 
         labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
         predictions = K.tf.cast(K.tf.argmax(y_pred, axis=-1), K.tf.int32)
+        cfm = K.tf.confusion_matrix(
+            labels=K.flatten(labels), predictions=K.flatten(predictions), num_classes=num_classes)
 
-        result, _ = K.tf.metrics.mean_per_class_accuracy(
-            labels=labels, predictions=predictions, num_classes=num_classes)
+        """
+        Compute the mean per class accuracy via the confusion matrix.
+        """
 
-        _tf_initialize_local_variables()
+        per_row_sum = K.tf.to_float(K.tf.reduce_sum(cfm, 1))
+        cm_diag = K.tf.to_float(K.tf.diag_part(cfm))
+        denominator = per_row_sum
+
+        # If the value of the denominator is 0, set it to 1 to avoid
+        # zero division.
+        denominator = K.tf.where(
+            K.tf.greater(denominator, 0), denominator,
+            K.tf.ones_like(denominator))
+        accuracies = K.tf.div(cm_diag, denominator)
+        result = K.tf.reduce_mean(accuracies)
 
         return result
 
@@ -113,11 +126,27 @@ def mean_iou(num_classes):
 
         labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
         predictions = K.tf.cast(K.tf.argmax(y_pred, axis=-1), K.tf.int32)
+        cfm = K.tf.confusion_matrix(
+            labels=K.flatten(labels), predictions=K.flatten(predictions), num_classes=num_classes)
 
-        result, _ = K.tf.metrics.mean_iou(
-            labels=labels, predictions=predictions, num_classes=num_classes)
+        """
+        Compute the mean intersection-over-union via the confusion matrix.
+        """
 
-        _tf_initialize_local_variables()
+        sum_over_row = K.tf.to_float(K.tf.reduce_sum(cfm, 0))
+        sum_over_col = K.tf.to_float(K.tf.reduce_sum(cfm, 1))
+        cm_diag = K.tf.to_float(K.tf.diag_part(cfm))
+        denominator = sum_over_row + sum_over_col - cm_diag
+
+        # If the value of the denominator is 0, set it to 1 to avoid
+        # zero division.
+        denominator = K.tf.where(
+            K.tf.greater(denominator, 0),
+            denominator,
+            K.tf.ones_like(denominator))
+
+        iou = K.tf.div(cm_diag, denominator)
+        result = K.tf.reduce_mean(iou)
 
         return result
 
@@ -186,7 +215,7 @@ def weighted_pixelwise_crossentropy(class_weights):
 
         xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
         xent = _tf_filter_nans(xent, epsilon)
-        xent = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2)))
+        xent = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2, 3)))
 
         return xent
 
@@ -282,8 +311,8 @@ def get_decoder_block(
         input_layer,
         concat_layer,
         upsampling_size=(2, 2),
-        kernel_size=(3, 3),
-        pool_size=(2, 2)):
+        kernel_size=(3, 3)):
+
     # Add upsampling layer
     up = UpSampling2D(size=upsampling_size)(input_layer)
 
@@ -389,10 +418,9 @@ def get_unet(input_shape, num_classes):
     Last convolutional layer and softmax activation for
     per-pixel classification
     '''
-    # softmax = Lambda(depth_softmax, name='softmax')(conv10)
-
     conv10 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
-    #conv10 = BatchNormalization(name='fc1_normalization')(conv10)
+    # conv10 = BatchNormalization(name='fc1_normalization')(conv10)
+    # softmax = Lambda(depth_softmax, name='softmax')(conv10)
 
     model = Model(inputs=inputs, outputs=conv10, name='U-net')
 
