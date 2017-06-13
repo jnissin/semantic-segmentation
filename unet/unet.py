@@ -31,6 +31,10 @@ def _tf_filter_nans(t, epsilon):
     return K.tf.where(K.tf.is_nan(t), K.tf.ones_like(t) * epsilon, t)
 
 
+def _tf_clamp_to_min(t, epsilon):
+    return K.tf.where(K.tf.less(t, epsilon), K.tf.ones_like(t) * epsilon, t)
+
+
 def _tf_initialize_local_variables():
     """
     Initializes all the global and local variables of the Keras Tensorflow backend
@@ -167,19 +171,21 @@ def weighted_pixelwise_crossentropy(class_weights):
         output tensor and a target tensor.
 
         # Arguments
-            y_pred: A tensor resulting from a softmax.
-            y_true: A tensor of the same shape as `output`.
+            y_pred: A tensor resulting from the last convolutional layer.
+            y_true: A tensor of the same shape as `y_pred`.
             class_weights: Weights for each class
         # Returns
             Output tensor.
         """
         # Calculate cross-entropy loss
-        softmax = K.tf.nn.softmax(y_pred)
-        softmax = _tf_filter_nans(softmax, _EPSILON)
+        epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
 
-        #xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
-        xent = y_true * class_weights * K.tf.log(softmax)
-        xent = _tf_filter_nans(xent, _EPSILON)
+        softmax = K.tf.nn.softmax(y_pred)
+        softmax = K.tf.clip_by_value(softmax, epsilon, 1. - epsilon)
+        softmax = _tf_filter_nans(softmax, epsilon)
+
+        xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
+        xent = _tf_filter_nans(xent, epsilon)
         xent = -K.tf.reduce_sum(xent)
 
         return xent
@@ -383,8 +389,10 @@ def get_unet(input_shape, num_classes):
     Last convolutional layer and softmax activation for
     per-pixel classification
     '''
-    conv10 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
     # softmax = Lambda(depth_softmax, name='softmax')(conv10)
+
+    conv10 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
+    conv10 = BatchNormalization(name='fc1_normalization')(conv10)
 
     model = Model(inputs=inputs, outputs=conv10, name='U-net')
 
