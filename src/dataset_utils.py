@@ -285,11 +285,10 @@ class SegmentationDataGenerator(object):
 
         # Resize the image to match the mask size if necessary, since
         # the original photos are sometimes huge
-        if (image.size != mask.size):
-            orig_size = image.size
+        if image.size != mask.size:
             image = image.resize(mask.size, Image.ANTIALIAS)
 
-        if (image.size != mask.size):
+        if image.size != mask.size:
             raise ValueError('Non-matching image and mask dimensions after resize: {} vs {}'
                              .format(image.size, mask.size))
 
@@ -319,8 +318,7 @@ class SegmentationDataGenerator(object):
         # to both the image and mask now. We apply the transformation to the
         # whole image to decrease the number of 'dead' pixels due to tranformations
         # within the possible crop.
-        if (self.use_data_augmentation and
-                    np.random.random() <= self.augmentation_probability):
+        if self.use_data_augmentation and np.random.random() <= self.augmentation_probability:
             image, mask = self.apply_random_transform(image, mask)
             # Save augmented images for debug
             # array_to_img(image).save('aug_{}'.format(photo_mask_pair[0]))
@@ -340,8 +338,8 @@ class SegmentationDataGenerator(object):
                 attempts = 5
 
                 for i in range(0, attempts):
-                    x1 = np.random.randint(0, image.shape[1] - crop_size[0])
-                    y1 = np.random.randint(0, image.shape[0] - crop_size[1])
+                    x1 = np.random.randint(0, image.shape[1] - crop_size[0] + 1)
+                    y1 = np.random.randint(0, image.shape[0] - crop_size[1] + 1)
                     x2 = x1 + crop_size[0]
                     y2 = y1 + crop_size[1]
 
