@@ -503,14 +503,14 @@ def np_crop_image(np_img, x1, y1, x2, y2):
     x_size = np_img.shape[1]
 
     # Sanity check
-    if (x1 >= x_size or
-                x2 >= x_size or
-                x1 < 0 or
-                x2 < 0 or
-                y1 >= y_size or
-                y2 >= y_size or
-                y1 < 0 or
-                y2 < 0):
+    if (x1 > x_size or
+        x2 > x_size or
+        x1 < 0 or
+        x2 < 0 or
+        y1 > y_size or
+        y2 > y_size or
+        y1 < 0 or
+        y2 < 0):
         raise ValueError('Invalid crop parameters for image shape: {}, ({}, {}, {}, {}'
                          .format(np_img.shape, x1, y1, x2, y2))
 
