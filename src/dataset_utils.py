@@ -56,14 +56,16 @@ class MaterialClassInformation(object):
             material_id,
             substance_ids,
             substance_names,
-            color_values):
+            r_color_values,
+            color):
         self.id = material_id
 
         self.substance_ids = substance_ids
         self.substance_names = substance_names
-        self.color_values = color_values
+        self.r_color_values = r_color_values
 
         self.name = substance_names[0]
+        self.color = color
 
 
 class SegmentationDataGenerator(object):
@@ -108,13 +110,13 @@ class SegmentationDataGenerator(object):
         self.per_channel_mean_normalization = per_channel_mean_normalization
 
         # Ensure the per_channel_mean is a numpy tensor
-        if (per_channel_mean is not None):
+        if per_channel_mean is not None:
             self.per_channel_mean = np.array(per_channel_mean)
 
         self.per_channel_stddev_normalization = per_channel_stddev_normalization
 
         # Ensure per_channel_stddev is a numpy tensor
-        if (per_channel_stddev is not None):
+        if per_channel_stddev is not None:
             self.per_channel_stddev = np.array(per_channel_stddev)
 
         self.use_data_augmentation = use_data_augmentation
@@ -129,27 +131,29 @@ class SegmentationDataGenerator(object):
         self.mask_cval = mask_cval
 
         # Calculate missing per-channel mean if necessary
-        if (per_channel_mean_normalization and per_channel_mean is None):
+        if per_channel_mean_normalization and per_channel_mean is None:
             photos = [sample[0] for sample in photo_mask_files]
             self.per_channel_mean = calculate_per_channel_mean(photo_files_folder_path, photos)
 
         # Calculate missing per-channel stddev if necessary
-        if (per_channel_stddev_normalization and per_channel_stddev is None):
+        if per_channel_stddev_normalization and per_channel_stddev is None:
             photos = [sample[0] for sample in photo_mask_files]
-            self.per_channel_stddev = calculate_per_channel_stddev(photo_files_folder_path, photos)
+            self.per_channel_stddev = calculate_per_channel_stddev(photo_files_folder_path,
+                                                                   photos,
+                                                                   self.per_channel_mean)
 
         # Use per-channel mean but in range [0, 255] if nothing else is given.
         # The normalization is done to the whole batch after transformations so
         # the images are not in range [-1,1] before transformations.
-        if (self.photo_cval is None):
+        if self.photo_cval is None:
             self.photo_cval = ((np.array(self.per_channel_mean) + 1.0) / 2.0) * 255.0
 
         # Use black (background)
-        if (self.mask_cval is None):
+        if self.mask_cval is None:
             self.mask_cval = (0.0, 0.0, 0.0)
 
         # Use the given random seed for reproducibility
-        if (random_seed is not None):
+        if random_seed is not None:
             np.random.seed(random_seed)
 
         # Zoom range can either be a tuple or a scalar
@@ -406,6 +410,44 @@ class SegmentationDataGenerator(object):
 # UTILITY FUNCTIONS
 ##############################################
 
+def get_bit(n, i):
+    """
+    Returns a boolen indicating whether the nth bit in the integer i was on or not.
+
+    # Arguments
+        n: index of the bit
+        i: integer
+    # Returns
+        True if the nth bit was on false otherwise.
+    """
+    return n & (1 << i) > 0
+
+
+def get_color_for_category_index(idx):
+    """
+    Returns a color for class index. The index is used in the red channel
+    directly and the green and blue channels are derived similar to the
+    PASCAL VOC coloring algorithm.
+
+    # Arguments
+        idx: Index of the class
+    # Returns
+        RGB color in channel range [0,255] per channel
+    """
+    cid = idx
+    r = idx
+    g = 0
+    b = 0
+
+    for j in range(0, 7):
+        g = g | get_bit(cid, 0) << 7 - j
+        b = b | get_bit(cid, 1) << 7 - j
+        cid = cid >> 2
+
+    color = np.array([r, g, b], dtype=np.uint8)
+    return color
+
+
 """
 Returns all the files (filenames) found in the path.
 Does not include subdirectories.
@@ -485,30 +527,28 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
     return np_img
 
 
-"""
-Normalizes the color channels from the given image to zero-centered
-range [-1, 1] from the original [0, 255] range. If the per channels
-mean is provided it is subtracted from the image after zero-centering.
-Furthermore if the per channel standard deviation is given it is
-used to normalize each feature value to a z-score by dividing the given
-data.
-    # Arguments
-        TODO
-    # Returns
-        TODO
-"""
-
-
 def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None):
+    """
+    Normalizes the color channels from the given image to zero-centered
+    range [-1, 1] from the original [0, 255] range. If the per channels
+    mean is provided it is subtracted from the image after zero-centering.
+    Furthermore if the per channel standard deviation is given it is
+    used to normalize each feature value to a z-score by dividing the given
+    data.
+        # Arguments
+            TODO
+        # Returns
+            TODO
+    """
     img_array -= 128
     img_array /= 128
 
-    if (per_channel_mean != None):
+    if (per_channel_mean is not None):
         # Subtract the per-channel-mean from the batch
         # to "center" the data.
         img_array -= per_channel_mean
 
-    if (per_channel_stddev != None):
+    if (per_channel_stddev is not None):
         # Additionally, you ideally would like to divide by the sttdev of
         # that feature or pixel as well if you want to normalize each feature
         # value to a z-score.
@@ -524,82 +564,91 @@ def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stdde
     return img_array
 
 
-"""
-Calculates the per-channel mean from all the images in the given
-path and returns it as a 3 dimensional numpy array.
+def _calculate_per_channel_mean_parallel(path):
+    img = load_img(path)
+    img_array = img_to_array(img)
 
-Parameters to the function:
+    # Normalize colors to zero-centered range [-1, 1]
+    img_array = normalize_image_channels(img_array)
 
-path - the path to the image files
-files - the files to be used in the calculation
-"""
+    # Accumulate the sums of the different color channels
+    tot = np.array([0.0, 0.0, 0.0, 0.0])
+
+    # Store the color value sums
+    tot[0] = np.sum(img_array[:, :, 0])
+    tot[1] = np.sum(img_array[:, :, 1])
+    tot[2] = np.sum(img_array[:, :, 2])
+
+    # In the final index store the number of pixels
+    tot[3] = img_array.shape[0] * img_array.shape[1]
+
+    return tot
 
 
 def calculate_per_channel_mean(path, files):
-    # Continue from saved data if there is
-    px_tot = 0.0
-    color_tot = np.array([0.0, 0.0, 0.0])
+    """
+    Calculates the per-channel mean from all the images in the given
+    path and returns it as a 3 dimensional numpy array.
 
-    for idx in range(0, len(files)):
-        f = files[idx]
+    Parameters to the function:
 
-        if idx % 10 == 0 and idx != 0:
-            print 'Processed {} images: px_tot: {}, color_tot: {}'.format(idx, px_tot, color_tot)
-            print 'Current per-channel mean: {}'.format(color_tot / px_tot)
+    path - the path to the image files
+    files - the files to be used in the calculation
+    """
 
-        # Load the image as numpy array
-        img = load_img(os.path.join(path, f))
-        img_array = img_to_array(img)
+    # Parallelize per-channel sum calculations
+    num_cores = multiprocessing.cpu_count()
+    n_jobs = min(32, num_cores)
 
-        # Normalize colors to zero-centered range [-1, 1]
-        img_array = normalize_image_channels(img_array)
-
-        # Accumulate the number of total pixels
-        px_tot += img_array.shape[0] * img_array.shape[1]
-
-        # Accumulate the sums of the different color channels
-        color_tot[0] += np.sum(img_array[:, :, 0])
-        color_tot[1] += np.sum(img_array[:, :, 1])
-        color_tot[2] += np.sum(img_array[:, :, 2])
+    data = Parallel(n_jobs=n_jobs, backend='threading')(
+        delayed(_calculate_per_channel_mean_parallel)(
+            os.path.join(path, f)) for f in files)
 
     # Calculate the final value
+    sums = np.sum(np.vstack(data), axis=0)
+    color_tot = sums[:-1]
+    px_tot = sums[-1]
+
     per_channel_mean = color_tot / px_tot
     print 'Per-channel mean calculation complete: {}'.format(per_channel_mean)
 
     return per_channel_mean
 
 
-'''
-Calculates the per-channel-stddev
-'''
+def _calculate_per_channel_stddev_parallel(path, per_channel_mean):
+    var_tot = np.array([0.0, 0.0, 0.0, 0.0])
+
+    # Load the image as numpy array
+    img = load_img(path)
+    img_array = img_to_array(img)
+
+    # Normalize colors to zero-centered range [-1, 1]
+    img_array = normalize_image_channels(img_array)
+
+    # Var: SUM_0..N {(val-mean)^2} / N
+    var_tot[0] = np.sum(np.square(img_array[:, :, 0] - per_channel_mean[0]))
+    var_tot[1] = np.sum(np.square(img_array[:, :, 1] - per_channel_mean[1]))
+    var_tot[2] = np.sum(np.square(img_array[:, :, 2] - per_channel_mean[2]))
+
+    # Accumulate the number of total pixels
+    var_tot[-1] = img_array.shape[0] * img_array.shape[1]
+
+    return var_tot
 
 
 def calculate_per_channel_stddev(path, files, per_channel_mean):
-    # Calculate variance
-    px_tot = 0.0
-    var_tot = np.array([0.0, 0.0, 0.0])
+    # Parallelize per-channel variance calculations
+    num_cores = multiprocessing.cpu_count()
+    n_jobs = min(32, num_cores)
 
-    for idx in range(0, len(files)):
-        f = files[idx]
+    data = Parallel(n_jobs=n_jobs, backend='threading')(
+        delayed(_calculate_per_channel_stddev_parallel)(
+            os.path.join(path, f), per_channel_mean) for f in files)
 
-        if idx % 10 == 0 and idx != 0:
-            print 'Processed {} images: px_tot: {}, var_tot: {}\n'.format(idx, px_tot, var_tot)
-            print 'Current per channel variance: {}\n'.format(var_tot / px_tot)
-
-        # Load the image as numpy array
-        img = load_img(os.path.join(path, f))
-        img_array = img_to_array(img)
-
-        # Normalize colors to zero-centered range [-1, 1]
-        img_array = normalize_image_channels(img_array)
-
-        # Accumulate the number of total pixels
-        px_tot += img_array.shape[0] * img_array.shape[1]
-
-        # Var: SUM_0..N {(val-mean)^2} / N
-        var_tot[0] += np.sum(np.square(img_array[:, :, 0] - per_channel_mean[0]))
-        var_tot[1] += np.sum(np.square(img_array[:, :, 1] - per_channel_mean[1]))
-        var_tot[2] += np.sum(np.square(img_array[:, :, 2] - per_channel_mean[2]))
+    # Calculate the final value
+    sums = np.sum(np.vstack(data), axis=0)
+    var_tot = sums[:-1]
+    px_tot = sums[-1]
 
     # Calculate final variance value
     per_channel_var = var_tot / px_tot
@@ -625,12 +674,10 @@ def calculate_mask_class_frequencies(mask_file_path, material_class_information)
     return (class_pixels, img_pixels)
 
 
-"""
-Calculates the median frequency balancing weights
-"""
-
-
 def calculate_median_frequency_balancing_weights(path, files, material_class_information):
+    """
+    Calculates the median frequency balancing weights
+    """
     num_cores = multiprocessing.cpu_count()
     n_jobs = min(32, num_cores)
 
@@ -677,12 +724,19 @@ def load_material_class_information(material_labels_file_path):
 
         substance_ids = [int(x) for x in material_params[0]]
         substance_names = [x for x in material_params[1]]
-        color_values = [int(x) for x in material_params[2]]
+        r_color_values = [int(x) for x in material_params[2]]
 
         # The id is the index of the material in the file, this index will determine
         # the dimension index in the mask image for this material class
+        material_id = i - 1
+
         materials.append(
-            MaterialClassInformation(i - 1, tuple(substance_ids), tuple(substance_names), tuple(color_values)))
+            MaterialClassInformation(
+                material_id,
+                tuple(substance_ids),
+                tuple(substance_names),
+                tuple(r_color_values),
+                get_color_for_category_index(material_id)))
 
     return materials
 
@@ -715,10 +769,10 @@ def expand_mask(mask, material_class_information, verbose=False):
         # of the pixels that contain a color of the possible values.
         # Note: many colors are possible because some classes maybe collapsed
         # together to form a single class
-        for color in material_class.color_values:
+        for r_color_val in material_class.r_color_values:
             # The substance/material category information is in the red
             # color channel in the opensurfaces dataset
-            class_mask |= mask[:, :, 0] == color
+            class_mask |= mask[:, :, 0] == r_color_val
 
         # Set the activations of all the pixels that match the color mask to 1
         # on the dimension that matches the material class id
@@ -733,13 +787,10 @@ def expand_mask(mask, material_class_information, verbose=False):
     return expanded_mask
 
 
-def flatten_mask(expanded_mask, material_class_information, verbose=False):
-    # The predictions now reflect material class ids
-    predictions = np.argmax(expanded_mask, axis=-1)
-
-    # TODO: Generalize to N channel images
+def predictions_to_image(predictions, material_class_information, verbose=False):
     flattened_mask = np.zeros(shape=(predictions.shape[0], predictions.shape[1], 3), dtype='uint8')
-    num_found_materials = 0
+    found_materials = []
+    image_pixels = float(predictions.shape[0] * predictions.shape[1])
 
     for material_class in material_class_information:
         material_class_id = material_class.id
@@ -750,27 +801,45 @@ def flatten_mask(expanded_mask, material_class_information, verbose=False):
         # Set all the corresponding pixels in the flattened image
         # to the material color. If there are many colors for one
         # material, select the first to represent them all.
-        material_r_color = material_class.color_values[0]
+        # material_r_color = material_class.r_color_values[0]
 
         # Parse a unique color for the material
-        color = None
-
-        if material_class_id == 0:
-            color = (material_r_color, 0, 0)
-        else:
-            color = (material_r_color, np.random.randint(10, 256), np.random.randint(10, 256))
+        color = material_class.color
 
         if (verbose and np.any(class_mask)):
-            print 'Found material: {}, assigning it color: {}'.format(material_class.name, color)
-            num_found_materials += 1
+            print 'Found material: {}, in {}% of the pixels. Assigning it color: {}'\
+                .format(material_class.name, (float(np.sum(class_mask))/image_pixels)*100.0, color)
+            found_materials.append(material_class)
 
-        # Assign the material color to all the masked pixels
-        flattened_mask[class_mask] = color
+            # Assign the material color to all the masked pixels
+            flattened_mask[class_mask] = color
 
     if (verbose):
-        print 'Found in total {} materials'.format(num_found_materials)
+        print 'Found in total {} materials'.format(len(found_materials))
 
-    return flattened_mask
+    return flattened_mask, found_materials
+
+
+def flatten_mask(expanded_mask, material_class_information, verbose=False):
+    # The predictions now reflect material class ids
+    predictions = np.argmax(expanded_mask, axis=-1)
+    return predictions_to_image(predictions, material_class_information, verbose)
+
+
+def top_k_flattened_masks(expanded_mask, k, material_class_information, verbose=False):
+    flattened_masks = []
+
+    # Get the top k predictions
+    top_k_predictions = np.argsort(-expanded_mask)
+    top_k_predictions = np.transpose(top_k_predictions)
+    top_k_predictions = top_k_predictions[:k]
+    top_k_predictions = np.transpose(top_k_predictions, axes=(0,2,1))
+
+    for i in range(0, k):
+        print 'Processing top {} segmentation'.format(i+1)
+        flattened_masks.append(predictions_to_image(top_k_predictions[i], material_class_information, verbose))
+
+    return flattened_masks
 
 
 """

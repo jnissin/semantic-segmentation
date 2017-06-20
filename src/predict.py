@@ -7,6 +7,8 @@ import unet
 import dataset_utils
 
 import numpy as np
+import matplotlib as mpl
+from matplotlib import pyplot as plt
 
 from keras.preprocessing.image import load_img, img_to_array, array_to_img
 
@@ -46,6 +48,34 @@ def get_latest_weights_file_path(weights_folder_path):
         return os.path.join(weights_folder_path, weight_file)
 
     return None
+
+
+def show_segmentation_plot(figure_ind, title, segmented_img, found_materials):
+    colors = [np.array(m.color, dtype='float32')/255.0 for m in found_materials]
+    labels = [m.name for m in found_materials]
+    cmap = mpl.colors.ListedColormap(colors)
+
+    # Create figure
+    f = plt.figure(figure_ind)
+    f.suptitle(title)
+
+    # Create the color bar
+    height = float(segmented_img.size[1])
+    num_materials = len(found_materials)
+    step = (float(height) / float(num_materials))
+    bounds = np.arange(num_materials) * step
+    ticks = bounds
+    norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
+
+    # Create the plt img
+    plt_img = plt.imshow(segmented_img, interpolation='nearest', origin='upper', cmap=cmap, norm=norm)
+
+    # Create the color bar
+    cbar = plt.colorbar(plt_img, cmap=cmap, norm=norm, boundaries=bounds, ticks=ticks)
+    cbar.set_ticklabels(labels)
+
+    # Show the segmentation
+    f.show()
 
 
 ##############################################
@@ -102,8 +132,8 @@ if __name__ == '__main__':
     print 'Normalizing image data'
     image_array = dataset_utils.normalize_image_channels(
         image_array,
-        get_config_value('per_channel_mean'),
-        get_config_value('per_channel_stddev'))
+        np.array(get_config_value('per_channel_mean')),
+        np.array(get_config_value('per_channel_stddev')))
 
     # The model is expecting a batch size, even if it's one so append
     # one new dimension to the beginning to mark batch size of one
@@ -116,13 +146,24 @@ if __name__ == '__main__':
     # Select the only image from the batch
     expanded_mask = expanded_mask[0]
 
-    flattened_mask = dataset_utils.flatten_mask(expanded_mask, material_class_information, True)
-    flattened_img = array_to_img(flattened_mask, scale=False)
-    flattened_img.show()
+    k = 3
+    flattened_masks = dataset_utils.top_k_flattened_masks(expanded_mask, k, material_class_information, True)
 
-    if (len(sys.argv) > 3):
-        save_file = sys.argv[3]
-        print 'Saving predicted mask to: {}'.format(save_file)
-        flattened_img.save(save_file)
+    for i in range(0, k):
+        flattened_mask = flattened_masks[i][0]
+        found_materials = flattened_masks[i][1]
+        segmented_img = array_to_img(flattened_mask, scale=False)
+        title = 'Top {} segmentation of {}'.format(i+1, image_path.split('/')[-1])
+        show_segmentation_plot(i+1, title, segmented_img, found_materials)
+
+        if (len(sys.argv) > 3):
+            save_file = 'top_{}_{}'.format(i+1, sys.argv[3])
+            print 'Saving top {} predicted segmentation to: {}'.format(i+1, save_file)
+            segmented_img.save(save_file)
+
+    # Keep figures alive
+    raw_input()
+
+
 
     print 'Done'

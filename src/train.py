@@ -6,13 +6,14 @@ import json
 import sys
 
 import unet
+import enet
 import dataset_utils
+import model_utils
 
 from dataset_utils import SegmentationDataGenerator
-from unet_callbacks import FileMonitor
 
 from keras import backend as K
-from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger
+from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau
 from keras.optimizers import SGD, Adam
 
 from PIL import ImageFile
@@ -82,6 +83,145 @@ def get_latest_weights_file_path(weights_folder_path):
     return None
 
 
+def get_optimizer():
+    optimizer = None
+
+    if get_config_value('optimizer') == 'adam':
+        lr = get_config_value('learning_rate')
+        decay = get_config_value('decay')
+        optimizer = Adam(lr=lr, decay=decay)
+        log('Using Adam optimizer with learning rate: {}, decay: {}'.format(lr, decay))
+    elif get_config_value('optimizer') == 'sgd':
+        lr = get_config_value('learning_rate')
+        decay = get_config_value('decay')
+        momentum = get_config_value('momentum')
+        optimizer = SGD(lr=lr, momentum=momentum, decay=decay)
+        log('Using SGD optimizer with learning rate: {}, momentum: {}, decay: {}'.format(lr, momentum, decay))
+    else:
+        log('Unknown optimizer: {} exiting'.format(get_config_value('optimizer')))
+        sys.exit(0)
+
+    return optimizer
+
+
+def get_loss_function(training_set):
+    loss_function = None
+
+    if get_config_value('loss_function') == 'pixelwise_crossentropy':
+        loss_function = model_utils.pixelwise_crossentropy
+        log('Using pixelwise cross-entropy loss function')
+    elif get_config_value('loss_function') == 'weighted_pixelwise_crossentropy':
+
+        # Get or calculate the median frequency balancing weights
+        median_frequency_balancing_weights = get_config_value('median_frequency_balancing_weights')
+
+        if median_frequency_balancing_weights is None or \
+                (len(median_frequency_balancing_weights) != len(material_class_information)):
+            log('Median frequency balancing weights were not found or did not match the number of material classes')
+            log('Calculating median frequency balancing weights for the training set')
+
+            training_set_masks = [sample[1] for sample in training_set]
+            median_frequency_balancing_weights = dataset_utils.calculate_median_frequency_balancing_weights(
+                get_config_value('path_to_masks'), training_set_masks, material_class_information)
+
+            log('Median frequency balancing weights calculated: {}'.format(median_frequency_balancing_weights))
+        else:
+            log('Using existing median frequency balancing weights: {}'.format(median_frequency_balancing_weights))
+            median_frequency_balancing_weights = np.array(median_frequency_balancing_weights)
+
+        median_frequency_balancing_weights = K.constant(value=median_frequency_balancing_weights)
+        loss_function = model_utils.weighted_pixelwise_crossentropy(median_frequency_balancing_weights)
+        log('Using weighted pixelwise corss-entropy loss function with median frequency balancing weights')
+    else:
+        log('Unknown loss function: {} exiting').format(get_config_value('loss_function'))
+        sys.exit(0)
+
+    return loss_function
+
+
+def get_callbacks():
+    callbacks = []
+
+    # Model checkpoint callback to save model on every epoch
+    model_checkpoint_callback = ModelCheckpoint(
+        filepath=get_config_value('keras_model_checkpoint_file_path'),
+        monitor='val_loss',
+        verbose=1,
+        save_best_only=False,
+        save_weights_only=False,
+        mode='auto',
+        period=1)
+
+    callbacks.append(model_checkpoint_callback)
+
+    # Tensorboard checkpoint callback to save on every epoch
+    if get_config_value('keras_tensorboard_log_path') is not None:
+        tensorboard_checkpoint_callback = TensorBoard(
+            log_dir=get_config_value('keras_tensorboard_log_path'),
+            histogram_freq=1,
+            write_graph=True,
+            write_images=True,
+            embeddings_freq=0,
+            embeddings_layer_names=None,
+            embeddings_metadata=None)
+
+        callbacks.append(tensorboard_checkpoint_callback)
+
+    # CSV logger for streaming epoch results
+    if get_config_value('keras_csv_log_file_path') is not None:
+        csv_logger_callback = CSVLogger(
+            get_config_value('keras_csv_log_file_path'),
+            separator=',',
+            append=False)
+
+        callbacks.append(csv_logger_callback)
+
+    if get_config_value('reduce_lr_on_plateau') is not None:
+        rlr_config = get_config_value('reduce_lr_on_plateau')
+
+        factor = rlr_config.get('factor') or 0.1
+        patience = rlr_config.get('patience') or 10
+        min_lr = rlr_config.get('min_lr') or 0
+        epsilon = rlr_config.get('epsilon') or 0.0001
+        cooldown = rlr_config.get('cooldown') or 0
+        verbose = rlr_config.get('verbose') or 0
+
+        reduce_lr = ReduceLROnPlateau(monitor='val_loss',
+                                      factor=factor,
+                                      patience=patience,
+                                      min_lr=min_lr,
+                                      epsilon=epsilon,
+                                      cooldown=cooldown,
+                                      verbose=verbose)
+
+        callbacks.append(reduce_lr)
+
+    return callbacks
+
+
+def load_latest_weights(model):
+    initial_epoch = 0
+
+    # Try to find weights from the checkpoint path
+    weights_folder = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
+    log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
+    weight_file_path = get_latest_weights_file_path(weights_folder)
+    weight_file = weight_file_path.split('/')[-1]
+
+    if weight_file:
+        log('Loading network weights from file: {}'.format(weight_file_path))
+        model.load_weights(weight_file_path)
+
+        # Parse the epoch number: <epoch>-<vloss>
+        epoch_val_loss = weight_file.split('.')[1]
+        initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
+        log('Continuing training from epoch: {}'.format(initial_epoch))
+    else:
+        log('No existing weights were found')
+
+    return initial_epoch
+
+
 ##############################################
 # MAIN
 ##############################################
@@ -129,7 +269,7 @@ if __name__ == '__main__':
     mask_files = dataset_utils.get_files(get_config_value('path_to_masks'))
     log('Found {} mask files'.format(len(mask_files)))
 
-    if (len(photo_files) != len(mask_files)):
+    if len(photo_files) != len(mask_files):
         raise ValueError(
             'Unmatching photo - mask file list sizes: photos: {}, masks: {}'.format(len(photo_files), len(mask_files)))
 
@@ -151,76 +291,34 @@ if __name__ == '__main__':
     log('validation_set: {}\n'.format(validation_set), False)
     log('test_set: {}\n'.format(test_set), False)
 
-    # Calculate the median frequency balancing weights
-    median_frequency_balancing_weights = get_config_value('median_frequency_balancing_weights')
+    # Get the optimizer
+    optimizer = get_optimizer()
 
-    if median_frequency_balancing_weights == None or len(median_frequency_balancing_weights) != len(
-            material_class_information):
-        log('Median frequency balancing weights were not found or did not match the number of material classes')
-        log('Calculating median frequency balancing weights for the training set')
-        training_set_masks = [sample[1] for sample in training_set]
-        median_frequency_balancing_weights = dataset_utils.calculate_median_frequency_balancing_weights(
-            get_config_value('path_to_masks'), training_set_masks, material_class_information)
-        log('Median frequency balancing weights calculated: {}'.format(median_frequency_balancing_weights))
-    else:
-        log('Using existing median frequency balancing weights: {}'.format(median_frequency_balancing_weights))
-        median_frequency_balancing_weights = np.array(median_frequency_balancing_weights)
-
-    # Create optimizer
-    optimizer = None
-
-    if get_config_value('optimizer') == 'adam':
-        lr = get_config_value('learning_rate')
-        decay = get_config_value('decay')
-        optimizer = Adam(lr=lr, decay=decay)
-        log('Using Adam optimizer with learning rate: {}, decay: {}'.format(lr, decay))
-    elif get_config_value('optimizer') == 'sgd':
-        lr = get_config_value('learning_rate')
-        decay = get_config_value('decay')
-        momentum = get_config_value('momentum')
-        optimizer = SGD(lr=lr, momentum=momentum, decay=decay)
-        log('Using SGD optimizer with learning rate: {}, momentum: {}, decay: {}'.format(lr, momentum, decay))
-    else:
-        log('Unknown optimizer: {} exiting'.format(get_config_value('optimizer')))
-        sys.exit(0)
-
-    loss_function = None
-
-    if (get_config_value('loss_function') == 'pixelwise_crossentropy'):
-        loss_function = unet.pixelwise_crossentropy
-        log('Using pixelwise cross-entropy loss function')
-    elif (get_config_value('loss_function') == 'weighted_pixelwise_crossentropy'):
-        loss_function = unet.weighted_pixelwise_crossentropy(median_frequency_balancing_weights)
-        log('Using weighted pixelwise corss-entropy loss function with median frequency balancing weights')
-    else:
-        log('Unknown loss function: {} exiting').format(get_config_value('loss_function'))
-        sys.exi(0)
+    # Get the loss function
+    loss_function = get_loss_function(training_set=training_set)
 
     log('Creating model instance with {} input channels and {} classes'.format(get_config_value('num_channels'),
                                                                                num_classes))
-    model = unet.get_unet((None, None, get_config_value('num_channels')), num_classes)
+    #model = unet.get_unet((None, None, get_config_value('num_channels')), num_classes)
+    model = enet.get_model((None, None, get_config_value('num_channels')), num_classes)
 
     log('Compiling model')
-    median_frequency_balancing_weights = K.constant(value=median_frequency_balancing_weights)
     model.compile(
         optimizer=optimizer,
         loss=loss_function,
-        metrics=['accuracy', unet.mean_iou(num_classes), unet.mean_per_class_accuracy(num_classes)])
+        metrics=['accuracy', model_utils.mean_iou(num_classes), model_utils.mean_per_class_accuracy(num_classes)])
 
     model.summary()
 
     # Look for a crop size
     crop_size = None
 
-    if (get_config_value('crop_width') == None or
-        get_config_value('crop_height') == None):
+    if get_config_value('crop_width') is None or get_config_value('crop_height') is None:
         crop_size = None
     else:
         crop_size = (get_config_value('crop_width'), get_config_value('crop_height'))
 
-    use_data_augmentation = get_config_value('use_data_augmentation')
-    if (use_data_augmentation is None):
-        use_data_augmentation = False
+    use_data_augmentation = bool(get_config_value('use_data_augmentation'))
 
     log('Creating training data generator')
     training_data_generator = SegmentationDataGenerator(
@@ -248,9 +346,9 @@ if __name__ == '__main__':
         material_class_information=material_class_information,
         random_seed=get_config_value('random_seed'),
         per_channel_mean_normalization=True,
-        per_channel_mean=get_config_value('per_channel_mean'),  # training_data_generator.per_channel_mean,
+        per_channel_mean=training_data_generator.per_channel_mean,
         per_channel_stddev_normalization=True,
-        per_channel_stddev=get_config_value('per_channel_stddev'),  # training_data_generator.per_channel_stddev,
+        per_channel_stddev=training_data_generator.per_channel_stddev,
         use_data_augmentation=False)
 
     log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
@@ -266,67 +364,14 @@ if __name__ == '__main__':
     log('Starting training for {} epochs with batch size: {}, crop_size: {}, steps per epoch: {}, validation steps: {}'
         .format(num_epochs, batch_size, crop_size, steps_per_epoch, validation_steps))
 
-    callbacks = []
+    # Get callbacks
+    callbacks = get_callbacks()
 
-    # Model checkpoint callback to save model on every epoch
-    model_checkpoint_callback = ModelCheckpoint(
-        filepath=get_config_value('keras_model_checkpoint_file_path'),
-        monitor='val_loss',
-        verbose=1,
-        save_best_only=False,
-        save_weights_only=False,
-        mode='auto',
-        period=1)
-
-    callbacks.append(model_checkpoint_callback)
-
-    # Tensorboard checkpoint callback to save on every epoch
-    if get_config_value('keras_tensorboard_log_path') is not None:
-        tensorboard_checkpoint_callback = TensorBoard(
-            log_dir=get_config_value('keras_tensorboard_log_path'),
-            histogram_freq=1,
-            write_graph=True,
-            write_images=True,
-            embeddings_freq=0,
-            embeddings_layer_names=None,
-            embeddings_metadata=None)
-
-        callbacks.append(tensorboard_checkpoint_callback)
-
-    # CSV logger for streaming epoch results
-    if get_config_value('keras_csv_log_file_path') is not None:
-        csv_logger_callback = CSVLogger(
-            get_config_value('keras_csv_log_file_path'),
-            separator=',',
-            append=False)
-
-        callbacks.append(csv_logger_callback)
-
-    # Interactive File Monitor
-    if get_config_value('interactive_log_file_path'):
-        file_monitor_callback = FileMonitor(get_config_value('interactive_log_file_path'), steps_per_epoch)
-        callbacks.append(file_monitor_callback)
-
-    # Load existing weights to cotinue training
     initial_epoch = 0
 
-    if (get_config_value('continue_from_last_checkpoint')):
-        # Try to find weights from the checkpoint path
-        weights_folder = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
-        log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
-        weight_file_path = get_latest_weights_file_path(weights_folder)
-        weight_file = weight_file_path.split('/')[-1]
-
-        if weight_file:
-            log('Loading network weights from file: {}'.format(weight_file_path))
-            model.load_weights(weight_file_path)
-
-            # Parse the epoch number: <epoch>-<vloss>
-            epoch_val_loss = weight_file.split('.')[1]
-            initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
-            log('Continuing training from epoch: {}'.format(initial_epoch))
-        else:
-            log('No existing weights were found')
+    # Load existing weights to continue training
+    if get_config_value('continue_from_last_checkpoint'):
+        initial_epoch = load_latest_weights(model)
 
     model.fit_generator(
         generator=training_data_generator.get_flow(batch_size, crop_size),

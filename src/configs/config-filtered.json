@@ -1,0 +1,46 @@
+{
+	"path_to_material_class_file": "categories/materials-minc.csv",
+	"path_to_photos": "../data/photos-filtered/",
+	"path_to_masks": "../data/masks-filtered/",
+
+	"keras_tensorboard_log_path": "logs/tensorboard/",
+	"keras_model_checkpoint_file_path": "checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+	"keras_csv_log_file_path": "logs/unet-per-epoch-data.csv",
+
+	"reduce_lr_on_plateau": {
+	  "factor": 0.1,
+      "verbose": 1,
+      "patience": 3,
+      "epsilon": 0.0001,
+      "cooldown": 0,
+      "min_lr": 0
+	},
+
+	"log_file_path": "logs/log.txt",
+
+	"image_data_format": "channels_last",
+	"continue_from_last_checkpoint": false,
+	"use_data_augmentation": true,
+
+	"num_epochs": 100,
+	"batch_size": 2,
+	"crop_width": 512,
+	"crop_height": 512,
+
+	"dataset_splits": [0.8, 0.05, 0.15],
+	"num_channels": 3,
+	"random_seed": 14874,
+
+	"optimizer": "adam",
+	"learning_rate": 5e-4,
+	"momentum": 0.9,
+	"decay": 2e-4,
+
+	"loss_function": "weighted_pixelwise_crossentropy",
+
+	"per_channel_mean": [-0.05767406, -0.20355854, -0.34503157],
+	"per_channel_mean_255": [120, 102, 84],
+	"per_channel_variance": [0.2769143, 0.26319826, 0.26892483],
+	"per_channel_stddev": [0.52622648, 0.51302852, 0.51857963],
+	"median_frequency_balancing_weights": [0.14543582, 0.7378643, 0.80591773, 1.44479095, 1.56364591, 0.65335371, 2.52654934, 0.774687, 1.90705871, 0.99703705, 0.55474188, 1.83327988, 1.09939849, 1.00298061,  1.48639132,  0.51568217, 3.00462681, 2.26531756, 1.61073584, 0.37116353, 0.70423113, 0.63882269, 2.61278558, 0.80365708]
+}

@@ -3,6 +3,6 @@
 
 data/*
 
-unet/logs/*
-unet/checkpoints/*
-unet/photos/*
+src/logs/*
+src/checkpoints/*
+src/photos/*
