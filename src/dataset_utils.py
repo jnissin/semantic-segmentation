@@ -297,6 +297,24 @@ class SegmentationDataGenerator(object):
         image = img_to_array(image)
         mask = img_to_array(mask)
 
+        # Check whether any of the image dimensions is smaller than the crop,
+        # if so pad with the assigned colors
+        if crop_size is not None and (image.shape[1] < crop_size[0] or image.shape[0] < crop_size[1]):
+            # Image dimensions must be at minimum the same as the crop dimension
+            # on each axis
+            min_img_shape = (max(crop_size[1], image.shape[0]), max(crop_size[0], image.shape[1]))
+
+            # Image needs to be filled with the photo_cval color if
+            # available if not, use black
+            img_cval = self.photo_cval if (self.photo_cval is not None) else (0, 0, 0)
+            image = np_pad_image_to_shape(image, min_img_shape, img_cval)
+
+            # Mask should be padded with the mask_cval color if
+            # available if not, use black
+            mask_cval = self.mask_cval if (self.mask_cval is not None) else (0, 0, 0)
+            mask = np_pad_image_to_shape(mask, min_img_shape, mask_cval)
+
+
         # If we are using data augmentation apply the random tranformation
         # to both the image and mask now. We apply the transformation to the
         # whole image to decrease the number of 'dead' pixels due to tranformations
@@ -330,7 +348,7 @@ class SegmentationDataGenerator(object):
                     mask_crop = np_crop_image(mask, x1, y1, x2, y2)
 
                     # If the mask crop is only background (all R channel is zero) - try another crop
-                    if (np.max(mask_crop[:, :, 0]) == 0 and i < attempts - 1):
+                    if np.max(mask_crop[:, :, 0]) == 0 and i < attempts - 1:
                         continue
 
                     mask = mask_crop
@@ -354,24 +372,17 @@ class SegmentationDataGenerator(object):
             padded_height = get_closest_number_with_n_trailing_zeroes(image.shape[0], div2_constraint)
             padded_width = get_closest_number_with_n_trailing_zeroes(image.shape[1], div2_constraint)
 
-            v_diff = padded_height - image.shape[0]
-            h_diff = padded_width - image.shape[1]
-
-            v_pad_before = v_diff / 2
-            v_pad_after = (v_diff / 2) + (v_diff % 2)
-
-            h_pad_before = h_diff / 2
-            h_pad_after = (h_diff / 2) + (h_diff % 2)
-
-            # Mask should be padded with the mask_cval color if
-            # available if not, use black
-            mask_cval = self.mask_cval if (self.mask_cval is not None) else (0, 0, 0)
-            mask = np_pad_image(mask, v_pad_before, v_pad_after, h_pad_before, h_pad_after, mask_cval)
+            padded_shape = (padded_height, padded_width)
 
             # Image needs to be filled with the photo_cval color if
             # available if not, use black
             img_cval = self.photo_cval if (self.photo_cval is not None) else (0, 0, 0)
-            image = np_pad_image(image, v_pad_before, v_pad_after, h_pad_before, h_pad_after, img_cval)
+            image = np_pad_image_to_shape(image, padded_shape, img_cval)
+
+            # Mask should be padded with the mask_cval color if
+            # available if not, use black
+            mask_cval = self.mask_cval if (self.mask_cval is not None) else (0, 0, 0)
+            mask = np_pad_image_to_shape(mask, padded_shape, mask_cval)
 
         # Expand the mask image to accommodate different classes
         # H x W x NUM_CLASSES
@@ -506,6 +517,19 @@ def np_crop_image(np_img, x1, y1, x2, y2):
                          .format(np_img.shape, x1, y1, x2, y2))
 
     return np_img[y1:y2, x1:x2]
+
+
+def np_pad_image_to_shape(np_img, shape, cval):
+    v_diff = max(0, shape[0] - np_img.shape[0])
+    h_diff = max(0, shape[1] - np_img.shape[1])
+
+    v_pad_before = v_diff / 2
+    v_pad_after = (v_diff / 2) + (v_diff % 2)
+
+    h_pad_before = h_diff / 2
+    h_pad_after = (h_diff / 2) + (h_diff % 2)
+
+    return np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cval)
 
 
 def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cval):
