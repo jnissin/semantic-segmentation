@@ -1,8 +1,7 @@
 # coding=utf-8
 
-import math
-
 from keras import backend as K
+from tensorflow.python.client import device_lib
 
 ##############################################
 # GLOBALS
@@ -14,6 +13,11 @@ _EPSILON = 10e-8
 ##############################################
 # UTILITIES
 ##############################################
+
+def get_available_gpus():
+    local_device_protos = device_lib.list_local_devices()
+    return [x.name for x in local_device_protos if x.device_type == 'GPU']
+
 
 def _tf_filter_nans(t, epsilon):
     """

@@ -1,17 +1,17 @@
 # coding=utf-8
 
+from keras.layers import Input
 from keras.layers.advanced_activations import PReLU
 from keras.layers.convolutional import Conv2D, Conv2DTranspose, ZeroPadding2D
+from keras.layers.core import Activation
 from keras.layers.core import SpatialDropout2D, Permute
 from keras.layers.merge import add, concatenate
-from keras.layers.core import Activation
 from keras.layers.normalization import BatchNormalization
-
-from keras.layers import Input
 from keras.models import Model
 
 from layers.pooling import MaxPoolingWithArgmax2D
 from layers.pooling import MaxUnpooling2D
+import model_utils
 
 
 ##############################################
@@ -157,6 +157,12 @@ def decoder_build(encoder, nc):
 ##############################################
 
 def get_model(input_shape, num_classes):
+
+    # Check that we are running on a GPU or otherwise max pool with argmax won't work.
+    # See: https://stackoverflow.com/questions/39493229/how-to-use-tf-nn-max-pool-with-argmax-correctly
+    if len(model_utils.get_available_gpus()) == 0:
+        raise RuntimeError('No available GPUs found, MaxUnpooling is only available for GPUs')
+
     inputs = Input(shape=input_shape)
 
     enet = encoder_build(inputs)

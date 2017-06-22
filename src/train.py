@@ -13,12 +13,9 @@ from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnP
 from keras.optimizers import SGD, Adam
 
 import dataset_utils
-import model_utils
 from dataset_utils import SegmentationDataGenerator
-
-from models import enet_naive_upsampling
 from models import enet_max_unpooling
-
+from models import model_utils
 
 ##############################################
 # GLOBALS
