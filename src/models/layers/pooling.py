@@ -5,11 +5,26 @@ from keras.layers import Layer
 
 
 class MaxPoolingWithArgmax2D(Layer):
+
     def __init__(self, pool_size=(2, 2), strides=(2, 2), padding='same', **kwargs):
+        super(MaxPoolingWithArgmax2D, self).__init__(**kwargs)
+
         self.pool_size = pool_size
         self.strides = strides
         self.padding = padding
-        super(MaxPoolingWithArgmax2D, self).__init__(**kwargs)
+
+        if K.backend() == 'tensorflow':
+            # Check whether we are running on GPU to decide which version of pooling to use
+            from tensorflow.python.client import device_lib
+
+            local_device_protos = device_lib.list_local_devices()
+            gpus = [x.name for x in local_device_protos if x.device_type == 'GPU']
+            self.running_on_gpu = len(gpus) > 0
+
+            if not self.running_on_gpu:
+                raise NotImplementedError('MaxPoolingWithArgmax2D works only on GPU')
+        else:
+            raise NotImplementedError('{} backend is not supported for layer {}'.format(K.backend(), type(self).__name__))
 
     def build(self, input_shape):
         # Create a trainable weight variable for this layer.
@@ -21,6 +36,8 @@ class MaxPoolingWithArgmax2D(Layer):
         strides = self.strides
 
         if K.backend() == 'tensorflow':
+            # tf.nn.max_pool_with_argmax works only on GPU
+            # See: https://stackoverflow.com/questions/39493229/how-to-use-tf-nn-max-pool-with-argmax-correctly
             ksize = [1, pool_size[0], pool_size[1], 1]
             padding = padding.upper()
             strides = [1, strides[0], strides[1], 1]
@@ -42,6 +59,7 @@ class MaxPoolingWithArgmax2D(Layer):
 
 
 class MaxUnpooling2D(Layer):
+
     def __init__(self, size=(2, 2), **kwargs):
         super(MaxUnpooling2D, self).__init__(**kwargs)
         self.size = size
