@@ -85,7 +85,9 @@ def get_latest_weights_file_path(weights_folder_path):
     if len(weight_files) > 0:
         weight_files.sort()
         weight_file = weight_files[-1]
-        return os.path.join(weights_folder_path, weight_file)
+
+        if os.path.isfile(os.path.join(weights_folder_path, weight_file)) and weight_file.endswith(".hdf5"):
+            return os.path.join(weights_folder_path, weight_file)
 
     return None
 
@@ -220,6 +222,11 @@ def load_latest_weights(model):
         weights_folder = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
         log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
         weight_file_path = get_latest_weights_file_path(weights_folder)
+
+        if weight_file_path is None:
+            log('Could not locate any suitable weight files from the given path')
+            return 0
+
         weight_file = weight_file_path.split('/')[-1]
 
         if weight_file:
@@ -234,7 +241,8 @@ def load_latest_weights(model):
             log('No existing weights were found')
 
     except Exception as e:
-        log('Searching for existing weights finished with and error: {}'.format(e.message))
+        log('Searching for existing weights finished with an error: {}'.format(e.message))
+        return 0
 
     return initial_epoch
 
