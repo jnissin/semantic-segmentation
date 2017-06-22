@@ -31,6 +31,8 @@
     "num_channels": 3,
     "random_seed": 14874,
 
+    "model": "enet-naive-upsampling",
+
     "optimizer": "adam",
     "learning_rate": 5e-6,
     "momentum": 0.9,

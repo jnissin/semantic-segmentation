@@ -1,5 +1,6 @@
 #!/bin/bash
 
+module purge
 module load anaconda2 CUDA/8.0.61 cudnn/5.1-CUDA-7.5
 source activate semantic-segmentation
 

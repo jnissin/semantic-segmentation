@@ -7,6 +7,7 @@
 #SBATCH -c 2
 #SBATCH -t 04:00:00
 
+module purge
 module load anaconda2 CUDA/8.0.61 cudnn/5.1-CUDA-7.5
 source activate semantic-segmentation
 
