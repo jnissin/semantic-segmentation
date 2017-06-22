@@ -38,8 +38,7 @@ def log(s, log_to_stdout=True):
     # Create and open the log file
     if not LOG_FILE:
         if LOG_FILE_PATH:
-            if not os.path.exists(os.path.dirname(LOG_FILE_PATH)):
-                os.makedirs(os.path.dirname(LOG_FILE_PATH))
+            create_path_if_not_existing(LOG_FILE_PATH)
 
             LOG_FILE = open(LOG_FILE_PATH, 'w')
         else:
@@ -54,6 +53,14 @@ def log(s, log_to_stdout=True):
     # Log to stdout - no newline needed
     if log_to_stdout:
         print s.strip()
+
+
+def create_path_if_not_existing(path):
+    if not path:
+        return
+
+    if not os.path.exists(os.path.dirname(path)):
+        os.makedirs(os.path.dirname(path))
 
 
 def read_config_json(path):
@@ -142,7 +149,9 @@ def get_loss_function(training_set):
 def get_callbacks():
     callbacks = []
 
-    # Model checkpoint callback to save model on every epoch
+    # Make sure the model checkpoints directory exists
+    create_path_if_not_existing(get_config_value('keras_model_checkpoint_file_path'))
+
     model_checkpoint_callback = ModelCheckpoint(
         filepath=get_config_value('keras_model_checkpoint_file_path'),
         monitor='val_loss',
@@ -156,6 +165,8 @@ def get_callbacks():
 
     # Tensorboard checkpoint callback to save on every epoch
     if get_config_value('keras_tensorboard_log_path') is not None:
+        create_path_if_not_existing(get_config_value('keras_tensorboard_log_path'))
+
         tensorboard_checkpoint_callback = TensorBoard(
             log_dir=get_config_value('keras_tensorboard_log_path'),
             histogram_freq=1,
@@ -169,6 +180,8 @@ def get_callbacks():
 
     # CSV logger for streaming epoch results
     if get_config_value('keras_csv_log_file_path') is not None:
+        create_path_if_not_existing(get_config_value('keras_csv_log_file_path'))
+
         csv_logger_callback = CSVLogger(
             get_config_value('keras_csv_log_file_path'),
             separator=',',
@@ -202,22 +215,26 @@ def get_callbacks():
 def load_latest_weights(model):
     initial_epoch = 0
 
-    # Try to find weights from the checkpoint path
-    weights_folder = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
-    log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
-    weight_file_path = get_latest_weights_file_path(weights_folder)
-    weight_file = weight_file_path.split('/')[-1]
+    try:
+        # Try to find weights from the checkpoint path
+        weights_folder = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
+        log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
+        weight_file_path = get_latest_weights_file_path(weights_folder)
+        weight_file = weight_file_path.split('/')[-1]
 
-    if weight_file:
-        log('Loading network weights from file: {}'.format(weight_file_path))
-        model.load_weights(weight_file_path)
+        if weight_file:
+            log('Loading network weights from file: {}'.format(weight_file_path))
+            model.load_weights(weight_file_path)
 
-        # Parse the epoch number: <epoch>-<vloss>
-        epoch_val_loss = weight_file.split('.')[1]
-        initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
-        log('Continuing training from epoch: {}'.format(initial_epoch))
-    else:
-        log('No existing weights were found')
+            # Parse the epoch number: <epoch>-<vloss>
+            epoch_val_loss = weight_file.split('.')[1]
+            initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
+            log('Continuing training from epoch: {}'.format(initial_epoch))
+        else:
+            log('No existing weights were found')
+
+    except Exception as e:
+        log('Searching for existing weights finished with and error: {}'.format(e.message))
 
     return initial_epoch
 

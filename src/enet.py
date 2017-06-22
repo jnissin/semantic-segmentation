@@ -20,10 +20,10 @@ def encoder_initial_block(inp, nb_filter=13, nb_row=3, nb_col=3, strides=(2, 2))
     return merged
 
 
-def encoder_bottleneck(input, num_output_filters, internal_scale=4, asymmetric=0, dilated=0, downsample=False, dropout_rate=0.1):
+def encoder_bottleneck(inp, output, internal_scale=4, asymmetric=0, dilated=0, downsample=False, dropout_rate=0.1):
     # main branch
-    internal = num_output_filters / internal_scale
-    encoder = input
+    internal = output / internal_scale
+    encoder = inp
 
     # 1x1
     input_stride = 2 if downsample else 1  # the 1st 1x1 projection is replaced with a 2x2 convolution when downsampling
@@ -43,24 +43,24 @@ def encoder_bottleneck(input, num_output_filters, internal_scale=4, asymmetric=0
     elif dilated:
         encoder = Conv2D(internal, (3, 3), dilation_rate=(dilated, dilated), padding='same')(encoder)
     else:
-        raise (Exception('Invalid encoder bottleneck type'))
+        raise (Exception('You shouldn\'t be here'))
 
     encoder = BatchNormalization(momentum=0.1)(encoder)  # enet uses momentum of 0.1, keras default is 0.99
     encoder = PReLU(shared_axes=[1, 2])(encoder)
 
     # 1x1
-    encoder = Conv2D(num_output_filters, (1, 1), use_bias=False)(encoder)
+    encoder = Conv2D(output, (1, 1), use_bias=False)(encoder)
 
     encoder = BatchNormalization(momentum=0.1)(encoder)  # enet uses momentum of 0.1, keras default is 0.99
     encoder = SpatialDropout2D(dropout_rate)(encoder)
 
-    other = input
+    other = inp
     # other branch
     if downsample:
         other = MaxPooling2D()(other)
 
         other = Permute((1, 3, 2))(other)
-        pad_feature_maps = num_output_filters - input.get_shape().as_list()[3]
+        pad_feature_maps = output - inp.get_shape().as_list()[3]
         tb_pad = (0, 0)
         lr_pad = (0, pad_feature_maps)
         other = ZeroPadding2D(padding=(tb_pad, lr_pad))(other)
@@ -97,10 +97,10 @@ def encoder_build(inp, dropout_rate=0.01):
 # DECODER
 ##############################################
 
-def decoder_bottleneck(input, num_output_filters, upsample=False):
-    internal = num_output_filters / 4
+def decoder_bottleneck(encoder, output, upsample=False, reverse_module=False):
+    internal = output / 4
 
-    x = Conv2D(internal, (1, 1), use_bias=False)(input)
+    x = Conv2D(internal, (1, 1), use_bias=False)(encoder)
     x = BatchNormalization(momentum=0.1)(x)
     x = Activation('relu')(x)
     if not upsample:
@@ -110,16 +110,16 @@ def decoder_bottleneck(input, num_output_filters, upsample=False):
     x = BatchNormalization(momentum=0.1)(x)
     x = Activation('relu')(x)
 
-    x = Conv2D(num_output_filters, (1, 1), padding='same', use_bias=False)(x)
+    x = Conv2D(output, (1, 1), padding='same', use_bias=False)(x)
 
-    other = input
-    if input.get_shape()[-1] != num_output_filters or upsample:
-        other = Conv2D(num_output_filters, (1, 1), padding='same', use_bias=False)(other)
+    other = encoder
+    if encoder.get_shape()[-1] != output or upsample:
+        other = Conv2D(output, (1, 1), padding='same', use_bias=False)(other)
         other = BatchNormalization(momentum=0.1)(other)
-        if upsample:
+        if upsample and reverse_module:
             other = UpSampling2D(size=(2, 2))(other)
 
-    if not upsample:
+    if not upsample or reverse_module:
         x = BatchNormalization(momentum=0.1)(x)
     else:
         return x
@@ -130,10 +130,10 @@ def decoder_bottleneck(input, num_output_filters, upsample=False):
 
 
 def decoder_build(encoder, nc):
-    enet = decoder_bottleneck(encoder, 64, upsample=True)  # bottleneck 4.0
+    enet = decoder_bottleneck(encoder, 64, upsample=True, reverse_module=True)  # bottleneck 4.0
     enet = decoder_bottleneck(enet, 64)  # bottleneck 4.1
     enet = decoder_bottleneck(enet, 64)  # bottleneck 4.2
-    enet = decoder_bottleneck(enet, 16, upsample=True)  # bottleneck 5.0
+    enet = decoder_bottleneck(enet, 16, upsample=True, reverse_module=True)  # bottleneck 5.0
     enet = decoder_bottleneck(enet, 16)  # bottleneck 5.1
 
     enet = Conv2DTranspose(filters=nc, kernel_size=(2, 2), strides=(2, 2), padding='same')(enet)

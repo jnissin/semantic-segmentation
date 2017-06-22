@@ -4,6 +4,7 @@ import json
 import time
 
 import unet
+import enet
 import dataset_utils
 
 import numpy as np
@@ -101,7 +102,7 @@ if __name__ == '__main__':
 
     # Load the model
     print 'Loading the model'
-    model = unet.get_unet((None, None, get_config_value('num_channels')), len(material_class_information))
+    model = enet.get_model((None, None, get_config_value('num_channels')), len(material_class_information))
 
     # Load either provided weights or try to find the newest weights from the
     # checkpoint path

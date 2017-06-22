@@ -23,7 +23,7 @@
 	"use_data_augmentation": true,
 
 	"num_epochs": 100,
-	"batch_size": 2,
+	"batch_size": 5,
 	"crop_width": 512,
 	"crop_height": 512,
 
@@ -32,10 +32,9 @@
 	"random_seed": 14874,
 
 	"optimizer": "adam",
-	"learning_rate": 5e-4,
+	"learning_rate": 5e-6,
 	"momentum": 0.9,
-	"decay": 2e-4,
-
+	"decay": 2e-6,
 	"loss_function": "weighted_pixelwise_crossentropy",
 
 	"per_channel_mean": [-0.05767406, -0.20355854, -0.34503157],
