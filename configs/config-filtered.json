@@ -23,7 +23,7 @@
     "use_data_augmentation": true,
 
     "num_epochs": 100,
-    "batch_size": 5,
+    "batch_size": 10,
     "crop_width": 512,
     "crop_height": 512,
 
