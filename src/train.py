@@ -15,6 +15,7 @@ from keras.optimizers import SGD, Adam
 import dataset_utils
 from dataset_utils import SegmentationDataGenerator
 from models import enet_max_unpooling
+from models import enet_naive_upsampling
 from models import model_utils
 
 ##############################################
@@ -316,8 +317,8 @@ if __name__ == '__main__':
     log('Creating model instance with {} input channels and {} classes'.format(get_config_value('num_channels'),
                                                                                num_classes))
     #model = unet.get_unet((None, None, get_config_value('num_channels')), num_classes)
-    #model = enet_naive_upsampling.get_model((None, None, get_config_value('num_channels')), num_classes)
-    model = enet_max_unpooling.get_model((None, None, get_config_value('num_channels')), num_classes)
+    model = enet_naive_upsampling.get_model((None, None, get_config_value('num_channels')), num_classes)
+    #model = enet_max_unpooling.get_model((None, None, get_config_value('num_channels')), num_classes)
 
     log('Compiling model')
     model.compile(
