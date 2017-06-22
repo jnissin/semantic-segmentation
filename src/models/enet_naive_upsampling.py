@@ -1,3 +1,5 @@
+# coding=utf-8
+
 from keras.layers.advanced_activations import PReLU
 from keras.layers.core import SpatialDropout2D, Permute
 from keras.layers.pooling import MaxPooling2D

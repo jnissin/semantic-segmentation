@@ -1,17 +1,17 @@
-import sys
-import os
+# coding=utf-8
+
 import json
+import os
+import sys
 import time
 
-import unet
-import enet_naive_upsampling
-import dataset_utils
-
-import numpy as np
 import matplotlib as mpl
+import numpy as np
+from keras.preprocessing.image import load_img, img_to_array, array_to_img
 from matplotlib import pyplot as plt
 
-from keras.preprocessing.image import load_img, img_to_array, array_to_img
+import dataset_utils
+from src.models import enet_naive_upsampling
 
 ##############################################
 # GLOBALS

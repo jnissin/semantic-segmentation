@@ -1,22 +1,24 @@
-import numpy as np
-import random
-import os
+# coding=utf-8
+
 import datetime
 import json
+import os
+import random
 import sys
 
-import unet
-import enet_naive_upsampling
-import dataset_utils
-import model_utils
-
-from dataset_utils import SegmentationDataGenerator
-
+import numpy as np
+from PIL import ImageFile
 from keras import backend as K
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau
 from keras.optimizers import SGD, Adam
 
-from PIL import ImageFile
+import dataset_utils
+import model_utils
+from dataset_utils import SegmentationDataGenerator
+
+from models import enet_naive_upsampling
+from models import enet_max_unpooling
+
 
 ##############################################
 # GLOBALS
@@ -317,7 +319,8 @@ if __name__ == '__main__':
     log('Creating model instance with {} input channels and {} classes'.format(get_config_value('num_channels'),
                                                                                num_classes))
     #model = unet.get_unet((None, None, get_config_value('num_channels')), num_classes)
-    model = enet_naive_upsampling.get_model((None, None, get_config_value('num_channels')), num_classes)
+    #model = enet_naive_upsampling.get_model((None, None, get_config_value('num_channels')), num_classes)
+    model = enet_max_unpooling.get_model((None, None, get_config_value('num_channels')), num_classes)
 
     log('Compiling model')
     model.compile(

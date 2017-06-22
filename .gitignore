@@ -3,6 +3,6 @@
 
 data/*
 
-src/logs/*
-src/checkpoints/*
-src/photos/*
+logs/*
+checkpoints/*
+photos/*

@@ -1,3 +1,5 @@
+# coding=utf-8
+
 from keras.models import Model
 from keras.layers import Input, Conv2D, MaxPooling2D, ZeroPadding2D, BatchNormalization, Dropout, \
     concatenate, UpSampling2D, Lambda
