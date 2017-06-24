@@ -215,25 +215,6 @@ def get_callbacks():
     return callbacks
 
 
-def get_model():
-    model_name = get_config_value('model')
-    input_shape = (None, None, get_config_value('num_channels'))
-
-    log('Creating model {} instance with: input shape: {}, input channels: {}, classes: {}'
-        .format(model_name, input_shape, get_config_value('num_channels'), num_classes))
-
-    if model_name == 'unet':
-        return unet.get_unet(input_shape, num_classes)
-    elif model_name == 'enet-naive-upsampling':
-        return enet_naive_upsampling.get_model(input_shape, num_classes)
-    elif model_name == 'enet-max-unpooling':
-        return enet_max_unpooling.get_model(input_shape, num_classes)
-    else:
-        raise ValueError('Unknown model name in config: {}'.format(model_name))
-
-    return None
-
-
 def load_latest_weights(model):
     initial_epoch = 0
 
@@ -342,8 +323,15 @@ if __name__ == '__main__':
     # Get the loss function
     loss_function = get_loss_function(training_set=training_set)
 
-    # Get the model
-    model = get_model()
+    # Create the model
+    model_name = get_config_value('model')
+    num_channels = get_config_value('num_channels')
+    input_shape = (None, None, num_channels)
+
+    log('Creating model {} instance with input shape: {}, num classes: {}'
+        .format(model_name, input_shape, num_classes))
+
+    model = model_utils.get_model(model_name, input_shape, num_classes)
 
     log('Compiling model')
     model.compile(

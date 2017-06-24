@@ -19,8 +19,11 @@
     "log_file_path": "../logs/log.txt",
 
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": false,
+    "continue_from_last_checkpoint": true,
     "use_data_augmentation": true,
+
+    "use_crf_in_prediction": true,
+    "crf_iterations": 5,
 
     "num_epochs": 100,
     "batch_size": 10,

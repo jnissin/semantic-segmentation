@@ -3,6 +3,17 @@
 from keras import backend as K
 from tensorflow.python.client import device_lib
 
+import numpy as np
+
+import unet
+import enet_naive_upsampling
+import enet_max_unpooling
+import pydensecrf.densecrf as dcrf
+
+from pydensecrf.utils import compute_unary, create_pairwise_bilateral, \
+    create_pairwise_gaussian, softmax_to_unary
+
+
 ##############################################
 # GLOBALS
 ##############################################
@@ -66,6 +77,28 @@ def _to_tensor(x, dtype):
         x = K.tf.cast(x, dtype)
     return x
 
+
+def get_model(model_name, input_shape, num_classes):
+    """
+    Get the model by the model name.
+
+    # Arguments
+        model_name: name of the model
+        input_shape: input shape to the model
+        num_classes: number of classification classes
+    # Returns
+        The appropriate Keras model.
+    """
+    if model_name == 'unet':
+        return unet.get_unet(input_shape, num_classes)
+    elif model_name == 'enet-naive-upsampling':
+        return enet_naive_upsampling.get_model(input_shape, num_classes)
+    elif model_name == 'enet-max-unpooling':
+        return enet_max_unpooling.get_model(input_shape, num_classes)
+    else:
+        raise ValueError('Unknown model name: {}'.format(model_name))
+
+    return None
 
 ##############################################
 # METRICS
@@ -221,3 +254,87 @@ def weighted_pixelwise_crossentropy(class_weights):
         return xent
 
     return loss
+
+
+##############################################
+# NUMPY DATA MANIPULATION
+##############################################
+
+def np_softmax(X, theta=1.0, axis=None):
+    """
+    Compute the softmax of each element along an axis of X.
+
+    Parameters
+    ----------
+    X: ND-Array. Probably should be floats.
+    theta (optional): float parameter, used as a multiplier
+        prior to exponentiation. Default = 1.0
+    axis (optional): axis to compute values along. Default is the
+        first non-singleton axis.
+
+    Returns an array the same size as X. The result will sum to 1
+    along the specified axis.
+    """
+
+    # make X at least 2d
+    y = np.atleast_2d(X)
+
+    # find axis
+    if axis is None:
+        axis = next(j[0] for j in enumerate(y.shape) if j[1] > 1)
+
+    # multiply y against the theta parameter,
+    y = y * float(theta)
+
+    # subtract the max for numerical stability
+    y = y - np.expand_dims(np.max(y, axis=axis), axis)
+
+    # exponentiate y
+    y = np.exp(y)
+
+    # take the sum along the specified axis
+    ax_sum = np.expand_dims(np.sum(y, axis=axis), axis)
+
+    # finally: divide elementwise
+    p = y / ax_sum
+
+    # flatten if X was 1D
+    if len(X.shape) == 1: p = p.flatten()
+
+    return p
+
+
+##############################################
+# DENSE CRF
+##############################################
+
+def get_dcrf(img, nlabels):
+    width = img.shape[1]
+    height = img.shape[0]
+    img_shape = img.shape[:2]
+
+    d = dcrf.DenseCRF2D(width, height, nlabels)
+
+    # This potential penalizes small pieces of segmentation that are
+    # spatially isolated -- enforces more spatially consistent segmentations
+    feats = create_pairwise_gaussian(sdims=(5, 5), shape=img_shape)
+
+    d.addPairwiseEnergy(feats,
+                        compat=4,
+                        kernel=dcrf.DIAG_KERNEL,
+                        normalization=dcrf.NORMALIZE_SYMMETRIC)
+
+    # This creates the color-dependent features --
+    # because the segmentation that we get from CNN are too coarse
+    # and we can use local color features to refine them
+    feats = create_pairwise_bilateral(sdims=(80, 80),
+                                      schan=(20, 20, 20),
+                                      img=img,
+                                      chdim=2)
+
+    d.addPairwiseEnergy(feats,
+                        compat=10,
+                        kernel=dcrf.DIAG_KERNEL,
+                        normalization=dcrf.NORMALIZE_SYMMETRIC)
+
+    return d

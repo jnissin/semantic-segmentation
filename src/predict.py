@@ -9,9 +9,9 @@ import matplotlib as mpl
 import numpy as np
 from keras.preprocessing.image import load_img, img_to_array, array_to_img
 from matplotlib import pyplot as plt
-
+import pydensecrf.utils as dcrf_utils
 import dataset_utils
-from src.models import enet_naive_upsampling
+from models import model_utils
 
 ##############################################
 # GLOBALS
@@ -101,14 +101,21 @@ if __name__ == '__main__':
     print 'Loaded {} material classes'.format(len(material_class_information))
 
     # Load the model
-    print 'Loading the model'
-    model = enet_naive_upsampling.get_model((None, None, get_config_value('num_channels')), len(material_class_information))
+    model_name = get_config_value('model')
+    num_classes = len(material_class_information)
+    num_channels = get_config_value('num_channels')
+    input_shape = (None, None, num_channels)
+
+    print 'Loading model {} instance with input shape: {}, num classes: {}'\
+        .format(model_name, input_shape, num_classes)
+
+    model = model_utils.get_model(model_name, input_shape, num_classes)
 
     # Load either provided weights or try to find the newest weights from the
     # checkpoint path
     weights_file_path = None
 
-    if (len(sys.argv) > 4):
+    if len(sys.argv) > 4:
         weights_file_path = sys.argv[4]
 
     if not weights_file_path:
@@ -144,8 +151,40 @@ if __name__ == '__main__':
     end_time = time.time()
     print 'Prediction finished in time: {} s'.format(end_time - start_time)
 
-    # Select the only image from the batch
-    expanded_mask = expanded_mask[0]
+    # Select the only image from the batch i.e. remove single-dimensional
+    # entries from the shape array
+    expanded_mask = expanded_mask.squeeze()
+
+    # TODO :Remove arbitrary weighting from background class
+    expanded_mask[:, :, 0] = expanded_mask[:, :, 0] * 0.5
+
+    # Check whether we are using a CRF
+    if get_config_value('use_crf_in_prediction'):
+        # Must use the unnormalized image data
+        crf_iterations = get_config_value('crf_iterations')
+        crf = model_utils.get_dcrf(img_to_array(image), num_classes)
+
+        # Turn the output of the last convolutional layer to softmax probabilities
+        # and then to unary.
+        softmax = model_utils.np_softmax(expanded_mask, axis=-1)
+        softmax = softmax.transpose((2, 0, 1))
+        unary = dcrf_utils.unary_from_softmax(softmax)
+
+        # Set the unary; The inputs should be C-continious since
+        # we are using Cython wrapper
+        unary = np.ascontiguousarray(unary)
+        crf.setUnaryEnergy(unary)
+
+        # Run the CRF
+        print 'Running CRF for {} iterations'.format(crf_iterations)
+        crf_start_time = time.time()
+        Q = crf.inference(crf_iterations)
+        crf_end_time = time.time()
+        print 'CRF inference finished in time: {} s'.format(crf_end_time - crf_start_time)
+
+        # Reshape the outcome
+        expanded_mask = np.reshape(Q, np.flip(expanded_mask.shape, 0), order='A')
+        expanded_mask = np.transpose(expanded_mask, (2, 1, 0))
 
     k = 3
     flattened_masks = dataset_utils.top_k_flattened_masks(expanded_mask, k, material_class_information, True)
@@ -157,7 +196,7 @@ if __name__ == '__main__':
         title = 'Top {} segmentation of {}'.format(i+1, image_path.split('/')[-1])
         show_segmentation_plot(i+1, title, segmented_img, found_materials)
 
-        if (len(sys.argv) > 3):
+        if len(sys.argv) > 3:
             save_file = 'top_{}_{}'.format(i+1, sys.argv[3])
             print 'Saving top {} predicted segmentation to: {}'.format(i+1, save_file)
             segmented_img.save(save_file)
