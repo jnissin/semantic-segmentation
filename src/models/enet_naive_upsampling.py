@@ -2,14 +2,14 @@
 
 from keras.layers.advanced_activations import PReLU
 from keras.layers.core import SpatialDropout2D, Permute
-from keras.layers.pooling import MaxPooling2D
+from keras.layers.pooling import MaxPooling2D, AveragePooling2D
 from keras.layers.convolutional import Conv2D, ZeroPadding2D, Conv2DTranspose, UpSampling2D
-from keras.layers.core import Activation
+from keras.layers.core import Activation, Flatten, Dense
 from keras.layers.merge import add, concatenate
 from keras.layers.normalization import BatchNormalization
 from keras.models import Model
 from keras.layers import Input
-
+import keras.backend as K
 
 ##############################################
 # ENCODER
@@ -146,11 +146,23 @@ def decoder_build(encoder, nc):
 # ENET NETWORK
 ##############################################
 
-def get_model(input_shape, num_classes):
+def get_model(input_shape, num_classes, encoder_only=False):
     inputs = Input(shape=input_shape)
 
     enet = encoder_build(inputs)
-    enet = decoder_build(enet, nc=num_classes)
+
+    # If we are only building the encoder add a convolutional layer and a softmax
+    # activation layer for classification purposes
+    if encoder_only:
+        # In order to avoid increasing the number of variables with a huge dense layer
+        # use average pooling with a pool size of the previous layer's spatial
+        # dimension
+        pool_size = K.int_shape(enet)[1:3]
+        enet = AveragePooling2D(pool_size=pool_size)(enet)
+        enet = Flatten()(enet)
+        enet = Dense(num_classes, activation='softmax')(enet)
+    else:
+        enet = decoder_build(enet, nc=num_classes)
 
     model = Model(inputs=inputs, outputs=enet, name='enet_naive_upsampling')
 

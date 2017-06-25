@@ -52,6 +52,10 @@ def unwrap_get_segmentation_data_pair(arg, **kwarg):
     return SegmentationDataGenerator.get_segmentation_data_pair(*arg, **kwarg)
 
 
+def unwrap_get_data_pair(arg, **kwarg):
+    return ClassificationDataGenerator.get_data_pair(*arg, **kwarg)
+
+
 class MaterialClassInformation(object):
     def __init__(
             self,
@@ -171,7 +175,7 @@ class SegmentationDataGenerator(object):
     """
     Randomly augment a single image tensor.
         # Arguments
-            x: 3D tensor, single photo image.
+            x: 3D tensor, a single photo image.
             y: 3D tensor, a single mask image.
         # Returns
             Inputs (x, y) with the same random transform applied.
@@ -315,7 +319,6 @@ class SegmentationDataGenerator(object):
             mask_cval = self.mask_cval if (self.mask_cval is not None) else (0, 0, 0)
             mask = np_pad_image_to_shape(mask, min_img_shape, mask_cval)
 
-
         # If we are using data augmentation apply the random tranformation
         # to both the image and mask now. We apply the transformation to the
         # whole image to decrease the number of 'dead' pixels due to tranformations
@@ -413,6 +416,95 @@ class SegmentationDataGenerator(object):
                 # Note: all the examples in the batch have to have the same dimensions
                 X, Y = zip(*data)
                 X, Y = self.standardize_batch(np.array(X)), np.array(Y)
+
+                yield X, Y
+
+
+class ClassificationDataGenerator(object):
+
+    def __init__(self,
+                 path_to_images_folder,
+                 per_channel_mean,
+                 path_to_labels_file,
+                 path_to_categories_file,
+                 verbose=False):
+
+        self.path_to_images_folder = path_to_images_folder
+        self.per_channel_mean = per_channel_mean
+        self.path_to_labels_file = path_to_labels_file
+        self.path_to_categories_file = path_to_categories_file
+
+        # Read categories file and build the categories dictionary
+        # category name -> category index
+        self.categories = {}
+
+        with open(path_to_categories_file, 'r') as f:
+            lines = f.readlines()
+            # Remove whitespace characters like `\n` at the end of each line
+            lines = [x.strip() for x in lines]
+
+            for idx, category in enumerate(lines):
+                self.categories[category] = idx
+
+        self.num_categories = len(self.categories)
+
+        if verbose:
+            print 'Found {} categories: {}'.format(self.num_categories, self.categories)
+
+        # Read the image file paths into an array
+        with open(path_to_labels_file, 'r') as f:
+            self.files = f.readlines()
+            # Remove whitespace characters like `\n` at the end of each line
+            self.files = [x.strip() for x in self.files]
+
+        self.num_samples = len(self.files)
+
+        if verbose:
+            print 'Found {} samples'.format(self.num_samples)
+
+    def get_data_pair(self, f):
+        # The path is always /images/<category>/<filename>
+        file_parts = f.split('/')
+        category = file_parts[1]
+        filename = file_parts[2]
+
+        # Build the complete path
+        file_path = os.path.join(self.path_to_images_folder, category, filename)
+
+        # Load the image
+        img = load_img(file_path)
+        x = img_to_array(img)
+
+        # Normalize the image channels
+        x = normalize_image_channels(x, self.per_channel_mean)
+
+        # Create the one-hot-vector for the classification
+        category_index = self.categories[category]
+        y = np.zeros(self.num_categories)
+        y[category_index] = 1.0
+
+        return x, y
+
+    @threadsafe_flow
+    def get_flow(self, batch_size):
+
+        num_batches = len(self.files) // batch_size
+        num_cores = multiprocessing.cpu_count()
+        n_jobs = min(32, num_cores)
+
+        while True:
+            # Shuffle the files
+            random.shuffle(self.files)
+
+            for i in range (0, num_batches):
+                # Get the files for this batch
+                files = self.files[i * batch_size:(i + 1) * batch_size]
+
+                data = Parallel(n_jobs=n_jobs, backend='threading')(
+                    delayed(unwrap_get_data_pair)((self, f)) for f in files)
+
+                X, Y = zip(*data)
+                X, Y = np.array(X), np.array(Y)
 
                 yield X, Y
 
@@ -567,22 +659,22 @@ def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stdde
     img_array -= 128
     img_array /= 128
 
-    if (per_channel_mean is not None):
+    if per_channel_mean is not None:
         # Subtract the per-channel-mean from the batch
         # to "center" the data.
         img_array -= per_channel_mean
 
-    if (per_channel_stddev is not None):
+    if per_channel_stddev is not None:
         # Additionally, you ideally would like to divide by the sttdev of
         # that feature or pixel as well if you want to normalize each feature
         # value to a z-score.
         img_array /= (per_channel_stddev + 1e-7)
 
     # Sanity check for the image values, we shouldn't have any NaN or inf values
-    if (np.any(np.isnan(img_array))):
+    if np.any(np.isnan(img_array)):
         raise ValueError('NaN values found in image after normalization')
 
-    if (np.any(np.isinf(img_array))):
+    if np.any(np.isinf(img_array)):
         raise ValueError('Inf values found in image after normalization')
 
     return img_array

@@ -1,0 +1,45 @@
+{
+    "path_to_images": "../data/minc-2500/images/",
+
+    "path_to_training_labels_file": "../data/minc-2500/labels/train1.txt",
+    "path_to_validation_labels_file": "../data/minc-2500/labels/validate1.txt",
+    "path_to_test_labels_file": "../data/minc-2500/labels/test1.txt",
+    "path_to_categories_file": "../data/minc-2500/categories.txt",
+
+    "keras_tensorboard_log_path": "../logs/tensorboard/",
+    "keras_model_checkpoint_file_path": "../checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "../logs/unet-per-epoch-data.csv",
+
+    "reduce_lr_on_plateau": {
+      "factor": 0.1,
+      "verbose": 1,
+      "patience": 3,
+      "epsilon": 0.0001,
+      "cooldown": 0,
+      "min_lr": 0
+    },
+
+    "log_file_path": "../logs/log.txt",
+
+    "image_data_format": "channels_last",
+    "continue_from_last_checkpoint": false,
+    "use_data_augmentation": false,
+
+    "image_width": 362,
+    "image_height": 362,
+    "num_channels": 3,
+
+    "num_epochs": 100,
+    "batch_size": 23,
+    "random_seed": 14874,
+
+    "model": "enet-naive-upsampling-encoder-only",
+
+    "optimizer": "adam",
+    "learning_rate": 5e-6,
+    "momentum": 0.9,
+    "decay": 2e-6,
+    "loss_function": "categorical_crossentropy",
+
+    "per_channel_mean": [-0.05767406, -0.20355854, -0.34503157]
+}

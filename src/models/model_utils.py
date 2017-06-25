@@ -93,6 +93,8 @@ def get_model(model_name, input_shape, num_classes):
         return unet.get_unet(input_shape, num_classes)
     elif model_name == 'enet-naive-upsampling':
         return enet_naive_upsampling.get_model(input_shape, num_classes)
+    elif model_name == 'enet-naive-upsampling-encoder-only':
+        return enet_naive_upsampling.get_model(input_shape, num_classes, encoder_only=True)
     elif model_name == 'enet-max-unpooling':
         return enet_max_unpooling.get_model(input_shape, num_classes)
     else:
