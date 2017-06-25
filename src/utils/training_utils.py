@@ -8,6 +8,7 @@ import dataset_utils as dataset_utils
 
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau
 from keras.optimizers import SGD, Adam
+from keras.models import Model
 
 
 ##############################################
@@ -206,3 +207,25 @@ def load_latest_weights(weights_directory_path, model):
         return 0
 
     return initial_epoch
+
+
+def transfer_weights(from_model, to_model, from_layer_index, to_layer_index, freeze_transferred_layers):
+    # type: (Model, Model, int, int, bool) -> (int, str)
+    num_transferred_layers = 0
+
+    # Support negative indexing
+    if from_layer_index < 0:
+        from_layer_index += len(from_model.layers)
+
+    if to_layer_index < 0:
+        to_layer_index += len(from_model.layers)
+
+    for i in range(from_layer_index, to_layer_index):
+        to_model.layers[i].set_weights(from_model.layers[i].get_weights())
+
+        if freeze_transferred_layers:
+            to_model.layers[i].trainable = False
+
+        num_transferred_layers += 1
+
+    return num_transferred_layers, from_model.layers[to_layer_index-1].name

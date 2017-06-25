@@ -125,3 +125,9 @@ if __name__ == '__main__':
         validation_steps=validation_steps,
         verbose=1,
         callbacks=callbacks)
+
+    log('The session ended at local time {}\n'.format(datetime.datetime.now()))
+
+    # Close the log file
+    if training_utils.LOG_FILE:
+        training_utils.LOG_FILE.close()
