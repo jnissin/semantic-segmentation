@@ -1,216 +1,18 @@
 # coding=utf-8
 
-import sys
-import json
-import os
-import random
 import datetime
+import random
+import sys
 
-from models import model_utils
-import dataset_utils
-
-import numpy as np
 import keras.backend as K
-from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau
-from keras.optimizers import SGD, Adam
-
+import numpy as np
 from PIL import ImageFile
-from dataset_utils import ClassificationDataGenerator
 
-##############################################
-# GLOBALS
-##############################################
+import utils.training_utils as training_utils
+from models import model_utils
 
-
-CONFIG = None
-LOG_FILE = None
-LOG_FILE_PATH = None
-
-
-##############################################
-# UTILITIES
-##############################################
-
-
-def log(s, log_to_stdout=True):
-    global LOG_FILE
-    global LOG_FILE_PATH
-
-    # Create and open the log file
-    if not LOG_FILE:
-        if LOG_FILE_PATH:
-            create_path_if_not_existing(LOG_FILE_PATH)
-
-            LOG_FILE = open(LOG_FILE_PATH, 'w')
-        else:
-            raise ValueError('The log file path is None, cannot log')
-
-    # Log to file - make sure there is a newline
-    if not s.endswith('\n'):
-        LOG_FILE.write(s + "\n")
-    else:
-        LOG_FILE.write(s)
-
-    # Log to stdout - no newline needed
-    if log_to_stdout:
-        print s.strip()
-
-
-def create_path_if_not_existing(path):
-    if not path:
-        return
-
-    if not os.path.exists(os.path.dirname(path)):
-        os.makedirs(os.path.dirname(path))
-
-
-def read_config_json(path):
-    with open(path) as f:
-        data = f.read()
-        return json.loads(data)
-
-
-def get_config_value(key):
-    global CONFIG
-    return CONFIG[key] if key in CONFIG else None
-
-
-def set_config_value(key, value):
-    global CONFIG
-    CONFIG[key] = value
-
-
-def get_latest_weights_file_path(weights_folder_path):
-    weight_files = dataset_utils.get_files(weights_folder_path)
-
-    if len(weight_files) > 0:
-        weight_files.sort()
-        weight_file = weight_files[-1]
-
-        if os.path.isfile(os.path.join(weights_folder_path, weight_file)) and weight_file.endswith(".hdf5"):
-            return os.path.join(weights_folder_path, weight_file)
-
-    return None
-
-
-def get_optimizer():
-    optimizer = None
-
-    if get_config_value('optimizer') == 'adam':
-        lr = get_config_value('learning_rate')
-        decay = get_config_value('decay')
-        optimizer = Adam(lr=lr, decay=decay)
-        log('Using Adam optimizer with learning rate: {}, decay: {}'.format(lr, decay))
-    elif get_config_value('optimizer') == 'sgd':
-        lr = get_config_value('learning_rate')
-        decay = get_config_value('decay')
-        momentum = get_config_value('momentum')
-        optimizer = SGD(lr=lr, momentum=momentum, decay=decay)
-        log('Using SGD optimizer with learning rate: {}, momentum: {}, decay: {}'.format(lr, momentum, decay))
-    else:
-        log('Unknown optimizer: {} exiting'.format(get_config_value('optimizer')))
-        sys.exit(0)
-
-    return optimizer
-
-
-def get_callbacks():
-    callbacks = []
-
-    # Make sure the model checkpoints directory exists
-    create_path_if_not_existing(get_config_value('keras_model_checkpoint_file_path'))
-
-    model_checkpoint_callback = ModelCheckpoint(
-        filepath=get_config_value('keras_model_checkpoint_file_path'),
-        monitor='val_loss',
-        verbose=1,
-        save_best_only=False,
-        save_weights_only=False,
-        mode='auto',
-        period=1)
-
-    callbacks.append(model_checkpoint_callback)
-
-    # Tensorboard checkpoint callback to save on every epoch
-    if get_config_value('keras_tensorboard_log_path') is not None:
-        create_path_if_not_existing(get_config_value('keras_tensorboard_log_path'))
-
-        tensorboard_checkpoint_callback = TensorBoard(
-            log_dir=get_config_value('keras_tensorboard_log_path'),
-            histogram_freq=1,
-            write_graph=True,
-            write_images=True,
-            embeddings_freq=0,
-            embeddings_layer_names=None,
-            embeddings_metadata=None)
-
-        callbacks.append(tensorboard_checkpoint_callback)
-
-    # CSV logger for streaming epoch results
-    if get_config_value('keras_csv_log_file_path') is not None:
-        create_path_if_not_existing(get_config_value('keras_csv_log_file_path'))
-
-        csv_logger_callback = CSVLogger(
-            get_config_value('keras_csv_log_file_path'),
-            separator=',',
-            append=False)
-
-        callbacks.append(csv_logger_callback)
-
-    if get_config_value('reduce_lr_on_plateau') is not None:
-        rlr_config = get_config_value('reduce_lr_on_plateau')
-
-        factor = rlr_config.get('factor') or 0.1
-        patience = rlr_config.get('patience') or 10
-        min_lr = rlr_config.get('min_lr') or 0
-        epsilon = rlr_config.get('epsilon') or 0.0001
-        cooldown = rlr_config.get('cooldown') or 0
-        verbose = rlr_config.get('verbose') or 0
-
-        reduce_lr = ReduceLROnPlateau(monitor='val_loss',
-                                      factor=factor,
-                                      patience=patience,
-                                      min_lr=min_lr,
-                                      epsilon=epsilon,
-                                      cooldown=cooldown,
-                                      verbose=verbose)
-
-        callbacks.append(reduce_lr)
-
-    return callbacks
-
-
-def load_latest_weights(model):
-    initial_epoch = 0
-
-    try:
-        # Try to find weights from the checkpoint path
-        weights_folder = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
-        log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
-        weight_file_path = get_latest_weights_file_path(weights_folder)
-
-        if weight_file_path is None:
-            log('Could not locate any suitable weight files from the given path')
-            return 0
-
-        weight_file = weight_file_path.split('/')[-1]
-
-        if weight_file:
-            log('Loading network weights from file: {}'.format(weight_file_path))
-            model.load_weights(weight_file_path)
-
-            # Parse the epoch number: <epoch>-<vloss>
-            epoch_val_loss = weight_file.split('.')[1]
-            initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
-            log('Continuing training from epoch: {}'.format(initial_epoch))
-        else:
-            log('No existing weights were found')
-
-    except Exception as e:
-        log('Searching for existing weights finished with an error: {}'.format(e.message))
-        return 0
-
-    return initial_epoch
+from utils.dataset_utils import ClassificationDataGenerator
+from utils.training_utils import log, get_config_value
 
 ##############################################
 # MAIN
@@ -226,8 +28,8 @@ if __name__ == '__main__':
     # Without this some truncated images can throw errors
     ImageFile.LOAD_TRUNCATED_IMAGES = True
 
-    CONFIG = read_config_json(sys.argv[1])
-    LOG_FILE_PATH = get_config_value('log_file_path')
+    training_utils.CONFIG = training_utils.read_config_json(sys.argv[1])
+    training_utils.LOG_FILE_PATH = get_config_value('log_file_path')
     print 'Configuration file read successfully'
 
     # Setup the global LOG_FILE_PATH to enable logging
@@ -279,10 +81,10 @@ if __name__ == '__main__':
     model.summary()
 
     log('Compiling model with optimizer: {}, loss function: {}'
-        .format(get_config_value('optimizer'), get_config_value('loss_function')))
+        .format(get_config_value('optimizer')['name'], get_config_value('loss_function')))
 
     # Get the optimizer
-    optimizer = get_optimizer()
+    optimizer = training_utils.get_optimizer(get_config_value('optimizer'))
 
     model.compile(
         optimizer=optimizer,
@@ -293,10 +95,16 @@ if __name__ == '__main__':
     initial_epoch = 0
 
     if get_config_value('continue_from_last_checkpoint'):
-        initial_epoch = load_latest_weights(model)
+        initial_epoch = training_utils.load_latest_weights(
+            get_config_value('keras_model_checkpoint_file_path'),
+            model)
 
     # Get callbacks
-    callbacks = get_callbacks()
+    callbacks = training_utils.get_callbacks(
+        keras_model_checkpoint_file_path=get_config_value('keras_model_checkpoint_file_path'),
+        keras_tensorboard_log_path=get_config_value('keras_tensorboard_log_path'),
+        keras_csv_log_file_path=get_config_value('keras_csv_log_file_path'),
+        reduce_lr_on_plateau=get_config_value('reduce_lr_on_plateau'))
 
     num_epochs = get_config_value('num_epochs')
     batch_size = get_config_value('batch_size')

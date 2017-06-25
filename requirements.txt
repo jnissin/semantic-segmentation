@@ -4,5 +4,7 @@ keras>=2.0.4
 pillow-simd>=4.1.1
 joblib>=0.11
 h5py>=2.7.0
+quiver>=0.1
+cython>=0.25.2
 -e git://github.com/raghakot/keras-vis.git#egg=keras-vis
 -e git+https://github.com/lucasb-eyer/pydensecrf.git

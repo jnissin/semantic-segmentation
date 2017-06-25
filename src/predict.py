@@ -7,11 +7,12 @@ import time
 
 import matplotlib as mpl
 import numpy as np
+import pydensecrf.utils as dcrf_utils
 from keras.preprocessing.image import load_img, img_to_array, array_to_img
 from matplotlib import pyplot as plt
-import pydensecrf.utils as dcrf_utils
-import dataset_utils
+
 from models import model_utils
+from utils import dataset_utils
 
 ##############################################
 # GLOBALS

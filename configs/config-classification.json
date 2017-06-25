@@ -1,14 +1,14 @@
 {
-    "path_to_images": "../data/minc-2500/images/",
+    "path_to_images": "/scratch/work/jhnissin/semantic-segmentation/data/minc-2500/images/",
 
-    "path_to_training_labels_file": "../data/minc-2500/labels/train1.txt",
-    "path_to_validation_labels_file": "../data/minc-2500/labels/validate1.txt",
-    "path_to_test_labels_file": "../data/minc-2500/labels/test1.txt",
-    "path_to_categories_file": "../data/minc-2500/categories.txt",
+    "path_to_training_labels_file": "/scratch/work/jhnissin/semantic-segmentation/data/minc-2500/labels/train1.txt",
+    "path_to_validation_labels_file": "/scratch/work/jhnissin/semantic-segmentation/data/minc-2500/labels/validate1.txt",
+    "path_to_test_labels_file": "/scratch/work/jhnissin/semantic-segmentation/data/minc-2500/labels/test1.txt",
+    "path_to_categories_file": "/scratch/work/jhnissin/semantic-segmentation/data/minc-2500/categories.txt",
 
-    "keras_tensorboard_log_path": "../logs/tensorboard/",
-    "keras_model_checkpoint_file_path": "../checkpoints/enet-naive-upsampling-encoder-only/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "keras_csv_log_file_path": "../logs/unet-per-epoch-data.csv",
+    "keras_tensorboard_log_path": "/scratch/work/jhnissin/semantic-segmentation/logs/enet-naive-upsampling-encoder-only/tensorboard/",
+    "keras_model_checkpoint_file_path": "/scratch/work/jhnissin/semantic-segmentation/checkpoints/enet-naive-upsampling-encoder-only/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "/scratch/work/jhnissin/semantic-segmentation/logs/enet-naive-upsampling-encoder-only/unet-per-epoch-data.csv",
 
     "reduce_lr_on_plateau": {
       "factor": 0.1,
@@ -19,7 +19,7 @@
       "min_lr": 0
     },
 
-    "log_file_path": "../logs/log.txt",
+    "log_file_path": "/scratch/work/jhnissin/semantic-segmentation/logs/enet-naive-upsampling-encoder-only/log.txt",
 
     "image_data_format": "channels_last",
     "continue_from_last_checkpoint": false,
@@ -34,12 +34,14 @@
     "random_seed": 14874,
 
     "model": "enet-naive-upsampling-encoder-only",
-
-    "optimizer": "adam",
-    "learning_rate": 5e-5,
-    "momentum": 0.9,
-    "decay": 2e-5,
     "loss_function": "categorical_crossentropy",
 
-    "per_channel_mean": [-0.03125, -0.0859375, -0,1875]
+    "optimizer": {
+      "name": "adam",
+      "learning_rate": 5e-5,
+      "momentum": 0.9,
+      "decay": 2e-5
+    },
+
+    "per_channel_mean": [-0.03125, -0.0859375, -0.1875]
 }

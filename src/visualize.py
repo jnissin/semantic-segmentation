@@ -8,8 +8,8 @@ from matplotlib import pyplot as plt
 from vis.utils import utils
 from vis.visualization import visualize_activation, get_num_filters
 
-import dataset_utils
 from src.models import unet
+from src.utils import dataset_utils
 
 CONFIG = None
 
