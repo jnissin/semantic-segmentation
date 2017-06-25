@@ -7,7 +7,7 @@
     "path_to_categories_file": "../data/minc-2500/categories.txt",
 
     "keras_tensorboard_log_path": "../logs/tensorboard/",
-    "keras_model_checkpoint_file_path": "../checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_model_checkpoint_file_path": "../checkpoints/enet-naive-upsampling-encoder-only/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
     "keras_csv_log_file_path": "../logs/unet-per-epoch-data.csv",
 
     "reduce_lr_on_plateau": {
@@ -36,10 +36,10 @@
     "model": "enet-naive-upsampling-encoder-only",
 
     "optimizer": "adam",
-    "learning_rate": 5e-6,
+    "learning_rate": 5e-5,
     "momentum": 0.9,
-    "decay": 2e-6,
+    "decay": 2e-5,
     "loss_function": "categorical_crossentropy",
 
-    "per_channel_mean": [-0.05767406, -0.20355854, -0.34503157]
+    "per_channel_mean": [-0.03125, -0.0859375, -0,1875]
 }
