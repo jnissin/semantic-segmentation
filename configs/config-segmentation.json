@@ -50,7 +50,7 @@
       "transfer_model_name": "enet-naive-upsampling-encoder-only",
       "transfer_model_input_shape": [362, 362, 3],
       "transfer_model_num_classes": 23,
-      "transfer_model_weights_file_path": "../checkpoints/enet-naive-upsampling-encoder-only/weights.04-2.14.hdf5",
+      "transfer_model_weights_file_path": "../checkpoints/enet-naive-upsampling-encoder-only/weights.11-1.97.hdf5",
       "from_layer_index": 0,
       "to_layer_index": -3,
       "freeze_transferred_layers": false
