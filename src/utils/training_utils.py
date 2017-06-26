@@ -220,6 +220,8 @@ def transfer_weights(from_model, to_model, from_layer_index, to_layer_index, fre
     if to_layer_index < 0:
         to_layer_index += len(from_model.layers)
 
+    # Assumes indexing is the same for both models for the specified
+    # layer range
     for i in range(from_layer_index, to_layer_index):
         to_model.layers[i].set_weights(from_model.layers[i].get_weights())
 
