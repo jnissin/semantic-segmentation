@@ -138,7 +138,7 @@ def get_callbacks(keras_model_checkpoint_file_path,
             histogram_freq=1,
             write_graph=True,
             write_images=True,
-            write_grads=True,
+            write_grads=False, # Note: writing grads for ENet takes about an hour
             embeddings_freq=0,
             embeddings_layer_names=None,
             embeddings_metadata=None)
