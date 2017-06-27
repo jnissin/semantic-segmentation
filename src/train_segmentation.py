@@ -78,6 +78,7 @@ if __name__ == '__main__':
     log('\n\n############################################################\n')
     log('Starting a new session at local time {}\n'.format(datetime.datetime.now()))
     log('Using keras version: {}'.format(keras.__version__))
+    log('Using tensorflow version: {}'.format(K.tf.__version__))
 
     # Seed the random in order to be able to reproduce the results
     # Note: both random and np.random
