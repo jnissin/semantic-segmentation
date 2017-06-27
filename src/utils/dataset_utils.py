@@ -332,9 +332,8 @@ class SegmentationDataGenerator(object):
         # If a crop size is given: Take a random crop
         # of both the image and the mask
         if crop_size is not None:
-
-            if (count_trailing_zeroes(crop_size[0]) < div2_constraint or
-                        count_trailing_zeroes(crop_size[1]) < div2_constraint):
+            if count_trailing_zeroes(crop_size[0]) < div2_constraint or \
+                            count_trailing_zeroes(crop_size[1]) < div2_constraint:
                 raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(div2_constraint))
 
             try:
@@ -923,9 +922,10 @@ def predictions_to_image(predictions, material_class_information, verbose=False)
         color = material_class.color
 
         if (verbose and np.any(class_mask)):
+            percentage = (float(np.sum(class_mask))/image_pixels)*100.0
             print 'Found material: {}, in {}% of the pixels. Assigning it color: {}'\
-                .format(material_class.name, (float(np.sum(class_mask))/image_pixels)*100.0, color)
-            found_materials.append(material_class)
+                .format(material_class.name, percentage, color)
+            found_materials.append((material_class, percentage))
 
             # Assign the material color to all the masked pixels
             flattened_mask[class_mask] = color

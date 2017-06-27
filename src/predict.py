@@ -52,28 +52,67 @@ def get_latest_weights_file_path(weights_folder_path):
     return None
 
 
-def show_segmentation_plot(figure_ind, title, segmented_img, found_materials):
-    colors = [np.array(m.color, dtype='float32')/255.0 for m in found_materials]
-    labels = [m.name for m in found_materials]
-    cmap = mpl.colors.ListedColormap(colors)
+def pad_image(image_array, div2_constraint, cval):
+    padded_height = dataset_utils.get_closest_number_with_n_trailing_zeroes(image_array.shape[0], div2_constraint)
+    padded_width = dataset_utils.get_closest_number_with_n_trailing_zeroes(image_array.shape[1], div2_constraint)
+    padded_shape = (padded_height, padded_width)
+
+    print 'Padding image from {} to {}'.format(image_array.shape, padded_shape)
+
+    v_diff = max(0, padded_shape[0] - image_array.shape[0])
+    h_diff = max(0, padded_shape[1] - image_array.shape[1])
+
+    v_pad_before = v_diff / 2
+    v_pad_after = (v_diff / 2) + (v_diff % 2)
+
+    h_pad_before = h_diff / 2
+    h_pad_after = (h_diff / 2) + (h_diff % 2)
+
+    padded_image_array = dataset_utils.np_pad_image(
+        image_array,
+        v_pad_before,
+        v_pad_after,
+        h_pad_before,
+        h_pad_after,
+        cval)
+
+    return padded_image_array, v_pad_before, v_pad_after, h_pad_before, h_pad_after
+
+
+def show_segmentation_plot(figure_ind,
+                           title,
+                           segmented_img,
+                           found_materials,
+                           original_image=None):
+
+    colors = [np.array(m[0].color, dtype='float32')/255.0 for m in found_materials]
+    labels = ['{0} / {1:.4f}%'.format(m[0].name, m[1]) for m in found_materials]
+    cmap = mpl.colors.ListedColormap(colors, name='material_colors', N=len(colors))
 
     # Create figure
-    f = plt.figure(figure_ind)
+    fig_width = max(float(segmented_img.width)/100.0, 8.0)
+    fig_height = max(float(segmented_img.height)/100.0, 8.0)
+    f = plt.figure(figure_ind, figsize=(fig_width, fig_height), dpi=100)
     f.suptitle(title)
+
+    # Create the original image as background
+    if original_image:
+        orig_img = plt.imshow(original_image, interpolation='bilinear', origin='upper')
 
     # Create the color bar
     height = float(segmented_img.size[1])
     num_materials = len(found_materials)
     step = (float(height) / float(num_materials))
-    bounds = np.arange(num_materials) * step
-    ticks = bounds
+    bounds = np.arange(num_materials+1) * step
+    ticks = bounds - step*0.5
     norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
     # Create the plt img
-    plt_img = plt.imshow(segmented_img, interpolation='nearest', origin='upper', cmap=cmap, norm=norm)
+    alpha = 1.0 if not original_image else 0.65
+    plt_img = plt.imshow(segmented_img, alpha=alpha, interpolation='bilinear', origin='upper', cmap=cmap, norm=norm)
 
     # Create the color bar
-    cbar = plt.colorbar(plt_img, cmap=cmap, norm=norm, boundaries=bounds, ticks=ticks)
+    cbar = plt.colorbar(plt_img, cmap=cmap, boundaries=bounds, ticks=ticks, norm=norm)
     cbar.set_ticklabels(labels)
 
     # Show the segmentation
@@ -133,8 +172,10 @@ if __name__ == '__main__':
 
     # Load the image
     image_path = sys.argv[2]
+
     print 'Loading image from: {}'.format(image_path)
     image = load_img(image_path)
+
     print 'Loaded image of size: {}'.format(image.size)
     image_array = img_to_array(image)
 
@@ -143,6 +184,19 @@ if __name__ == '__main__':
         image_array,
         np.array(get_config_value('per_channel_mean')),
         np.array(get_config_value('per_channel_stddev')))
+
+    div2_constraint = 4
+    print 'Checking image size constraints with div 2 constraint: {}'.format(div2_constraint)
+
+    v_pad_before, v_pad_after, h_pad_before, h_pad_after = 0, 0, 0, 0
+    padded = False
+
+    if dataset_utils.count_trailing_zeroes(image_array.shape[0]) < div2_constraint or \
+                    dataset_utils.count_trailing_zeroes(image_array.shape[1]) < div2_constraint:
+
+        image_array, v_pad_before, v_pad_after, h_pad_before, h_pad_after \
+            = pad_image(image_array, div2_constraint, get_config_value('per_channel_mean'))
+        padded = True
 
     # The model is expecting a batch size, even if it's one so append
     # one new dimension to the beginning to mark batch size of one
@@ -156,14 +210,29 @@ if __name__ == '__main__':
     # entries from the shape array
     expanded_mask = expanded_mask.squeeze()
 
-    # TODO :Remove arbitrary weighting from background class
-    expanded_mask[:, :, 0] = expanded_mask[:, :, 0] * 0.5
+    if padded:
+        print 'Cropping predictions back to original image shape'
+        expanded_mask = dataset_utils.np_crop_image(expanded_mask,
+                                    h_pad_before,
+                                    v_pad_before,
+                                    image_array.shape[1] - h_pad_after,
+                                    image_array.shape[0] - v_pad_after)
+
+        print 'Size after cropping: {}'.format(expanded_mask.shape)
+
+    # Weight the background class activations to reduce the salt'n'pepper noise
+    # likely caused by the class imbalance in the training data
+    background_class_prediction_weight = get_config_value('background_class_prediction_weight')
+
+    if background_class_prediction_weight is not None:
+        expanded_mask[:, :, 0] = expanded_mask[:, :, 0] * background_class_prediction_weight
 
     # Check whether we are using a CRF
     if get_config_value('use_crf_in_prediction'):
         # Must use the unnormalized image data
+        original_image_array = img_to_array(image)
         crf_iterations = get_config_value('crf_iterations')
-        crf = model_utils.get_dcrf(img_to_array(image), num_classes)
+        crf = model_utils.get_dcrf(original_image_array, num_classes)
 
         # Turn the output of the last convolutional layer to softmax probabilities
         # and then to unary.
@@ -195,16 +264,13 @@ if __name__ == '__main__':
         found_materials = flattened_masks[i][1]
         segmented_img = array_to_img(flattened_mask, scale=False)
         title = 'Top {} segmentation of {}'.format(i+1, image_path.split('/')[-1])
-        show_segmentation_plot(i+1, title, segmented_img, found_materials)
+        show_segmentation_plot(i+1, title, segmented_img, found_materials, image)
 
         if len(sys.argv) > 3:
             save_file = 'top_{}_{}'.format(i+1, sys.argv[3])
             print 'Saving top {} predicted segmentation to: {}'.format(i+1, save_file)
             segmented_img.save(save_file)
 
-    # Keep figures alive
+    # Keep figures alive until user input from console
     raw_input()
-
-
-
     print 'Done'
