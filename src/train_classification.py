@@ -4,7 +4,9 @@ import datetime
 import random
 import sys
 
+import keras
 import keras.backend as K
+
 import numpy as np
 from PIL import ImageFile
 
@@ -35,6 +37,7 @@ if __name__ == '__main__':
     # Setup the global LOG_FILE_PATH to enable logging
     log('\n\n############################################################\n')
     log('Starting a new session at local time {}\n'.format(datetime.datetime.now()))
+    log('Using keras version: {}'.format(keras.__version__))
 
     # Seed the random in order to be able to reproduce the results
     # Note: both random and np.random
