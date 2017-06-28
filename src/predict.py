@@ -225,7 +225,9 @@ if __name__ == '__main__':
     background_class_prediction_weight = get_config_value('background_class_prediction_weight')
 
     if background_class_prediction_weight is not None:
-        expanded_mask[:, :, 0] = expanded_mask[:, :, 0] * background_class_prediction_weight
+        expanded_mask[:, :, 0] = expanded_mask[:, :] * background_class_prediction_weight
+
+    #expanded_mask *= np.array(get_config_value('median_frequency_balancing_weights'))
 
     # Check whether we are using a CRF
     if get_config_value('use_crf_in_prediction'):
@@ -269,7 +271,7 @@ if __name__ == '__main__':
         if len(sys.argv) > 3:
             save_file = 'top_{}_{}'.format(i+1, sys.argv[3])
             print 'Saving top {} predicted segmentation to: {}'.format(i+1, save_file)
-            segmented_img.save(save_file)
+            segmented_img.save(save_file, format='PNG')
 
     # Keep figures alive until user input from console
     raw_input()

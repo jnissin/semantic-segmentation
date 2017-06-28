@@ -38,12 +38,11 @@ def get_color_for_category_index(idx):
     """
 
     cid = idx
-    r = 0
+    r = idx
     g = 0
     b = 0
 
     for j in range(0, 7):
-        r = idx
         g = g | get_bit(cid, 0) << 7 - j
         b = b | get_bit(cid, 1) << 7 - j
         cid = cid >> 2
@@ -69,8 +68,8 @@ def combine_mask(
         processed_masks_directory_path,
         background_category_name,
         mask_file_name,
-        category_to_color,
-):
+        category_to_color):
+
     # White color
     white_color = (255, 255, 255)
 
@@ -82,14 +81,18 @@ def combine_mask(
     # and try to find a matching mask file name
     for category in category_directories:
         category_files = os.listdir(os.path.join(masks_directory_path, category))
+        category_idx_and_color = category_to_color[category]
+        category_idx = category_idx_and_color[0]
+        category_color = category_idx_and_color[1]
+
+        #print 'Category {} with idx {} and color {}'.format(category, category_idx, category_color)
 
         if mask_file_name in category_files:
-            category_idx_and_color = category_to_color[category]
             category_img = load_img(os.path.join(masks_directory_path, category, mask_file_name))
             np_category_img = img_to_array(category_img)
 
             # Replace the white parts in the category img
-            np_category_img = np_replace_color(np_category_img, white_color, category_idx_and_color[1])
+            np_category_img = np_replace_color(np_category_img, white_color, category_color)
 
             # Replace the appropriate parts in the background img
             np_bg_img += np_category_img
@@ -99,8 +102,8 @@ def combine_mask(
     np_bg_img = np_replace_color(np_bg_img, white_color, bg_color)
 
     # Write the file
-    processed_img = array_to_img(np_bg_img)
-    processed_img.save(os.path.join(processed_masks_directory_path, 'processed_{}'.format(mask_file_name)))
+    processed_img = array_to_img(np_bg_img, scale=False)
+    processed_img.save(os.path.join(processed_masks_directory_path, mask_file_name), format='PNG')
     print '{} mask flattened'.format(mask_file_name)
 
 
@@ -151,10 +154,11 @@ if __name__ == '__main__':
         write_category_information_to_file(f, background_category_name, 0, 0)
 
         for category_idx, category in enumerate(category_directories):
-            category_color = get_color_for_category_index(category_idx + 1)
-            category_to_color[category] = (category_idx, category_color)
-            write_category_information_to_file(f, category, category_color[0], category_color[0])
-            print 'Category {} has idx {} and color {}'.format(category, category_idx, category_color)
+            cidx = category_idx+1
+            category_color = get_color_for_category_index(cidx)
+            category_to_color[category] = (cidx, category_color)
+            write_category_information_to_file(f, category, cidx, category_color[0])
+            print 'Category {} has idx {} and color {}'.format(category, cidx, category_color)
 
     print 'Material category information written to: {}'\
         .format(os.path.join(processed_masks_directory_path, materials_file_name))

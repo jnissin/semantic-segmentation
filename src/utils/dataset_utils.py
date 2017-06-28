@@ -81,6 +81,7 @@ class SegmentationDataGenerator(object):
             mask_files_folder_path,
             photo_mask_files,
             material_class_information,
+            num_channels,
             random_seed=None,
             per_channel_mean_normalization=True,
             per_channel_mean=None,
@@ -112,6 +113,7 @@ class SegmentationDataGenerator(object):
         self.mask_files_folder_path = mask_files_folder_path
         self.photo_mask_files = photo_mask_files
         self.material_class_information = material_class_information
+        self.num_channels = num_channels
 
         self.per_channel_mean_normalization = per_channel_mean_normalization
 
@@ -139,14 +141,15 @@ class SegmentationDataGenerator(object):
         # Calculate missing per-channel mean if necessary
         if per_channel_mean_normalization and per_channel_mean is None:
             photos = [sample[0] for sample in photo_mask_files]
-            self.per_channel_mean = calculate_per_channel_mean(photo_files_folder_path, photos)
+            self.per_channel_mean = calculate_per_channel_mean(photo_files_folder_path, photos, self.num_channels)
 
         # Calculate missing per-channel stddev if necessary
         if per_channel_stddev_normalization and per_channel_stddev is None:
             photos = [sample[0] for sample in photo_mask_files]
             self.per_channel_stddev = calculate_per_channel_stddev(photo_files_folder_path,
                                                                    photos,
-                                                                   self.per_channel_mean)
+                                                                   self.per_channel_mean,
+                                                                   self.num_channels)
 
         # Use per-channel mean but in range [0, 255] if nothing else is given.
         # The normalization is done to the whole batch after transformations so
@@ -156,7 +159,7 @@ class SegmentationDataGenerator(object):
 
         # Use black (background)
         if self.mask_cval is None:
-            self.mask_cval = (0.0, 0.0, 0.0)
+            self.mask_cval = np.array([0.0] * 3)
 
         # Use the given random seed for reproducibility
         if random_seed is not None:
@@ -286,8 +289,8 @@ class SegmentationDataGenerator(object):
     def get_segmentation_data_pair(self, photo_mask_pair, crop_size, div2_constraint=4):
 
         # Load the image and mask as PIL images
-        image = load_img(os.path.join(self.photo_files_folder_path, photo_mask_pair[0]))
-        mask = load_img(os.path.join(self.mask_files_folder_path, photo_mask_pair[1]))
+        image = load_n_channel_image(os.path.join(self.photo_files_folder_path, photo_mask_pair[0]), self.num_channels)
+        mask = load_n_channel_image(os.path.join(self.mask_files_folder_path, photo_mask_pair[1]), 3)
 
         # Resize the image to match the mask size if necessary, since
         # the original photos are sometimes huge
@@ -309,14 +312,12 @@ class SegmentationDataGenerator(object):
             # on each axis
             min_img_shape = (max(crop_size[1], image.shape[0]), max(crop_size[0], image.shape[1]))
 
-            # Image needs to be filled with the photo_cval color if
-            # available if not, use black
-            img_cval = self.photo_cval if (self.photo_cval is not None) else (0, 0, 0)
+            # Image needs to be filled with the photo_cval color
+            img_cval = self.photo_cval
             image = np_pad_image_to_shape(image, min_img_shape, img_cval)
 
-            # Mask should be padded with the mask_cval color if
-            # available if not, use black
-            mask_cval = self.mask_cval if (self.mask_cval is not None) else (0, 0, 0)
+            # Mask should be padded with the mask_cval color
+            mask_cval = self.mask_cval
             mask = np_pad_image_to_shape(mask, min_img_shape, mask_cval)
 
         # If we are using data augmentation apply the random tranformation
@@ -376,14 +377,12 @@ class SegmentationDataGenerator(object):
 
             padded_shape = (padded_height, padded_width)
 
-            # Image needs to be filled with the photo_cval color if
-            # available if not, use black
-            img_cval = self.photo_cval if (self.photo_cval is not None) else (0, 0, 0)
+            # Image needs to be filled with the photo_cval color
+            img_cval = self.photo_cval
             image = np_pad_image_to_shape(image, padded_shape, img_cval)
 
-            # Mask should be padded with the mask_cval color if
-            # available if not, use black
-            mask_cval = self.mask_cval if (self.mask_cval is not None) else (0, 0, 0)
+            # Mask should be padded with the mask_cval color
+            mask_cval = self.mask_cval
             mask = np_pad_image_to_shape(mask, padded_shape, mask_cval)
 
         # Expand the mask image to accommodate different classes
@@ -426,6 +425,7 @@ class ClassificationDataGenerator(object):
                  per_channel_mean,
                  path_to_labels_file,
                  path_to_categories_file,
+                 num_channels,
                  verbose=False):
 
         self.path_to_images_folder = path_to_images_folder
@@ -471,7 +471,7 @@ class ClassificationDataGenerator(object):
         file_path = os.path.join(self.path_to_images_folder, category, filename)
 
         # Load the image
-        img = load_img(file_path)
+        img = load_n_channel_image(file_path, self.num_channels)
         x = img_to_array(img)
 
         # Normalize the image channels
@@ -642,6 +642,13 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
     return np_img
 
 
+def load_n_channel_image(path, num_channels):
+    if num_channels == 3:
+        return load_img(path)
+
+    return Image.open(path)
+
+
 def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None):
     """
     Normalizes the color channels from the given image to zero-centered
@@ -679,31 +686,30 @@ def normalize_image_channels(img_array, per_channel_mean=None, per_channel_stdde
     return img_array
 
 
-def _calculate_per_channel_mean_parallel(path):
-    img = load_img(path)
+def _calculate_per_channel_mean_parallel(path, num_channels):
+    img = load_n_channel_image(path, num_channels)
     img_array = img_to_array(img)
 
     # Normalize colors to zero-centered range [-1, 1]
     img_array = normalize_image_channels(img_array)
 
     # Accumulate the sums of the different color channels
-    tot = np.array([0.0, 0.0, 0.0, 0.0])
+    tot = np.array([0.0] * (num_channels+1))
 
     # Store the color value sums
-    tot[0] = np.sum(img_array[:, :, 0])
-    tot[1] = np.sum(img_array[:, :, 1])
-    tot[2] = np.sum(img_array[:, :, 2])
+    for i in range(0, num_channels):
+        tot[i] = np.sum(img_array[:, :, i])
 
     # In the final index store the number of pixels
-    tot[3] = img_array.shape[0] * img_array.shape[1]
+    tot[num_channels] = img_array.shape[0] * img_array.shape[1]
 
     return tot
 
 
-def calculate_per_channel_mean(path, files):
+def calculate_per_channel_mean(path, files, num_channels):
     """
     Calculates the per-channel mean from all the images in the given
-    path and returns it as a 3 dimensional numpy array.
+    path and returns it as a num_channels dimensional numpy array.
 
     Parameters to the function:
 
@@ -717,7 +723,7 @@ def calculate_per_channel_mean(path, files):
 
     data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_calculate_per_channel_mean_parallel)(
-            os.path.join(path, f)) for f in files)
+            os.path.join(path, f), num_channels) for f in files)
 
     # Calculate the final value
     sums = np.sum(np.vstack(data), axis=0)
@@ -730,20 +736,19 @@ def calculate_per_channel_mean(path, files):
     return per_channel_mean
 
 
-def _calculate_per_channel_stddev_parallel(path, per_channel_mean):
-    var_tot = np.array([0.0, 0.0, 0.0, 0.0])
+def _calculate_per_channel_stddev_parallel(path, per_channel_mean, num_channels):
+    var_tot = np.array([0.0] * (num_channels+1))
 
     # Load the image as numpy array
-    img = load_img(path)
+    img = load_n_channel_image(path, num_channels)
     img_array = img_to_array(img)
 
     # Normalize colors to zero-centered range [-1, 1]
     img_array = normalize_image_channels(img_array)
 
     # Var: SUM_0..N {(val-mean)^2} / N
-    var_tot[0] = np.sum(np.square(img_array[:, :, 0] - per_channel_mean[0]))
-    var_tot[1] = np.sum(np.square(img_array[:, :, 1] - per_channel_mean[1]))
-    var_tot[2] = np.sum(np.square(img_array[:, :, 2] - per_channel_mean[2]))
+    for i in range(0, num_channels):
+        var_tot[i] = np.sum(np.square(img_array[:, :, i] - per_channel_mean[i]))
 
     # Accumulate the number of total pixels
     var_tot[-1] = img_array.shape[0] * img_array.shape[1]
@@ -751,14 +756,14 @@ def _calculate_per_channel_stddev_parallel(path, per_channel_mean):
     return var_tot
 
 
-def calculate_per_channel_stddev(path, files, per_channel_mean):
+def calculate_per_channel_stddev(path, files, per_channel_mean, num_channels):
     # Parallelize per-channel variance calculations
     num_cores = multiprocessing.cpu_count()
     n_jobs = min(32, num_cores)
 
     data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_calculate_per_channel_stddev_parallel)(
-            os.path.join(path, f), per_channel_mean) for f in files)
+            os.path.join(path, f), per_channel_mean, num_channels) for f in files)
 
     # Calculate the final value
     sums = np.sum(np.vstack(data), axis=0)
@@ -786,7 +791,7 @@ def calculate_mask_class_frequencies(mask_file_path, material_class_information)
     num_pixels = img_array.shape[0] * img_array.shape[1]
     img_pixels = (class_pixels > 0.0) * num_pixels
 
-    return (class_pixels, img_pixels)
+    return class_pixels, img_pixels
 
 
 def calculate_median_frequency_balancing_weights(path, files, material_class_information):

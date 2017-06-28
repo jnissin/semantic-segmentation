@@ -24,7 +24,7 @@
 
     "background_class_prediction_weight": 0.2,
     "use_crf_in_prediction": true,
-    "crf_iterations": 2,
+    "crf_iterations": 1,
 
     "num_epochs": 100,
     "batch_size": 10,

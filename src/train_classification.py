@@ -58,6 +58,7 @@ if __name__ == '__main__':
         per_channel_mean=get_config_value('per_channel_mean'),
         path_to_labels_file=get_config_value('path_to_training_labels_file'),
         path_to_categories_file=get_config_value('path_to_categories_file'),
+        num_channels=get_config_value('num_channels'),
         verbose=True)
 
     # Create the validation data generator
@@ -68,6 +69,7 @@ if __name__ == '__main__':
         per_channel_mean=get_config_value('per_channel_mean'),
         path_to_labels_file=get_config_value('path_to_validation_labels_file'),
         path_to_categories_file=get_config_value('path_to_categories_file'),
+        num_channels=get_config_value('num_channels'),
         verbose=True)
 
     # Create the model
