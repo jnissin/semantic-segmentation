@@ -1,6 +1,6 @@
 {
     "path_to_material_class_file": "../data/IVRG/Indoor_dataset/ivrg-materials.csv",
-    "path_to_photos": "../data/IVRG/Indoor_dataset/rgbnImages/",
+    "path_to_photos": "../data/IVRG/Indoor_dataset/rgbImages/",
     "path_to_masks": "../data/IVRG/Indoor_dataset/MasksProcessed/",
 
     "keras_tensorboard_log_path": "../logs/enet-naive-upsampling/ivrg/rgbn/tensorboard/",
@@ -32,7 +32,7 @@
     "crop_height": 512,
 
     "dataset_splits": [0.8, 0.05, 0.15],
-    "num_channels": 4,
+    "num_channels": 3,
     "random_seed": 14874,
 
     "model": "enet-naive-upsampling",
@@ -57,9 +57,9 @@
       "freeze_transferred_layers": false
     },
 
-    "per_channel_mean": [-0.16451063, -0.13335804, -0.27400967, -0.16896716],
-    "per_channel_mean_255": [107, 110, 93, 106],
-    "per_channel_variance": [0.35352803, 0.37023978, 0.34719934, 0.31002501],
-    "per_channel_stddev":  [0.59458223, 0.60847332, 0.58923624, 0.5567989],
+    "per_channel_mean": [-0.16451063, -0.13335804, -0.27400967],
+    "per_channel_mean_255": [107, 110, 93],
+    "per_channel_variance": [0.35352803, 0.37023978, 0.34719934],
+    "per_channel_stddev":  [0.59458223, 0.60847332, 0.58923624],
     "median_frequency_balancing_weights": [0.04616032, 1.07478752, 2.26621638, 5.13677421, 0.27847631, 1.34839478, 0.21313303, 0.4131698, 0.88724021, 5.42955375, 1.0, 1.25183853, 0.17789982]
 }
