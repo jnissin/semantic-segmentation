@@ -3,9 +3,9 @@
     "path_to_photos": "../data/IVRG/Indoor_dataset/rgbImages/",
     "path_to_masks": "../data/IVRG/Indoor_dataset/MasksProcessed/",
 
-    "keras_tensorboard_log_path": "../logs/enet-naive-upsampling/ivrg/rgbn/tensorboard/",
-    "keras_model_checkpoint_file_path": "../checkpoints/enet-naive-upsampling/ivrg/rgbn/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "keras_csv_log_file_path": "../logs/enet-naive-upsampling/ivrg/rgbn/unet-per-epoch-data.csv",
+    "keras_tensorboard_log_path": "../logs/enet-naive-upsampling/ivrg/rgb/tensorboard/",
+    "keras_model_checkpoint_file_path": "../checkpoints/enet-naive-upsampling/ivrg/rgb/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "../logs/enet-naive-upsampling/ivrg/rgb/unet-per-epoch-data.csv",
 
     "reduce_lr_on_plateau": {
       "factor": 0.1,
@@ -16,7 +16,7 @@
       "min_lr": 0
     },
 
-    "log_file_path": "../logs/enet-naive-upsampling/ivrg/rgbn/log.txt",
+    "log_file_path": "../logs/enet-naive-upsampling/ivrg/rgb/log.txt",
 
     "image_data_format": "channels_last",
     "continue_from_last_checkpoint": false,
