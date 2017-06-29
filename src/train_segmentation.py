@@ -48,7 +48,7 @@ def get_loss_function(training_set):
 
         median_frequency_balancing_weights = K.constant(value=median_frequency_balancing_weights)
         loss_function = model_utils.weighted_pixelwise_crossentropy(median_frequency_balancing_weights)
-        log('Using weighted pixelwise corss-entropy loss function with median frequency balancing weights')
+        log('Using weighted pixelwise cross-entropy loss function with median frequency balancing weights')
     else:
         log('Unknown loss function: {} exiting').format(get_config_value('loss_function'))
         sys.exit(0)

@@ -156,10 +156,12 @@ class SegmentationDataGenerator(object):
         # the images are not in range [-1,1] before transformations.
         if self.photo_cval is None:
             self.photo_cval = ((np.array(self.per_channel_mean) + 1.0) / 2.0) * 255.0
+            print 'Using photo cval: {}'.format(self.photo_cval)
 
         # Use black (background)
         if self.mask_cval is None:
             self.mask_cval = np.array([0.0] * 3)
+            print 'Using mask cval: {}'.format(self.mask_cval)
 
         # Use the given random seed for reproducibility
         if random_seed is not None:
@@ -250,7 +252,7 @@ class SegmentationDataGenerator(object):
                 y = flip_axis(y, img_row_axis)
 
         # Check that we don't have any nan values
-        if (np.any(np.isnan(x)) or np.any(np.isnan(y))):
+        if np.any(np.isnan(x)) or np.any(np.isnan(y)):
             raise ValueError('NaN values found after applying random transform')
 
         return x, y
@@ -269,6 +271,9 @@ class SegmentationDataGenerator(object):
         # to "center" the data.
         if self.per_channel_mean_normalization:
             if self.per_channel_mean is not None:
+                if not ((self.per_channel_mean < 1.0 + 1e-7).all() and (self.per_channel_mean > -1.0 - 1e-7).all()):
+                    raise ValueError('Per-channel mean is not within range [-1, 1]')
+
                 batch -= self.per_channel_mean
             else:
                 raise ValueError(
@@ -279,6 +284,9 @@ class SegmentationDataGenerator(object):
         # value to a z-score.
         if self.per_channel_stddev_normalization:
             if self.per_channel_stddev is not None:
+                if not ((self.per_channel_stddev < 1.0 + 1e-7).all() and (self.per_channel_stddev > -1.0 - 1e-7).all()):
+                    raise ValueError('Per-channel stddev is not within range [-1, 1]')
+
                 batch /= (self.per_channel_stddev + 1e-7)
             else:
                 raise ValueError(
@@ -320,9 +328,9 @@ class SegmentationDataGenerator(object):
             mask_cval = self.mask_cval
             mask = np_pad_image_to_shape(mask, min_img_shape, mask_cval)
 
-        # If we are using data augmentation apply the random tranformation
+        # If we are using data augmentation apply the random transformation
         # to both the image and mask now. We apply the transformation to the
-        # whole image to decrease the number of 'dead' pixels due to tranformations
+        # whole image to decrease the number of 'dead' pixels due to transformations
         # within the possible crop.
         if self.use_data_augmentation and np.random.random() <= self.augmentation_probability:
             image, mask = self.apply_random_transform(image, mask)
@@ -1005,11 +1013,11 @@ def split_dataset(
 
     # If the sizes don't match exactly add/subtract the different
     # from the training set
-    if (training_set_size + validation_set_size + test_set_size != dataset_size):
+    if training_set_size + validation_set_size + test_set_size != dataset_size:
         diff = dataset_size - (training_set_size + validation_set_size + test_set_size)
         training_set_size += diff
 
-    if (training_set_size + validation_set_size + test_set_size != dataset_size):
+    if training_set_size + validation_set_size + test_set_size != dataset_size:
         raise ValueError(
             'The split set sizes do not sum to total dataset size: {} + {} + {} = {} != {}'.format(training_set_size,
                                                                                                    validation_set_size,

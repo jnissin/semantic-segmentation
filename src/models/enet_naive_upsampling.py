@@ -9,7 +9,9 @@ from keras.layers.merge import add, concatenate
 from keras.layers.normalization import BatchNormalization
 from keras.models import Model
 from keras.layers import Input
+
 import keras.backend as K
+
 
 ##############################################
 # ENCODER
