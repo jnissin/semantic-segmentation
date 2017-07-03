@@ -155,18 +155,18 @@ def get_segnet(input_shape, num_classes):
     Decoder path
     """
     #conv6 = get_decoder_block('decoder_block1', 3, 1024, conv5, conv5)
-    conv7 = get_decoder_block('decoder_block2', 3, 512, conv4, conv4)
-    conv8 = get_decoder_block('decoder_block3', 3, 256, conv7, conv3)
-    conv9 = get_decoder_block('decoder_block4', 2, 128, conv8, conv2)
-    conv10 = get_decoder_block('decoder_block5', 2, 64, conv9, conv1)
+    conv5 = get_decoder_block('decoder_block2', 3, 512, pool4, conv4)
+    conv6 = get_decoder_block('decoder_block3', 3, 256, conv5, conv3)
+    conv7 = get_decoder_block('decoder_block4', 2, 128, conv6, conv2)
+    conv8 = get_decoder_block('decoder_block5', 2, 64, conv7, conv1)
 
     """
     Last convolutional layer and softmax activation for
     per-pixel classification
     """
-    conv11 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv10)
+    conv9 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv8)
     
-    model = Model(inputs=inputs, outputs=conv11, name='SegNet-Basic')
+    model = Model(inputs=inputs, outputs=conv9, name='SegNet-Basic')
 
     return model
 
