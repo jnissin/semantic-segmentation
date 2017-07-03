@@ -2,7 +2,7 @@
 
 from keras.models import Model
 from keras.layers import Input, Conv2D, MaxPooling2D, ZeroPadding2D, BatchNormalization, Dropout, \
-    concatenate, UpSampling2D, Lambda
+    concatenate, UpSampling2D, Lambda, SpatialDropout2D
 from keras.layers.advanced_activations import LeakyReLU
 
 
@@ -17,12 +17,13 @@ def get_convolution_block(
         use_batch_normalization=True,
         use_activation=True,
         use_dropout=True,
+        use_bias=True,
         kernel_size=(3, 3),
         padding='valid',
         conv2d_kernel_initializer='he_normal',
         conv2d_bias_initializer='zeros',
-        relu_alpha=0.01,
-        dropout_rate=0.2):
+        relu_alpha=0.1,
+        dropout_rate=0.1):
     conv = ZeroPadding2D(
         (1, 1),
         name='{}_padding'.format(name))(input_layer)
@@ -33,13 +34,8 @@ def get_convolution_block(
         padding=padding,
         kernel_initializer=conv2d_kernel_initializer,
         bias_initializer=conv2d_bias_initializer,
-        name=name)(conv)
-
-    if use_activation:
-        # With alpha=0.0 LeakyReLU is a ReLU
-        conv = LeakyReLU(
-            alpha=relu_alpha,
-            name='{}_activation'.format(name))(conv)
+        name=name,
+        use_bias=use_bias)(conv)
 
     '''
     From a statistics point of view BN before activation does not make sense to me.
@@ -52,10 +48,17 @@ def get_convolution_block(
     '''
     if use_batch_normalization:
         conv = BatchNormalization(
+            momentum=0.1,
             name='{}_normalization'.format(name))(conv)
 
+    if use_activation:
+        # With alpha=0.0 LeakyReLU is a ReLU
+        conv = LeakyReLU(
+            alpha=relu_alpha,
+            name='{}_activation'.format(name))(conv)
+
     if use_dropout:
-        conv = Dropout(dropout_rate)(conv)
+        conv = SpatialDropout2D(dropout_rate)(conv)
 
     return conv
 
@@ -94,7 +97,7 @@ def get_decoder_block(
         num_convolutions,
         num_filters,
         input_layer,
-        concat_layer,
+        concat_layer=None,
         upsampling_size=(2, 2),
         kernel_size=(3, 3)):
 
@@ -103,17 +106,22 @@ def get_decoder_block(
 
     # Add concatenation layer to pass features from encoder path
     # to the decoder path
-    concat = concatenate([up, concat_layer], axis=-1)
+    previous_layer = None
 
-    # Add convolution layers
-    previous_layer = concat
+    if concat_layer is not None:
+        concat = concatenate([up, concat_layer], axis=-1)
+        previous_layer = concat
+    else:
+        previous_layer = up
 
     for i in range(0, num_convolutions):
         conv = get_convolution_block(
             num_filters=num_filters,
             input_layer=previous_layer,
             kernel_size=kernel_size,
-            name='{}_conv{}'.format(name_prefix, i + 1))
+            name='{}_conv{}'.format(name_prefix, i + 1),
+            use_bias=False,
+            use_activation=False)
 
         previous_layer = conv
 
@@ -132,6 +140,8 @@ def get_segnet(input_shape, num_classes):
     # the same dimensions
     inputs = Input(shape=input_shape)
 
+    # SegNet-Basic
+
     """
     Encoder path
     """
@@ -139,13 +149,13 @@ def get_segnet(input_shape, num_classes):
     conv2, pool2 = get_encoder_block('encoder_block2', 2, 128, conv1)
     conv3, pool3 = get_encoder_block('encoder_block3', 3, 256, conv2)
     conv4, pool4 = get_encoder_block('encoder_block4', 3, 512, conv3)
-    conv5, pool5 = get_encoder_block('encoder_block5', 3, 1024, conv4)
+    #conv5, pool5 = get_encoder_block('encoder_block5', 3, 1024, conv4)
 
     """
     Decoder path
     """
-    conv6 = get_decoder_block('decoder_block1', 3, 1024, conv5, conv5)
-    conv7 = get_decoder_block('decoder_block2', 3, 512, conv6, conv4)
+    #conv6 = get_decoder_block('decoder_block1', 3, 1024, conv5, conv5)
+    conv7 = get_decoder_block('decoder_block2', 3, 512, conv4, conv4)
     conv8 = get_decoder_block('decoder_block3', 3, 256, conv7, conv3)
     conv9 = get_decoder_block('decoder_block4', 2, 128, conv8, conv2)
     conv10 = get_decoder_block('decoder_block5', 2, 64, conv9, conv1)
@@ -156,7 +166,7 @@ def get_segnet(input_shape, num_classes):
     """
     conv11 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv10)
     
-    model = Model(inputs=inputs, outputs=conv11, name='SegNet')
+    model = Model(inputs=inputs, outputs=conv11, name='SegNet-Basic')
 
     return model
 
