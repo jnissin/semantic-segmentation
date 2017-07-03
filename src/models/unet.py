@@ -146,9 +146,9 @@ def get_segnet(input_shape, num_classes):
     Encoder path
     """
     conv1, pool1 = get_encoder_block('encoder_block1', 2, 64, inputs)
-    conv2, pool2 = get_encoder_block('encoder_block2', 2, 128, conv1)
-    conv3, pool3 = get_encoder_block('encoder_block3', 3, 256, conv2)
-    conv4, pool4 = get_encoder_block('encoder_block4', 3, 512, conv3)
+    conv2, pool2 = get_encoder_block('encoder_block2', 2, 128, pool1)
+    conv3, pool3 = get_encoder_block('encoder_block3', 3, 256, pool2)
+    conv4, pool4 = get_encoder_block('encoder_block4', 3, 512, pool3)
     #conv5, pool5 = get_encoder_block('encoder_block5', 3, 1024, conv4)
 
     """
