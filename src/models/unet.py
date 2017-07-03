@@ -155,8 +155,7 @@ def get_segnet(input_shape, num_classes):
     per-pixel classification
     """
     conv11 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv10)
-    #softmax = Lambda(depth_softmax, name='softmax')(conv11)
-
+    
     model = Model(inputs=inputs, outputs=conv11, name='SegNet')
 
     return model
@@ -214,8 +213,6 @@ def get_unet(input_shape, num_classes):
     per-pixel classification
     '''
     conv10 = Conv2D(num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
-    # conv10 = BatchNormalization(name='fc1_normalization')(conv10)
-    # softmax = Lambda(depth_softmax, name='softmax')(conv10)
 
     model = Model(inputs=inputs, outputs=conv10, name='U-net')
 

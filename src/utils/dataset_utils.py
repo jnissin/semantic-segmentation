@@ -220,7 +220,7 @@ class SegmentationDataGenerator(object):
                                     [0, 0, 1]])
             transform_matrix = zoom_matrix if transform_matrix is None else np.dot(transform_matrix, zoom_matrix)
 
-        # Apply the tranformation matrix to the image
+        # Apply the transformation matrix to the image
         if transform_matrix is not None:
             # The function apply_transform only accepts float for cval,
             # so mask the pixels with an unlikely value to exist in an
@@ -275,6 +275,7 @@ class SegmentationDataGenerator(object):
                     raise ValueError('Per-channel mean is not within range [-1, 1]')
 
                 batch -= self.per_channel_mean
+
             else:
                 raise ValueError(
                     'SegmentationDataGenerator specifies `per_channel_mean_normalization` but has not been fit on any training data.')
@@ -904,8 +905,8 @@ def expand_mask(mask, material_class_information, verbose=False):
 
         # Set the activations of all the pixels that match the color mask to 1
         # on the dimension that matches the material class id
-        if (np.any(class_mask)):
-            if (found_materials != None):
+        if np.any(class_mask):
+            if found_materials is not None:
                 found_materials.append(material_class.substance_ids)
             expanded_mask[:, :, material_class.id][class_mask] = 1.0
 

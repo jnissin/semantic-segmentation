@@ -97,6 +97,8 @@ def get_model(model_name, input_shape, num_classes):
         return enet_naive_upsampling.get_model(input_shape, num_classes, encoder_only=True)
     elif model_name == 'enet-max-unpooling':
         return enet_max_unpooling.get_model(input_shape, num_classes)
+    elif model_name == 'segnet':
+        return unet.get_segnet(input_shape, num_classes)
     else:
         raise ValueError('Unknown model name: {}'.format(model_name))
 
