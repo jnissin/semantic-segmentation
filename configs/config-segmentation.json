@@ -1,11 +1,13 @@
 {
-    "path_to_material_class_file": "../categories/materials-minc.csv",
-    "path_to_photos": "../data/photos-filtered/",
-    "path_to_masks": "../data/masks-filtered/",
+    "path_to_material_class_file": "categories/materials-minc.csv",
+    "path_to_photos": "data/photos-debug/",
+    "path_to_masks": "data/masks-debug/",
 
-    "keras_tensorboard_log_path": "../logs/enet-naive-upsampling/tensorboard/",
-    "keras_model_checkpoint_file_path": "../checkpoints/enet-naive-upsampling/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "keras_csv_log_file_path": "../logs/enet-naive-upsampling/unet-per-epoch-data.csv",
+    "keras_tensorboard_log_path": "logs/enet-naive-upsampling-debug/tensorboard/",
+    "keras_model_checkpoint_file_path": "checkpoints/enet-naive-upsampling-debug/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "logs/enet-naive-upsampling-debug/unet-per-epoch-data.csv",
+    "optimizer_checkpoint_file_path": "checkpoints/enet-naive-upsampling-debug/optimizer/optimizer-config.json",
+    "log_file_path": "logs/enet-naive-upsampling-debug/log.txt",
 
     "reduce_lr_on_plateau": {
       "factor": 0.1,
@@ -16,10 +18,8 @@
       "min_lr": 0
     },
 
-    "log_file_path": "../logs/enet-naive-upsampling/log.txt",
-
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": false,
+    "continue_from_last_checkpoint": true,
     "use_data_augmentation": true,
 
     "background_class_prediction_weight": 0.2,
@@ -27,7 +27,7 @@
     "crf_iterations": 1,
 
     "num_epochs": 100,
-    "batch_size": 10,
+    "batch_size": 1,
     "crop_width": 512,
     "crop_height": 512,
 
@@ -46,7 +46,7 @@
       "decay": 2e-6
     },
 
-    "transfer_weights": true,
+    "transfer_weights": false,
     "transfer_weights_options": {
       "transfer_model_name": "enet-naive-upsampling-encoder-only",
       "transfer_model_input_shape": [362, 362, 3],

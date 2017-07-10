@@ -4,22 +4,23 @@ import keras
 import os
 import time
 
-"""
-This class prints information to a file after every batch. Useful
-for observing progress somewhere where the standard output is not
-readily available for observation such as the Triton cluster.
-"""
-
 
 class FileMonitor(keras.callbacks.Callback):
     """
-    # Arguments
-        log_file_path: Path to the log file that should be created
+    Writes information to a file after every batch. Useful for observing progress
+    somewhere where the standard output is not readily available for observation
+    such as the Triton cluster.
     """
-    def __init__(self,
-                 log_file_path,
-                 steps_per_epoch,
-                 buffer_size=3):
+
+    def __init__(self, log_file_path, steps_per_epoch, buffer_size=3):
+        # type: (str, int, int) -> ()
+
+        """
+        # Arguments
+            log_file_path: Path to the log file that should be created
+        """
+        super(FileMonitor, self).__init__()
+
         self.log_file_path = log_file_path
         self.steps_per_epoch = steps_per_epoch
         self.buffer_size = 3

@@ -5,11 +5,12 @@ import json
 import numpy as np
 
 import dataset_utils as dataset_utils
+from ..callbacks.optimizer_checkpoint import OptimizerCheckpoint
 
+import keras.backend as K
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau
-from keras.optimizers import SGD, Adam
+from keras.optimizers import SGD, Adam, Optimizer
 from keras.models import Model
-
 
 ##############################################
 # GLOBALS
@@ -87,22 +88,50 @@ def get_latest_weights_file_path(weights_folder_path):
     return None
 
 
-def get_optimizer(optimizer_info):
-    optimizer = None
+def get_optimizer(optimizer_info, optimizer_checkpoint_file_path):
+    # type: (dict[str, str], str) -> keras.optimizers.Optimizer
 
+    optimizer_configuration = None
+    optimizer = None
     optimizer_name = optimizer_info['name']
 
+
+    if optimizer_checkpoint_file_path is not None:
+        log('Loading optimizer configuration from file: {}'.format(optimizer_checkpoint_file_path))
+        with open(optimizer_checkpoint_file_path, 'r') as f:
+            data = f.read()
+            optimizer_configuration = json.loads(data)
+
     if optimizer_name == 'adam':
-        lr = optimizer_info['learning_rate']
-        decay = optimizer_info['decay']
-        optimizer = Adam(lr=lr, decay=decay)
-        log('Using Adam optimizer with learning rate: {}, decay: {}'.format(lr, decay))
+        if optimizer_configuration is not None:
+            optimizer = Adam.from_config(optimizer_configuration)
+        else:
+            lr = optimizer_info['learning_rate']
+            decay = optimizer_info['decay']
+            optimizer = Adam(lr=lr, decay=decay)
+
+        log('Using {} optimizer with learning rate: {}, decay: {}, beta_1: {}, beta_2: {}'
+            .format(optimizer.__class__.__name__,
+                    K.get_value(optimizer.lr),
+                    K.get_value(optimizer.decay),
+                    K.get_value(optimizer.beta_1),
+                    K.get_value(optimizer.beta_2)))
+
     elif optimizer_name == 'sgd':
-        lr = optimizer_info['learning_rate']
-        decay = optimizer_info['decay']
-        momentum = optimizer_info['momentum']
-        optimizer = SGD(lr=lr, momentum=momentum, decay=decay)
-        log('Using SGD optimizer with learning rate: {}, momentum: {}, decay: {}'.format(lr, momentum, decay))
+        if optimizer_configuration is not None:
+            optimizer = Optimizer.from_config(SGD, optimizer_configuration)
+        else:
+            lr = optimizer_info['learning_rate']
+            decay = optimizer_info['decay']
+            momentum = optimizer_info['momentum']
+            optimizer = SGD(lr=lr, momentum=momentum, decay=decay)
+
+        log('Using {} optimizer with learning rate: {}, momentum: {}, decay: {}'
+            .format(optimizer.__class__.__name__,
+                    K.get_value(optimizer.lr),
+                    K.get_value(optimizer.momentum),
+                    K.get_value(optimizer.decay)))
+
     else:
         raise ValueError('Unknown optimizer name: {}'.format(optimizer_name))
 
@@ -112,7 +141,8 @@ def get_optimizer(optimizer_info):
 def get_callbacks(keras_model_checkpoint_file_path,
                   keras_tensorboard_log_path=None,
                   keras_csv_log_file_path=None,
-                  reduce_lr_on_plateau=None):
+                  reduce_lr_on_plateau=None,
+                  optimizer_checkpoint_file_path=None):
     callbacks = []
 
     # Make sure the model checkpoints directory exists
@@ -173,6 +203,12 @@ def get_callbacks(keras_model_checkpoint_file_path,
                                       verbose=verbose)
 
         callbacks.append(reduce_lr)
+
+    # Optimizer checkpoint
+    if optimizer_checkpoint_file_path is not None:
+        create_path_if_not_existing(optimizer_checkpoint_file_path)
+        optimizer_checkpoint = OptimizerCheckpoint(optimizer_checkpoint_file_path)
+        callbacks.append(optimizer_checkpoint)
 
     return callbacks
 

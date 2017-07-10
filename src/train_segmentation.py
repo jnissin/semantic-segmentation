@@ -11,7 +11,8 @@ from keras import backend as K
 
 from models import model_utils
 from utils import dataset_utils
-from utils.dataset_utils import SegmentationDataGenerator
+from generators.segmentation_data_generator import SegmentationDataGenerator
+from generators.data_generator import DataAugmentationParameters
 from utils.training_utils import log, get_config_value
 import utils.training_utils as training_utils
 
@@ -112,7 +113,8 @@ if __name__ == '__main__':
     # Generate random splits of the data for training, validation and test
     log('Splitting data to training, validation and test sets of sizes (%) of the whole dataset of size {}: {}'.format(
         len(photo_files), get_config_value('dataset_splits')))
-    training_set, validation_set, test_set = dataset_utils.split_dataset(
+
+    training_set, validation_set, test_set = dataset_utils.split_labeled_dataset(
         photo_files,
         mask_files,
         get_config_value('dataset_splits'))
@@ -149,6 +151,13 @@ if __name__ == '__main__':
     use_data_augmentation = bool(get_config_value('use_data_augmentation'))
 
     log('Creating training data generator')
+    data_augmentation_params = DataAugmentationParameters(
+        augmentation_probability=0.5,
+        rotation_range=40.0,
+        zoom_range=0.5,
+        horizontal_flip=True,
+        vertical_flip=False)
+
     training_data_generator = SegmentationDataGenerator(
         photo_files_folder_path=get_config_value('path_to_photos'),
         mask_files_folder_path=get_config_value('path_to_masks'),
@@ -161,11 +170,7 @@ if __name__ == '__main__':
         per_channel_stddev_normalization=True,
         per_channel_stddev=get_config_value('per_channel_stddev'),
         use_data_augmentation=use_data_augmentation,
-        augmentation_probability=0.5,
-        rotation_range=40.0,
-        zoom_range=0.5,
-        horizontal_flip=True,
-        vertical_flip=False)
+        data_augmentation_params=data_augmentation_params)
 
     log('Creating validation data generator')
     validation_data_generator = SegmentationDataGenerator(
@@ -189,7 +194,8 @@ if __name__ == '__main__':
         keras_model_checkpoint_file_path=get_config_value('keras_model_checkpoint_file_path'),
         keras_tensorboard_log_path=get_config_value('keras_tensorboard_log_path'),
         keras_csv_log_file_path=get_config_value('keras_csv_log_file_path'),
-        reduce_lr_on_plateau=get_config_value('reduce_lr_on_plateau'))
+        reduce_lr_on_plateau=get_config_value('reduce_lr_on_plateau'),
+        optimizer_checkpoint_file_path=get_config_value('optimizer_checkpoint_file_path'))
 
     initial_epoch = 0
 
@@ -235,7 +241,10 @@ if __name__ == '__main__':
                 .format(transferred_layers, last_transferred_layer))
 
     # Get the optimizer
-    optimizer = training_utils.get_optimizer(get_config_value('optimizer'))
+    # Note: we will only provide the optimizer configuration file from previous run
+    # if we are continuing training
+    optimizer = training_utils.get_optimizer(get_config_value('optimizer'),
+                                             get_config_value('optimizer_checkpoint_file_path') if initial_epoch != 0 else None)
 
     # Get the loss function
     loss_function = get_loss_function(training_set=training_set)
@@ -252,15 +261,15 @@ if __name__ == '__main__':
     batch_size = get_config_value('batch_size')
     training_set_size = len(training_set)
     validation_set_size = len(validation_set)
-    steps_per_epoch = training_set_size // batch_size
-    validation_steps = validation_set_size // batch_size
+    training_steps = dataset_utils.get_number_of_batches(training_set_size, batch_size)
+    validation_steps = dataset_utils.get_number_of_batches(validation_set_size, batch_size)
 
-    log('Starting training for {} epochs with batch size: {}, crop_size: {}, steps per epoch: {}, validation steps: {}'
-        .format(num_epochs, batch_size, crop_size, steps_per_epoch, validation_steps))
+    log('Starting training for {} epochs with batch size: {}, crop_size: {}, training steps epoch: {}, validation steps: {}'
+        .format(num_epochs, batch_size, crop_size, training_steps, validation_steps))
 
     model.fit_generator(
         generator=training_data_generator.get_flow(batch_size, crop_size),
-        steps_per_epoch=steps_per_epoch,
+        steps_per_epoch=training_steps,
         epochs=num_epochs,
         initial_epoch=initial_epoch,
         validation_data=validation_data_generator.get_flow(batch_size, crop_size),
