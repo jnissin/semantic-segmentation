@@ -40,6 +40,10 @@ def consistency_coefficient_function(step_idx):
     return np.exp(-5.0*((1.0-x)**2))
 
 
+def unlabeled_cost_coefficient_function(step_idx):
+    return 0.9
+
+
 def main():
     # Construct the argument parser and parge arguments
     ap = argparse.ArgumentParser(description='Training function for material segmentation.')
@@ -63,6 +67,7 @@ def main():
                                                     data_augmentation_parameters=data_augmentation_params,
                                                     consistency_cost_coefficient_function=consistency_coefficient_function,
                                                     ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,
+                                                    unlabeled_cost_coefficient_function=unlabeled_cost_coefficient_function,
                                                     lambda_loss_function=None)
         trainer.train()
     elif trainer_type == 'classification':

@@ -133,6 +133,27 @@ class TrainerBase:
     def set_config_value(self, key, value):
         self.config[key] = value
 
+    def get_class_weights(self, training_set, material_class_information):
+        # Calculate class weights for the data if necessary
+        if self.get_config_value('use_class_weights'):
+            num_classes = len(material_class_information)
+            class_weights = self.get_config_value('class_weights')
+
+            if class_weights is None or (len(class_weights) != num_classes):
+                self.log('Existing class weights were not found or did not match the number of material classes')
+                training_set_masks = [sample[1] for sample in training_set]
+                self.log('Calculating new median frequency balancing weights from the {} masks in the training set'
+                         .format(len(training_set_masks)))
+                class_weights = dataset_utils.calculate_median_frequency_balancing_weights(training_set_masks, material_class_information)
+                self.log('Median frequency balancing weights calculated: {}'.format(class_weights))
+            else:
+                self.log('Using existing class weights: {}'.format(class_weights))
+                class_weights = np.array(class_weights)
+
+            return class_weights
+
+        return None
+
     @staticmethod
     def _create_path_if_not_existing(path):
         if not path:
@@ -218,36 +239,25 @@ class TrainerBase:
 
         return callbacks
 
-    def get_loss_function(self, loss_function_name, training_set, material_class_information):
+    def get_loss_function(self,
+                          loss_function_name,
+                          training_set,
+                          material_class_information,
+                          use_class_weights,
+                          class_weights):
         loss_function = None
 
         if loss_function_name == 'pixelwise_crossentropy':
-            loss_function = losses.pixelwise_crossentropy
-        elif loss_function_name == 'weighted_pixelwise_crossentropy':
-            # Get or calculate the median frequency balancing weights
-            median_frequency_balancing_weights = self.get_config_value('class_weights')
-
-            if median_frequency_balancing_weights is None or \
-                    (len(median_frequency_balancing_weights) != len(material_class_information)):
-                self.log('Class weights were not found or did not match the number of material classes')
-                self.log('Calculating new median frequency balancing weights for the training set')
-                training_set_masks = [sample[1] for sample in training_set]
-                median_frequency_balancing_weights = dataset_utils.calculate_median_frequency_balancing_weights(
-                    training_set_masks, material_class_information)
-
-                self.log('Median frequency balancing weights calculated: {}'.format(median_frequency_balancing_weights))
+            if use_class_weights and class_weights is not None:
+                loss_function = losses.pixelwise_crossentropy(class_weights)
             else:
-                self.log('Using existing class weights: {}'.format(median_frequency_balancing_weights))
-                median_frequency_balancing_weights = np.array(median_frequency_balancing_weights)
-
-            median_frequency_balancing_weights = K.constant(value=median_frequency_balancing_weights)
-            loss_function = losses.weighted_pixelwise_crossentropy(median_frequency_balancing_weights)
+                loss_function = losses.pixelwise_crossentropy()
         elif loss_function_name == 'dummy':
             loss_function = losses.dummy_loss
         else:
             raise ValueError('Unsupported loss function: {}'.format(loss_function_name))
 
-        self.log('Using {} loss function'.format(loss_function_name))
+        self.log('Using {} loss function, using class weights: {}'.format(loss_function_name, use_class_weights))
         return loss_function
 
     def get_optimizer(self, continue_from_optimizer_checkpoint):
@@ -469,6 +479,16 @@ class SegmentationTrainer(TrainerBase):
         self.log('Labeled validation_set: {}\n'.format(self.validation_set), False)
         self.log('Labeled test set: {}\n'.format(self.test_set), False)
 
+        if len(self.training_set) == 0:
+            raise ValueError('No training data found')
+
+        # Class weights
+        self.class_weights = None
+
+        if self.get_config_value('use_class_weights'):
+            self.class_weights = self.get_class_weights(training_set=self.training_set,
+                                                        material_class_information=self.material_class_information)
+
     def _init_models(self):
         super(SegmentationTrainer, self)._init_models()
 
@@ -502,7 +522,11 @@ class SegmentationTrainer(TrainerBase):
 
         # Get the loss function for the student model
         loss_function_name = self.get_config_value('loss_function')
-        loss_function = self.get_loss_function(loss_function_name, self.training_set, self.material_class_information)
+        loss_function = self.get_loss_function(loss_function_name,
+                                               self.training_set,
+                                               self.material_class_information,
+                                               self.get_config_value('use_class_weights'),
+                                               self.class_weights)
 
         # Compile the student model
         self.model.compile(optimizer=optimizer,
@@ -607,13 +631,15 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                  label_generation_function=None,
                  consistency_cost_coefficient_function=None,
                  ema_smoothing_coefficient_function=None,
+                 unlabeled_cost_coefficient_function=None,
                  lambda_loss_function=None):
 
-        # type: (str, DataAugmentationParameters, Callable[[np.array[np.float32]], np.array], Callable[[int], float], Callable[[int], float]) -> ()
+        # type: (str, DataAugmentationParameters, Callable[[np.array[np.float32]], np.array], Callable[[int], float], Callable[[int], float], Callable[[int], float]) -> ()
 
         self.label_generation_function = label_generation_function
         self.consistency_cost_coefficient_function = consistency_cost_coefficient_function
         self.ema_smoothing_coefficient_function = ema_smoothing_coefficient_function
+        self.unlabeled_cost_coefficient_function = unlabeled_cost_coefficient_function
         self.lambda_loss_function = lambda_loss_function
 
         # Declare variables that are going to be initialized in the _init_ functions
@@ -685,8 +711,15 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.unlabeled_photo_files = list_pictures(self.get_config_value('path_to_unlabeled_photos'))
         self.log('Found {} unlabeled photo files'.format(len(self.unlabeled_photo_files)))
 
-        if len(self.test_set) == 0 and len(self.unlabeled_photo_files) == 0:
+        if len(self.training_set) == 0 and len(self.unlabeled_photo_files) == 0:
             raise ValueError('No training data found')
+
+        # Class weights
+        self.class_weights = None
+
+        if self.get_config_value('use_class_weights'):
+            self.class_weights = self.get_class_weights(training_set=self.training_set,
+                                                        material_class_information=self.material_class_information)
 
     def _init_models(self):
         super(SemisupervisedSegmentationTrainer, self)._init_models()
@@ -701,7 +734,13 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         self.log('Creating student model {} instance with input shape: {}, num classes: {}'.format(model_name, input_shape, self.num_classes))
         if self.use_mean_teacher_method:
-            lambda_loss_func = self.lambda_loss_function if self.lambda_loss_function is not None else losses.default_mean_teacher_lambda_loss
+            lambda_loss_func = None
+
+            # Pass the class weights to the used lambda loss function (the weights can be None)
+            if self.lambda_loss_function is not None:
+                lambda_loss_func = self.lambda_loss_function(self.class_weights)
+            elif self.lambda_loss_function is None:
+                lambda_loss_func = losses.default_mean_teacher_lambda_loss(self.class_weights)
 
             self.model_wrapper = get_model(model_name,
                                            input_shape,
@@ -709,7 +748,13 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                                            model_type=ModelType.MEAN_TEACHER_STUDENT,
                                            lambda_loss_function=lambda_loss_func)
         else:
-            lambda_loss_func = self.lambda_loss_function if self.lambda_loss_function is not None else losses.default_semisupervised_lambda_loss
+            lambda_loss_func = None
+
+            # Pass the class weights to the used lambda loss function (the weights can be None)
+            if self.lambda_loss_function is not None:
+                lambda_loss_func = self.lambda_loss_function(self.class_weights)
+            elif self.lambda_loss_function is None:
+                lambda_loss_func = losses.default_semisupervised_lambda_loss(self.class_weights)
 
             self.model_wrapper = get_model(model_name,
                                            input_shape,
@@ -747,7 +792,11 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                      .format(loss_function_name))
             loss_function_name = 'dummy'
 
-        loss_function = self.get_loss_function(loss_function_name, self.training_set, self.material_class_information)
+        loss_function = self.get_loss_function(loss_function_name,
+                                               self.training_set,
+                                               self.material_class_information,
+                                               use_class_weights=self.get_config_value('use_class_weights'),
+                                               class_weights=self.class_weights)
 
         # Compile the student model
         self.model.compile(optimizer=optimizer,
@@ -842,11 +891,9 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         callbacks = self.get_callbacks()
 
         # Sanity check
-        if self.use_mean_teacher_method:
-            if not isinstance(self.model, ExtendedModel):
-                raise ValueError('When using mean teacher training the student must be an instance of ExtendedModel')
+        if not isinstance(self.model, ExtendedModel):
+            raise ValueError('When using semi-supervised training the student must be an instance of ExtendedModel')
 
-        # TODO: We also need to save the teacher model at the end of epochs
         self.model.fit_generator(
             generator=self.training_data_generator.get_flow(
                 num_labeled_per_batch=num_labeled_per_batch,
@@ -862,7 +909,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             ),
             validation_steps=validation_steps_per_epoch,
             verbose=1,
-            trainer=self if self.use_mean_teacher_method else None,
+            trainer=self,
             callbacks=callbacks)
 
         self.log('The training session ended at local time {}\n'.format(datetime.datetime.now()))
@@ -874,9 +921,14 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         """
         Invoked by the ExtendedModel right before train_on_batch:
 
-        Modifies the batch data by appending the mean teacher predictions as the last
-        element of the input data X if we are using mean teacher training. Otherwise,
-        returns the same x and y.
+        If using the Mean Teacher method:
+
+            Modifies the batch data by appending the mean teacher predictions as the last
+            element of the input data X if we are using mean teacher training.
+
+        If using standard semi-supervised:
+
+            Modfies the batch data by appending the unlabeled data cost coefficients.
 
         # Arguments
             :param step_index: the training step index
@@ -897,6 +949,11 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 x = x + [mean_teacher_predictions, np_consistency_coefficients]
             else:
                 raise RuntimeError('Teacher model is not set, cannot run predictions')
+        else:
+            batch_size = x[0].shape[0]
+            unlabeled_cost_coefficient = self.unlabeled_cost_coefficient_function(step_index)
+            np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
+            x = x + [np_unlabeled_cost_coefficients]
 
         return x, y
 

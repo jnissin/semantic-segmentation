@@ -11,8 +11,12 @@ import pydensecrf.utils as dcrf_utils
 from keras.preprocessing.image import load_img, img_to_array, array_to_img
 from matplotlib import pyplot as plt
 
-from models import model_utils
 from utils import dataset_utils
+from utils import prediction_utils
+from utils import image_utils
+
+import losses
+from models.models import get_model
 
 ##############################################
 # GLOBALS
@@ -53,8 +57,8 @@ def get_latest_weights_file_path(weights_folder_path):
 
 
 def pad_image(image_array, div2_constraint, cval):
-    padded_height = dataset_utils.get_closest_number_with_n_trailing_zeroes(image_array.shape[0], div2_constraint)
-    padded_width = dataset_utils.get_closest_number_with_n_trailing_zeroes(image_array.shape[1], div2_constraint)
+    padded_height = dataset_utils.get_closest_higher_number_with_n_trailing_zeroes(image_array.shape[0], div2_constraint)
+    padded_width = dataset_utils.get_closest_higher_number_with_n_trailing_zeroes(image_array.shape[1], div2_constraint)
     padded_shape = (padded_height, padded_width)
 
     print 'Padding image from {} to {}'.format(image_array.shape, padded_shape)
@@ -68,7 +72,7 @@ def pad_image(image_array, div2_constraint, cval):
     h_pad_before = h_diff / 2
     h_pad_after = (h_diff / 2) + (h_diff % 2)
 
-    padded_image_array = dataset_utils.np_pad_image(
+    padded_image_array = image_utils.np_pad_image(
         image_array,
         v_pad_before,
         v_pad_after,
@@ -149,7 +153,7 @@ if __name__ == '__main__':
     print 'Loading model {} instance with input shape: {}, num classes: {}'\
         .format(model_name, input_shape, num_classes)
 
-    model = model_utils.get_model(model_name, input_shape, num_classes)
+    model = get_model(model_name, input_shape, num_classes)
 
     # Load either provided weights or try to find the newest weights from the
     # checkpoint path
@@ -180,7 +184,7 @@ if __name__ == '__main__':
     image_array = img_to_array(image)
 
     print 'Normalizing image data'
-    image_array = dataset_utils.normalize_image_channels(
+    image_array = image_utils.np_normalize_image_channels(
         image_array,
         np.array(get_config_value('per_channel_mean')),
         np.array(get_config_value('per_channel_stddev')))
@@ -212,7 +216,7 @@ if __name__ == '__main__':
 
     if padded:
         print 'Cropping predictions back to original image shape'
-        expanded_mask = dataset_utils.np_crop_image(expanded_mask,
+        expanded_mask = image_utils.np_crop_image(expanded_mask,
                                     h_pad_before,
                                     v_pad_before,
                                     image_array.shape[1] - h_pad_after,
@@ -234,11 +238,11 @@ if __name__ == '__main__':
         # Must use the unnormalized image data
         original_image_array = img_to_array(image)
         crf_iterations = get_config_value('crf_iterations')
-        crf = model_utils.get_dcrf(original_image_array, num_classes)
+        crf = prediction_utils.get_dcrf(original_image_array, num_classes)
 
         # Turn the output of the last convolutional layer to softmax probabilities
         # and then to unary.
-        softmax = model_utils.np_softmax(expanded_mask, axis=-1)
+        softmax = losses.np_softmax(expanded_mask, axis=-1)
         softmax = softmax.transpose((2, 0, 1))
         unary = dcrf_utils.unary_from_softmax(softmax)
 
@@ -259,7 +263,7 @@ if __name__ == '__main__':
         expanded_mask = np.transpose(expanded_mask, (2, 1, 0))
 
     k = 3
-    flattened_masks = dataset_utils.top_k_flattened_masks(expanded_mask, k, material_class_information, True)
+    flattened_masks = prediction_utils.top_k_flattened_masks(expanded_mask, k, material_class_information, True)
 
     for i in range(0, k):
         flattened_mask = flattened_masks[i][0]

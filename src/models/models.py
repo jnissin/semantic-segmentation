@@ -216,8 +216,11 @@ class ModelBase(object):
         num_unlabeled = Input(name='num_unlabeled', shape=[1])
         self.inputs.append(num_unlabeled)
 
+        unlabeled_cost_coeff = Input(name='unlabeled_cost_coeff', shape=[1])
+        self.inputs.append(unlabeled_cost_coeff)
+
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, num_unlabeled]
+        lambda_inputs = [self.outputs[0], labels, num_unlabeled, unlabeled_cost_coeff]
         ss_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
         self.outputs = ss_loss_layer
 

@@ -202,7 +202,7 @@ def calculate_per_channel_mean(file_paths, num_channels):
     return per_channel_mean
 
 
-def _calculate_per_channel_mean_parallel(path, num_channels):
+def _calculate_per_channel_mean(path, num_channels):
     img = load_n_channel_image(path, num_channels)
     img_array = img_to_array(img)
 
