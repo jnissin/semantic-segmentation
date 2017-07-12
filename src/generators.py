@@ -90,7 +90,75 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
     elif mask_type == 'index':
         np_mask = dataset_utils.index_encode_mask(np_mask, material_class_information)
     else:
-        raise RuntimeError('Unknown mask_type: {}'.format(mask_type))
+        raise ValueError('Unknown mask_type: {}'.format(mask_type))
+
+    return np_photo, np_mask
+
+
+def process_photo(np_photo,
+                  crop_shape,
+                  photo_cval,
+                  use_data_augmentation=False,
+                  data_augmentation_params=None,
+                  img_data_format='channels_last',
+                  div2_constraint=4):
+    # type: (np.array, tuple[int], np.array, np.array, bool, str, int) -> np.array
+
+    """
+    Applies cropping and data augmentation to a single photo.
+
+    # Arguments
+        :param np_photo: the photo as a numpy array
+        :param crop_shape: size of the crop or None if no cropping should be applied
+        :param photo_cval: fill color value for photos [0,255]
+        :param use_data_augmentation: should data augmentation be used
+        :param data_augmentation_params: parameters for data augmentation
+        :param img_data_format: format of the image data 'channels_first' or 'channels_last'
+        :param div2_constraint: divisibility constraint
+    # Returns
+        :return: the augmented photo as a numpy array
+    """
+
+    # Check whether any of the image dimensions is smaller than the crop,
+    # if so pad with the assigned fill colors
+    if crop_shape is not None and (np_photo.shape[1] < crop_shape[0] or np_photo.shape[0] < crop_shape[1]):
+        # Image dimensions must be at minimum the same as the crop dimension
+        # on each axis. The photo needs to be filled with the photo_cval color and masks
+        # with the mask cval color
+        min_img_shape = (max(crop_shape[1], np_photo.shape[0]), max(crop_shape[0], np_photo.shape[1]))
+        np_photo = image_utils.np_pad_image_to_shape(np_photo, min_img_shape, photo_cval)
+
+    # If we are using data augmentation apply the random transformation
+    if use_data_augmentation and np.random.random() <= data_augmentation_params.augmentation_probability:
+        np_photo, = image_utils.np_apply_random_transform(images=[np_photo],
+                                                          cvals=[photo_cval],
+                                                          fill_mode=data_augmentation_params.fill_mode,
+                                                          img_data_format=img_data_format,
+                                                          rotation_range=data_augmentation_params.rotation_range,
+                                                          zoom_range=data_augmentation_params.zoom_range,
+                                                          horizontal_flip=data_augmentation_params.horizontal_flip,
+                                                          vertical_flip=data_augmentation_params.vertical_flip)
+
+    # If a crop size is given: take a random crop of both the image and the mask
+    if crop_shape is not None:
+        if dataset_utils.count_trailing_zeroes(crop_shape[0]) < div2_constraint or \
+                        dataset_utils.count_trailing_zeroes(crop_shape[1]) < div2_constraint:
+            raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(div2_constraint))
+
+        x1y1, x2y2 = image_utils.np_get_random_crop_area(np_mask, crop_shape[0], crop_shape[1])
+        np_photo = image_utils.np_crop_image(np_photo, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
+    else:
+        # If a crop size is not given, make sure the image dimensions satisfy
+        # the div2_constraint i.e. are n times divisible by 2 to work within
+        # the network. If the dimensions are not ok pad the images.
+        img_height_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[0])
+        img_width_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[1])
+
+        if img_height_div2 < div2_constraint or img_width_div2 < div2_constraint:
+
+            # The photo needs to be filled with the photo_cval color
+            padded_shape = dataset_utils.get_required_image_dimensions(np_photo.shape, div2_constraint)
+            np_photo = image_utils.np_pad_image_to_shape(np_photo, padded_shape, photo_cval)
 
     return np_photo, np_mask
 
@@ -143,10 +211,8 @@ def process_segmentation_photo_mask_pair(np_photo,
     # whole image to decrease the number of 'dead' pixels due to transformations
     # within the possible crop.
     if use_data_augmentation and np.random.random() <= data_augmentation_params.augmentation_probability:
-        np_photo, np_mask = image_utils.np_apply_random_transform(x=np_photo,
-                                                                  y=np_mask,
-                                                                  x_cval=photo_cval,
-                                                                  y_cval=mask_cval,
+        np_photo, np_mask = image_utils.np_apply_random_transform(images=[np_photo, np_mask],
+                                                                  cvals=[photo_cval, mask_cval],
                                                                   fill_mode=data_augmentation_params.fill_mode,
                                                                   img_data_format=img_data_format,
                                                                   rotation_range=data_augmentation_params.rotation_range,
@@ -324,11 +390,13 @@ class DataGenerator(object):
         if self.use_per_channel_mean_normalization and self.per_channel_mean is None:
             photos = self.get_all_photos()
             self.per_channel_mean = dataset_utils.calculate_per_channel_mean(photos, self.num_color_channels)
+            print 'DataGenerator: Using per-channel mean: {}'.format(self.per_channel_mean)
 
         # Calculate missing per-channel stddev if necessary
         if self.use_per_channel_stddev_normalization and self.per_channel_stddev is None:
             photos = self.get_all_photos()
             self.per_channel_stddev = dataset_utils.calculate_per_channel_stddev(photos, self.per_channel_mean, self.num_color_channels)
+            print 'DataGenerator: Using per-channel stddev: {}'.format(self.per_channel_stddev)
 
         # Use per-channel mean but in range [0, 255] if nothing else is given.
         # The normalization is done to the whole batch after transformations so
@@ -337,7 +405,7 @@ class DataGenerator(object):
             if self.per_channel_mean is None:
                 self.photo_cval = np.array([0.0] * 3)
             else:
-                self.photo_cval = ((np.array(self.per_channel_mean) + 1.0) / 2.0) * 255.0
+                self.photo_cval = dataset_utils.np_from_normalized_to_255(np.array(self.per_channel_mean))
             print 'DataGenerator: Using photo cval: {}'.format(self.photo_cval)
 
         # Use black (background)
@@ -619,27 +687,19 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                         delayed(img_to_array)(dataset_utils.load_n_channel_image(
                             unlabeled_photo_path, self.num_color_channels)) for unlabeled_photo_path in unlabeled_batch_files)
 
-                    # In parallel: Generate segmentation masks for the unlabeled photos
-                    np_unlabeled_masks = Parallel(n_jobs=n_jobs, backend='threading')(
-                        delayed(_generate_labels_for_unlabeled_photo)(
-                            np_photo, self.label_generation_function) for np_photo in np_unlabeled_photos)
-
                     # In parallel: Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-                    unlabeled_data = Parallel(n_jobs=n_jobs, backend='threading')(
-                        delayed(process_segmentation_photo_mask_pair)(
+                    X_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
+                        delayed(process_photo)(
                             np_photo=np_unlabeled_photos[i],
-                            np_mask=np_unlabeled_masks[i],
                             crop_shape=crop_shape,
                             photo_cval=self.photo_cval,
-                            mask_cval=self.mask_cval,
                             use_data_augmentation=self.use_data_augmentation,
                             data_augmentation_params=self.data_augmentation_params,
                             img_data_format=self.img_data_format,
                             div2_constraint=4) for i in range(0, num_unlabeled_in_batch))
 
                     # Check whether we ran out of unlabeled data and shuffle if required
-                    if unlabeled_batch_range[1] == unlabeled_data_set_size or \
-                                    num_unlabeled_in_batch < num_unlabeled_per_batch:
+                    if unlabeled_batch_range[1] == unlabeled_data_set_size or num_unlabeled_in_batch < num_unlabeled_per_batch:
                         if self.shuffle_data_after_epoch:
                             random.shuffle(self.unlabeled_data)
 
@@ -648,13 +708,14 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 X, Y = zip(*labeled_data)
 
                 if num_unlabeled_per_batch > 0:
-                    X_unlabeled, Y_unlabeled = zip(*unlabeled_data)
+                    # In parallel: Generate segmentation masks for the unlabeled photos
+                    # Note: cropping and augmentation already applied, but channels not normalized
+                    Y_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
+                        delayed(_generate_labels_for_unlabeled_photo)(
+                            np_photo, self.label_generation_function) for np_photo in X_unlabeled)
+
                     X = X + X_unlabeled
-                    # Remove all but the red channel and cast to integer -> masks are index encoded
-                    # Note: the array is 4 dimensional because of batch dimension
-                    Y_unlabeled = np.array(Y_unlabeled)[:, :, :, 0].astype(dtype=np.int32)
-                    Y = np.array(Y)
-                    Y = np.append(Y, Y_unlabeled, axis=0)
+                    Y = Y + Y_unlabeled
 
                 X, Y = np.array(X), np.array(Y)
 
@@ -667,7 +728,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 # The dimensions of the number of unlabeled in the batch must match with batch dimension
                 num_unlabeled = np.ones(shape=[samples_in_batch], dtype=np.int32) * num_unlabeled_in_batch
 
-                # Yield a batch of data
+                # Generate a dummy output for the dummy loss function and yield a batch of data
                 dummy_output = np.zeros(shape=[samples_in_batch])
 
                 yield [X, Y, num_unlabeled], dummy_output
@@ -676,15 +737,14 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
     def default_label_generator_for_unlabeled_photos(np_image):
         """
         Default label generator function for unlabeled photos. The label generator should
-        encode the information in the red channel. After possible data augmentations the
-        green and blue channels are removed and the data is cast to integer.
+        encode the information in the form HxW.
 
         # Arguments
             :param np_image: the image as a numpy array
         # Returns
-            :return: numpy array of same shape as np_image with every labeled as -1
+            :return: numpy array of same shape as np_image with every labeled as 0
         """
-        return np.ones(shape=(np_image.shape[0], np_image.shape[1], 3), dtype=np.float32) * 0
+        return np.zeros(shape=(np_image.shape[0], np_image.shape[1]), dtype=np.int32)
 
 
 ################################################

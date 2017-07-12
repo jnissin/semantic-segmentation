@@ -5,6 +5,7 @@ import numpy as np
 
 from trainers import SegmentationTrainer, SemisupervisedSegmentationTrainer
 from generators import DataAugmentationParameters
+from utils import image_utils
 
 
 def get_data_augmentation_parameters():
@@ -44,6 +45,12 @@ def unlabeled_cost_coefficient_function(step_idx):
     return 0.9
 
 
+def label_generation_function(np_img):
+    normalized_img = image_utils.np_normalize_image_channels(np_img, clamp_to_range=True)
+    val = image_utils.np_get_superpixel_segmentation(normalized_img, 200)
+    return val
+
+
 def main():
     # Construct the argument parser and parge arguments
     ap = argparse.ArgumentParser(description='Training function for material segmentation.')
@@ -65,6 +72,7 @@ def main():
     elif trainer_type == 'semisupervised-segmentation':
         trainer = SemisupervisedSegmentationTrainer(config_file_path=trainer_config_file_path,
                                                     data_augmentation_parameters=data_augmentation_params,
+                                                    label_generation_function=label_generation_function,
                                                     consistency_cost_coefficient_function=consistency_coefficient_function,
                                                     ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,
                                                     unlabeled_cost_coefficient_function=unlabeled_cost_coefficient_function,

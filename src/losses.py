@@ -7,25 +7,52 @@ from keras import backend as K
 # GLOBALS
 ##############################################
 
-_EPSILON = 10e-8
+_EPSILON = 10e-7
 
 
 ##############################################
 # UTILITY FUNCTIONS
 ##############################################
 
-def _tf_filter_nans(t, epsilon):
+def _tf_filter_nans(t, replace=10e-7):
     """
     Filter NaNs from a tensor 't' and replace with value epsilon
 
     # Arguments
-        t: A tensor to filter
-        epsilon: Value to replace NaNs with
+        :param t: A tensor to filter
+        :param replace: Value to replace NaNs with
     # Returns
-        A tensor of same shape as t with NaN values replaced by epsilon.
+        :return: A tensor of same shape as t with NaN values replaced by epsilon.
     """
 
-    return K.tf.where(K.tf.is_nan(t), K.tf.ones_like(t) * epsilon, t)
+    return K.tf.where(K.tf.is_nan(t), K.tf.ones_like(t) * replace, t)
+
+
+def _tf_filter_infs(t, replace=10e-7):
+    """
+    Filter infs from a tensor 't' and replace with value replace
+
+    # Arguments
+        :param t: A tensor to filter
+        :param replace: Value to replace NaNs with
+    # Returns
+        :return: A tensor of same shape as t with NaN values replaced by epsilon.
+    """
+
+    return K.tf.where(K.tf.is_inf(t), K.tf.ones_like(t) * replace, t)
+
+
+def _tf_filter_infinite(t, replace=10e-7):
+    """
+    Filters infs, ninfs and NaNs from tensor t and replaces with the given value.
+
+    # Arguments
+        :param t: tensor
+        :param replace: replacement value for infinite values
+    # Returns
+        :return: tensor where infinite values have been replaced
+    """
+    return K.tf.where(K.tf.is_finite(t), t, K.tf.ones_like(t) * replace)
 
 
 def _tf_clamp_to_min(t, epsilon):
@@ -63,6 +90,7 @@ def _to_tensor(x, dtype):
 
 
 def _tf_log2(x):
+    # Note: returns inf when x -> 0
     numerator = K.tf.log(x)
     denominator = K.tf.log(K.tf.constant(2, dtype=numerator.dtype))
     return numerator / denominator
@@ -88,46 +116,71 @@ def _tf_weighted_pixelwise_cross_entropy(softmax, y_true, class_weights):
     return xent
 
 
+def _tf_calculate_superpixel_entropy(j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy):
+    # j is the superpixel label - select only the area of the unlabeled_true
+    # image where the values match the superpixel index
+
+    # A tensor of HxW
+    superpixel = K.tf.cast(K.tf.equal(img_y_true_unlabeled, j), K.tf.int32)
+    num_pixels = K.tf.cast(K.tf.reduce_sum(superpixel), dtype=K.tf.float32)
+    rest = K.tf.cast(K.tf.not_equal(img_y_true_unlabeled, j), K.tf.int32)
+
+
+    # Copy the predictions with the superpixel 'stencil' and encode everything else
+    # as num_classes index
+    superpixel = K.tf.multiply(img_y_pred_unlabeled, superpixel)
+    rest = K.tf.multiply(rest, num_classes)
+    superpixel = K.tf.add(superpixel, rest)
+
+    # Count the occurrences of different class predictions within the superpixel and
+    # get rid of the last index, which represents the image area outside the superpixel
+    superpixel = K.tf.reshape(superpixel, [-1])
+    class_occurrences = K.tf.cast(K.tf.unsorted_segment_sum(K.tf.ones_like(superpixel), superpixel, num_classes+1), dtype=K.tf.float32)
+    class_occurrences = class_occurrences[:-1]
+
+    # Calculate the entropy of this superpixel
+    superpixel_entropy = K.tf.div(class_occurrences, num_pixels)
+
+    # Log2 can easily have NaNs and infs when class frequencies are zero, filter them out
+    log2_entropy = _tf_log2(superpixel_entropy)
+    log2_entropy = _tf_filter_infinite(log2_entropy, 0)
+
+    # Super pixel entropy can get quite small when multiplying, filter NaNs and replace
+    # NaN values with epsilon
+    superpixel_entropy = K.tf.multiply(superpixel_entropy, log2_entropy)
+    superpixel_entropy = _tf_filter_infinite(superpixel_entropy, _EPSILON)
+    #superpixel_entropy = K.tf.Print(superpixel_entropy, [j, num_pixels, class_occurrences, superpixel_entropy, log2_entropy], message="spixel: ", summarize=24)
+    superpixel_entropy = -1 * K.tf.reduce_sum(superpixel_entropy)
+
+    # Add to the image entropy accumulator and increase the loop variable
+    image_entropy += superpixel_entropy
+    j += 1
+
+    return j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy
+
+
 def _tf_calculate_image_entropy(i, y_true_unlabeled, y_pred_unlabeled, num_classes, batch_entropy):
 
-    num_superpixels = K.tf.reduce_max(y_true_unlabeled[i])
     # Superpixel segment indices are continuous and start from index 0
+    num_superpixels = K.tf.reduce_max(y_true_unlabeled[i])
     for_each_superpixel_cond = lambda j, p1, p2, p3, p4: K.tf.less(j, num_superpixels)
+    j = K.tf.constant(0, dtype=K.tf.int32)
+    image_entropy = K.tf.constant(0, dtype=K.tf.float32)
 
-    def calculate_superpixel_entropy(j, unlabeled_true, unlabeled_pred, num_classes, image_entropy):
-        # j is the superpixel label - select only the area of the unlabeled_true
-        # image where the values match the superpixel index
-        superpixel_mask = K.tf.cast(K.tf.equal(unlabeled_true, j), K.tf.int32)
-        rest_mask = K.tf.cast(K.tf.not_equal(unlabeled_true, j), K.tf.int32)
-        num_pixels_in_superpixel = K.tf.cast(K.tf.reduce_sum(superpixel_mask), K.tf.float32)
+    img_y_true_unlabeled = y_true_unlabeled[i]
+    img_y_pred_unlabeled = y_pred_unlabeled[i]
 
-        # Turn the rest of the image into num_classes + 1, so that they are not included
-        # in the bincount
-        unlabeled_rest = K.tf.multiply(rest_mask, num_classes+1)
-        unlabeled_superpixel = K.tf.multiply(unlabeled_pred, superpixel_mask)
-        int_unlabeled = K.tf.add(unlabeled_superpixel, unlabeled_rest)
+    img_y_pred_unlabeled = K.tf.Print(img_y_pred_unlabeled, [i, img_y_pred_unlabeled], message="img y pred: ", summarize=100)
+    img_y_true_unlabeled = K.tf.Print(img_y_true_unlabeled, [i, img_y_true_unlabeled], message="img y true: ", summarize=100)
 
-        # Count the occurrences of different classes within the superpixel
-        # Note: Tensorflow ignores the num_classes + 1 values
-        class_occurrences = K.tf.bincount(int_unlabeled, minlength=num_classes, maxlength=num_classes, dtype=K.tf.float32)
-
-        # Calculate the entropy of this superpixel
-        entropy = K.tf.div(class_occurrences, num_pixels_in_superpixel)
-        entropy = -K.tf.reduce_sum(K.tf.multiply(entropy, _tf_log2(entropy)))
-
-        # Add to the image entropy accumulator and increase the loop variable
-        K.tf.add(image_entropy, entropy)
-        j += 1
-
-        return j, unlabeled_true, unlabeled_pred, num_classes, image_entropy
-
-    _, _, _, _, image_entropy = K.tf.while_loop(for_each_superpixel_cond,
-                                                calculate_superpixel_entropy,
-                                                [K.tf.constant(0), y_true_unlabeled[i], y_pred_unlabeled[i], num_classes, K.tf.constant(0, dtype=K.tf.float32)])
+    j, _, _, _, image_entropy = \
+        K.tf.while_loop(for_each_superpixel_cond, _tf_calculate_superpixel_entropy,
+                        [j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy])
 
     # Add the image entropy to the batch entropy and increase the loop variable
-    K.tf.add(batch_entropy, image_entropy)
+    batch_entropy += image_entropy
     i += 1
+
     return i, y_true_unlabeled, y_pred_unlabeled, num_classes, batch_entropy
 
 
@@ -145,13 +198,19 @@ def _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, num_unlabe
     # Returns
         :return: the mean (image-level) unlabeled superpixel loss for the batch
     """
+
     for_each_unlabeled_image_cond = lambda i, p1, p2, p3, p4: K.tf.less(i, num_unlabeled)
+    i = K.tf.constant(0, dtype=K.tf.int32)
+    batch_entropy = K.tf.constant(0, dtype=K.tf.float32)
 
-    _, _, _, _, batch_entropy = K.tf.while_loop(for_each_unlabeled_image_cond,
-                                                _tf_calculate_image_entropy,
-                                                [K.tf.constant(0), y_true_unlabeled, y_pred_unlabeled, num_classes, K.tf.constant(0, dtype=K.tf.float32)])
+    i, _, _, _, batch_entropy =\
+        K.tf.while_loop(for_each_unlabeled_image_cond, _tf_calculate_image_entropy,
+                        [i, y_true_unlabeled, y_pred_unlabeled, num_classes, batch_entropy])
 
-    return batch_entropy
+    # Take the mean over the batch images
+    mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(num_unlabeled, K.tf.float32))
+
+    return mean_image_entropy
 
 
 ##############################################
@@ -440,7 +499,8 @@ def default_semisupervised_lambda_loss(class_weights=None):
         y_true_unlabeled = K.tf.cast(y_true[int_num_labeled:], dtype=K.tf.int32)
         unlabeled_loss = _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, int_num_unlabeled, int_num_classes)
 
-        #unlabeled_loss = K.tf.Print(unlabeled_loss, [unlabeled_loss], message="Unlabeled loss: ")
+        unlabeled_loss = K.tf.Print(unlabeled_loss, [unlabeled_loss], message="Unlabeled loss: ")
+        #labeled_loss = K.tf.Print(labeled_loss, [labeled_loss], message="Labeled loss: ")
         return labeled_loss + unlabeled_cost_coefficient[0] * unlabeled_loss
 
     return loss

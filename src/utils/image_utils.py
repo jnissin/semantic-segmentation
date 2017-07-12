@@ -1,30 +1,27 @@
 # coding=utf-8
 
 import numpy as np
+from skimage.segmentation import slic
 
 from keras.preprocessing.image import flip_axis, apply_transform, transform_matrix_offset_center
 
 
-def np_apply_random_transform(x,
-                              y,
-                              x_cval,
-                              y_cval,
+def np_apply_random_transform(images,
+                              cvals,
                               fill_mode='constant',
                               img_data_format='channels_last',
                               rotation_range=None,
                               zoom_range=None,
                               horizontal_flip=False,
                               vertical_flip=False):
-    # type: (np.array, np.array, np.array, np.array, str, str, (float,float), (float,float), bool, bool) -> (np.array, np.array)
+    # type: (list[np.array], list[np.array], str, str, (float,float), (float,float), bool, bool) -> list[np.array]
 
     """
-    Randomly augment a single image tensor.
+    Randomly augments, in the same way, a list of numpy images.
 
     # Arguments
-        :param x: 3D tensor, a single photo image, colors [0,255]
-        :param y: 3D tensor, a single mask image, colors [0,255]
-        :param x_cval: the color in the photos for parts outside the image
-        :param y_cval: the color in the masks for parts outside the image
+        :param images: a list of 3D tensors, image colors in range [0,255]
+        :param cvals: the fill values for the images, should be the same size as images list
         :param fill_mode: how to fill the image
         :param img_data_format: format of the image data (channels_last or channels_first)
         :param rotation_range: range of the rotations in degrees
@@ -46,6 +43,15 @@ def np_apply_random_transform(x,
         img_channel_axis = 2
     else:
         raise ValueError('Unknown image data format: {}'.format(img_data_format))
+
+    # Make sure the images and fill values match
+    if len(cvals) != len(images):
+        raise ValueError('Unmatching image and cvalue array lengths: {} vs {}', len(cvals), len(images))
+
+    for i in range(0, len(images)):
+        if len(cvals[i]) != images[i].shape[img_channel_axis]:
+            raise ValueError('Unmatching fill value dimensions for image element {}: {} vs {}'
+                             .format(i, len(cvals[i]), images[i].shape[img_channel_axis]))
 
     # Rotation
     if rotation_range:
@@ -85,33 +91,30 @@ def np_apply_random_transform(x,
         h, w = x.shape[img_row_axis], x.shape[img_col_axis]
         transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
 
-        x = apply_transform(x, transform_matrix, img_channel_axis,
-                            fill_mode=fill_mode, cval=temp_cval)
-        mask = x[:, :, 0] == temp_cval
-        x[mask] = x_cval
-
-        y = apply_transform(y, transform_matrix, img_channel_axis,
-                            fill_mode=fill_mode, cval=temp_cval)
-        mask = y[:, :, 0] == temp_cval
-        y[mask] = y_cval
+        for i in range(0, len(images)):
+            images[i] = apply_transform(images[i], transform_matrix, img_channel_axis,
+                                        fill_mode=fill_mode, cval=cvals[i])
+            mask = images[i][:, :, 0] == temp_cval
+            images[i][mask] = cvals[i]
 
     # Apply at random a horizontal flip to the image
     if horizontal_flip:
         if np.random.random() < 0.5:
-            x = flip_axis(x, img_col_axis)
-            y = flip_axis(y, img_col_axis)
+            for i in range(0, len(images)):
+                images[i] = flip_axis(images[i], img_col_axis)
 
     # Apply at random a vertical flip to the image
     if vertical_flip:
         if np.random.random() < 0.5:
-            x = flip_axis(x, img_row_axis)
-            y = flip_axis(y, img_row_axis)
+            for i in range(0, len(images)):
+                images[i] = flip_axis(images[i], img_row_axis)
 
     # Check that we don't have any nan values
-    if np.any(np.isnan(x)) or np.any(np.isnan(y)):
-        raise ValueError('NaN values found after applying random transform')
+    for i in range(0, len(images)):
+        if np.any(np.invert(np.isfinite(images[i]))):
+            raise ValueError('NaN/inifinite values found after applying random transform')
 
-    return x, y
+    return images
 
 
 def np_crop_image(np_img, x1, y1, x2, y2):
@@ -281,3 +284,27 @@ def np_get_random_crop_area(np_image, crop_width, crop_height):
     y2 = y1 + crop_height
 
     return (x1, y1), (x2, y2)
+
+
+def np_get_superpixel_segmentation(np_img, n_segments, sigma=5, compactness=10.0, max_iter=10):
+    # type: (np.array, int, int, float) -> np.array
+
+    """
+    Returns the SLIC superpixel segmentation for the parameter image as a numpy array.
+    The segmentation is an integer array with dimensions HxW, where each superpixel is
+    encoded as a unique integer.
+
+    # Arguments
+        :param np_img: the image
+        :param n_segments: number of segments to generate
+        :param sigma: sigma for SLIC
+        :param compactness: compactness for SLIC
+        :param max_iter: maximum iterations for the kNN of the SLIC
+    # Returns
+        :return: the superpixel segmentation
+    """
+
+    # Apply SLIC and extract (approximately) the supplied number
+    # of segments
+    segments = slic(np_img, n_segments=n_segments, sigma=sigma, compactness=compactness, max_iter=max_iter)
+    return segments

@@ -102,6 +102,12 @@ def get_model(model_name,
             num_classes=num_classes,
             model_type=model_type,
             lambda_loss_function=lambda_loss_function)
+    elif model_name == 'yolonet':
+        model_wrapper = YOLONetModel(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            model_type=model_type,
+            lambda_loss_function=lambda_loss_function)
     else:
         raise ValueError('Unknown model name: {}'.format(model_name))
 
@@ -1061,3 +1067,188 @@ class ENetMaxUnpooling(ModelBase):
                                name='de_tconv2d')(enet)
 
         return enet
+
+
+##############################################
+# BULLNET
+##############################################
+
+class YOLONetModel(ModelBase):
+
+    def __init__(self,
+                 input_shape,
+                 num_classes,
+                 model_type=ModelType.NORMAL,
+                 lambda_loss_function=None):
+
+        super(YOLONetModel, self).__init__(
+            name="YOLONet",
+            input_shape=input_shape,
+            num_classes=num_classes,
+            model_type=model_type,
+            lambda_loss_function=lambda_loss_function)
+
+    def _build_model(self):
+        images = Input(name="images", shape=self.input_shape)
+
+        """
+        Encoder path
+        """
+        conv1, pool1 = YOLONetModel.get_encoder_block('encoder_block1', 2, 64, images)
+        conv2, pool2 = YOLONetModel.get_encoder_block('encoder_block2', 2, 96, pool1)
+        conv3, pool3 = YOLONetModel.get_encoder_block('encoder_block3', 3, 144, pool2)
+        conv4, pool4 = YOLONetModel.get_encoder_block('encoder_block4', 3, 216, pool3)
+        conv5, pool5 = YOLONetModel.get_encoder_block('encoder_block5', 3, 324, pool4)
+        conv6, pool6 = YOLONetModel.get_encoder_block('encoder_block6', 3, 486, pool5)
+
+        """
+        Decoder path
+        """
+        conv7 = YOLONetModel.get_decoder_block('decoder_block1', 3, 486, pool6, conv6, transposed=True)
+        conv8 = YOLONetModel.get_decoder_block('decoder_block2', 3, 324, conv7, conv5)
+        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 3, 216, conv8, conv4)
+        conv10 = YOLONetModel.get_decoder_block('decoder_block4', 2, 144, conv9, conv3, transposed=True)
+        conv11 = YOLONetModel.get_decoder_block('decoder_block5', 2, 96, conv10, conv2)
+        conv12 = YOLONetModel.get_decoder_block('decoder_block6', 2, 64, conv11, conv1)
+
+        """
+        FC
+        """
+        conv13 = Conv2D(self.num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv12)
+
+        return [images], [conv13]
+
+    @staticmethod
+    def get_convolution_block(
+            num_filters,
+            input_layer,
+            name,
+            use_batch_normalization=True,
+            use_activation=True,
+            use_dropout=True,
+            use_bias=True,
+            kernel_size=(3, 3),
+            padding='valid',
+            conv2d_kernel_initializer='he_normal',
+            conv2d_bias_initializer='zeros',
+            relu_alpha=0.1,
+            dropout_rate=0.2,
+            transposed=False):
+        conv = ZeroPadding2D(
+            (1, 1),
+            name='{}_padding'.format(name))(input_layer)
+
+        conv = None
+
+        if transposed:
+            conv = Conv2DTranspose(
+                filters=num_filters,
+                kernel_size=kernel_size,
+                padding=padding,
+                kernel_initializer=conv2d_kernel_initializer,
+                bias_initializer=conv2d_bias_initializer,
+                name=name,
+                use_bias=use_bias)(conv)
+        else:
+            conv = Conv2D(
+                filters=num_filters,
+                kernel_size=kernel_size,
+                padding=padding,
+                kernel_initializer=conv2d_kernel_initializer,
+                bias_initializer=conv2d_bias_initializer,
+                name=name,
+                use_bias=use_bias)(conv)
+
+        '''
+        From a statistics point of view BN before activation does not make sense to me.
+        BN is normalizing the distribution of features coming out of a convolution, some
+        these features might be negative which will be truncated by a non-linearity like ReLU.
+        If you normalize before activation you are including these negative values in the
+        normalization immediately before culling them from the feature space. BN after
+        activation will normalize the positive features without statistically biasing them
+        with features that do not make it through to the next convolutional layer.
+        '''
+        if use_batch_normalization:
+            conv = BatchNormalization(
+                momentum=0.1,
+                name='{}_normalization'.format(name))(conv)
+
+        if use_activation:
+            # With alpha=0.0 LeakyReLU is a ReLU
+            conv = LeakyReLU(
+                alpha=relu_alpha,
+                name='{}_activation'.format(name))(conv)
+
+        if use_dropout:
+            conv = SpatialDropout2D(dropout_rate)(conv)
+
+        return conv
+
+    @staticmethod
+    def get_encoder_block(
+            name_prefix,
+            num_convolutions,
+            num_filters,
+            input_layer,
+            kernel_size=(3, 3),
+            pool_size=(2, 2),
+            strides=(2, 2)):
+        previous_layer = input_layer
+
+        # Add the convolution blocks
+        for i in range(0, num_convolutions):
+            conv = YOLONetModel.get_convolution_block(
+                num_filters=num_filters,
+                input_layer=previous_layer,
+                kernel_size=kernel_size,
+                name='{}_conv{}'.format(name_prefix, i + 1))
+
+            previous_layer = conv
+
+        # Add the pooling layer
+        pool = MaxPooling2D(
+            pool_size=pool_size,
+            strides=strides,
+            name='{}_pool'.format(name_prefix))(previous_layer)
+
+        return previous_layer, pool
+
+    @staticmethod
+    def get_decoder_block(
+            name_prefix,
+            num_convolutions,
+            num_filters,
+            input_layer,
+            concat_layer=None,
+            upsampling_size=(2, 2),
+            kernel_size=(3, 3),
+            transposed=False):
+
+        # Add upsampling layer
+        up = UpSampling2D(size=upsampling_size)(input_layer)
+
+        # Add concatenation layer to pass features from encoder path
+        # to the decoder path
+        previous_layer = None
+
+        if concat_layer is not None:
+            concat = concatenate([up, concat_layer], axis=-1)
+            previous_layer = concat
+        else:
+            previous_layer = up
+
+        conv_name_format_str = '{}_convd{}' if transposed else '{}_conv{}'
+
+        for i in range(0, num_convolutions):
+            conv = YOLONetModel.get_convolution_block(
+                num_filters=num_filters,
+                input_layer=previous_layer,
+                kernel_size=kernel_size,
+                name=conv_name_format_str.format(name_prefix, i + 1),
+                use_bias=False,
+                use_activation=False,
+                transposed=transposed)
+
+            previous_layer = conv
+
+        return previous_layer

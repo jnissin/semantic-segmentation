@@ -640,6 +640,24 @@ def count_trailing_zeroes(num):
     return zeroes
 
 
+def np_from_255_to_normalized(val):
+    # type: (np.array) -> np.array
+
+    # From [0,255] to [-128,128] and then to [-1,1]
+    val -= 128.0
+    val /= 128.0
+    return val
+
+
+def np_from_normalized_to_255(val):
+    # type: (np.array) -> np.array
+
+    # Move to range [0,1] and then to [0,255]
+    val = (val+1.0)/2.0
+    val *= 255.0
+    return val
+
+
 def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None, clamp_to_range=False):
     # type: (np.array, np.array, np.array) -> np.array
 
@@ -657,18 +675,19 @@ def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None, clamp
         :return: The parameter batch normalized with the given values
     """
 
-    batch -= 128.0
-    batch /= 128.0
-
+    # TODO: Refactor to take values in range [0,255]
     if per_channel_mean is not None:
         if not ((per_channel_mean < 1.0 + 1e-7).all() and (per_channel_mean > -1.0 - 1e-7).all()):
             raise ValueError('Per-channel mean is not within range [-1, 1]')
-        batch -= per_channel_mean
+        batch -= np_from_normalized_to_255(per_channel_mean)
 
     if per_channel_stddev is not None:
         if not ((per_channel_stddev < 1.0 + 1e-7).all() and (per_channel_stddev > -1.0 - 1e-7).all()):
             raise ValueError('Per-channel stddev is not within range [-1, 1]')
-        batch /= (per_channel_stddev + 1e-7)
+        batch /= np_from_normalized_to_255(per_channel_stddev + 1e-7)
+
+    batch -= 128.0
+    batch /= 128.0
 
     if clamp_to_range:
         np.clip(batch, -1.0, 1.0, out=batch)
