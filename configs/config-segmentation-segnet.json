@@ -1,8 +1,8 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_labeled_photos": "data/photos-filtered/",
-    "path_to_labeled_masks": "data/masks-filtered/",
-    "path_to_unlabeled_photos": "data/photos-unlabeled/",
+    "path_to_labeled_photos": "data/debug/labeled/photos/",
+    "path_to_labeled_masks": "data/debug/labeled/masks/",
+    "path_to_unlabeled_photos": "data/debug/unlabeled/",
 
     "log_file_path": "logs/segnet/log.txt",
     "log_to_stdout": true,
@@ -11,7 +11,7 @@
     "keras_model_checkpoint_file_path": "checkpoints/segnet/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
     "teacher_model_checkpoint_file_path": "checkpoints/segnet/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
     "keras_csv_log_file_path": "logs/segnet/per-epoch-data.csv",
-    "optimizer_checkpoint_file_path": "checkpoints/segnet/optimizer/optimizer-config.json",
+    "optimizer_checkpoint_file_path": "checkpoints/segnet/optimizer/optimizer-checkpoint.json",
 
     "reduce_lr_on_plateau": {
       "factor": 0.1,
@@ -25,7 +25,6 @@
     "image_data_format": "channels_last",
     "continue_from_last_checkpoint": false,
     "use_data_augmentation": true,
-    "use_mean_teacher_method": false,
 
     "background_class_prediction_weight": 0.2,
     "use_crf_in_prediction": true,
@@ -43,7 +42,9 @@
 
     "model": "segnet",
 
+    "use_mean_teacher_method": true,
     "loss_function": "dummy",
+    "lambda_loss_function": "mean_teacher_superpixel",
 
     "optimizer": {
       "name": "adam",

@@ -15,6 +15,7 @@ from keras.layers.convolutional import Conv2D, ZeroPadding2D, Conv2DTranspose, U
 from keras.layers.core import Activation, Flatten, Dense
 from keras.layers.merge import add, concatenate
 from keras.layers.normalization import BatchNormalization
+from keras.layers.noise import GaussianNoise
 from keras.layers import Input
 
 from layers.pooling import MaxPoolingWithArgmax2D
@@ -35,6 +36,7 @@ class ModelType(Enum):
     NORMAL = 0
     SEMISUPERVISED = 1
     MEAN_TEACHER_STUDENT = 2
+    MEAN_TEACHER_STUDENT_SUPERPIXEL = 3
 
 
 #############################################
@@ -136,8 +138,20 @@ class ModelBase(object):
         self.model_type = model_type
         self.lambda_loss_function = lambda_loss_function
 
+        # Configure inputs
+        images = Input(name="images", shape=self.input_shape)
+        self.inputs = [images]
+
+        # If using Mean Teacher -method add a gaussian noise after input
+        model_inputs = images
+
+        # Additive Gaussian Noise with stddev 0.15, same as in
+        # Temporal Ensembling for Semi-Supervised Learning
+        if model_type == ModelType.MEAN_TEACHER_STUDENT or model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
+            model_inputs = GaussianNoise(stddev=0.15)(images)
+
         # Build the model
-        self.inputs, self.outputs = self._build_model()
+        self.outputs = self._build_model(model_inputs)
 
         # If we are using the mean teacher method and this is the student model or
         # we are using a semisupervised model - add the custom lambda loss layer
@@ -147,6 +161,9 @@ class ModelBase(object):
         elif self.model_type == ModelType.SEMISUPERVISED:
             self.name = self.name + '-SS'
             self._model = self._get_semisupervised_model()
+        elif self.model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
+            self.name = self.name + '-MTS-SP'
+            self._model = self._get_mean_teacher_superpixel_student_model()
         else:
             # Otherwise just return the model
             self._model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
@@ -156,13 +173,13 @@ class ModelBase(object):
         return self._model
 
     @abstractmethod
-    def _build_model(self):
+    def _build_model(self, inputs):
         """
         Builds the model and returns the inputs and outputs as lists. This method does not
         take into account additional inputs due to being possible Mean Teacher student model.
 
         # Arguments
-            Nothing
+            :param inputs: The previous layer i.e. an input layer
         # Returns
             :return: inputs and outputs of the model as a tuple of two lists [inputs, outputs]
         """
@@ -255,8 +272,44 @@ class ModelBase(object):
         consistency_cost = Input(name="consistency_cost", shape=[1])
         self.inputs.append(consistency_cost)
 
+        unlabeled_cost_coeff = Input(name='unlabeled_cost_coeff', shape=[1])
+        self.inputs.append(unlabeled_cost_coeff)
+
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, num_unlabeled, mt_predictions, consistency_cost]
+        lambda_inputs = [self.outputs[0], labels, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
+        mt_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+        self.outputs = [mt_loss_layer]
+
+        model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
+        return model
+
+    def _get_mean_teacher_superpixel_student_model(self):
+
+        if self.inputs is None or self.outputs is None:
+            raise RuntimeError('The model must be built by calling _build_model() first')
+        if self.lambda_loss_function is None:
+            raise ValueError('Mean teacher student models must be given a lambda loss function')
+
+        labels_shape = (self.input_shape[0], self.input_shape[1])
+        logits_shape = (self.input_shape[0], self.input_shape[1], self.num_classes)
+
+        labels = Input(name="labels", shape=labels_shape)
+        self.inputs.append(labels)
+
+        num_unlabeled = Input(name='num_unlabeled', shape=[1])
+        self.inputs.append(num_unlabeled)
+
+        mt_predictions = Input(name="mt_predictions", shape=logits_shape)
+        self.inputs.append(mt_predictions)
+
+        consistency_cost = Input(name="consistency_cost", shape=[1])
+        self.inputs.append(consistency_cost)
+
+        unlabeled_cost_coeff = Input(name="unlabeled_cost_coeff", shape=[1])
+        self.inputs.append(unlabeled_cost_coeff)
+
+        # Note: assumes there is only a single output, which is the last layer
+        lambda_inputs = [self.outputs[0], labels, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
         mt_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
         self.outputs = [mt_loss_layer]
 
@@ -289,13 +342,11 @@ class UNetModel(ModelBase):
             model_type=model_type,
             lambda_loss_function=lambda_loss_function)
 
-    def _build_model(self):
-        images = Input(name="images", shape=self.input_shape)
-
+    def _build_model(self, inputs):
         '''
         Contracting path
         '''
-        conv1, pool1 = UNetModel.get_encoder_block('encoder_block1', 2, 64, images)
+        conv1, pool1 = UNetModel.get_encoder_block('encoder_block1', 2, 64, inputs)
         conv2, pool2 = UNetModel.get_encoder_block('encoder_block2', 2, 128, pool1)
         conv3, pool3 = UNetModel.get_encoder_block('encoder_block3', 2, 256, pool2)
         conv4, pool4 = UNetModel.get_encoder_block('encoder_block4', 2, 512, pool3)
@@ -327,7 +378,7 @@ class UNetModel(ModelBase):
         '''
         conv10 = Conv2D(self.num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
 
-        return [images], [conv10]
+        return [conv10]
 
     @staticmethod
     def get_convolution_block(
@@ -474,8 +525,7 @@ class SegNetBasicModel(ModelBase):
             model_type=model_type,
             lambda_loss_function=lambda_loss_function)
 
-    def _build_model(self):
-        inputs = Input(name="images", shape=self.input_shape)
+    def _build_model(self, inputs):
 
         """
         Encoder path
@@ -501,7 +551,7 @@ class SegNetBasicModel(ModelBase):
         """
         conv9 = Conv2D(self.num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv8)
 
-        return [inputs], [conv9]
+        return [conv9]
 
 
 ##############################################
@@ -532,8 +582,7 @@ class ENetNaiveUpsampling(ModelBase):
             model_type=model_type,
             lambda_loss_function=lambda_loss_function)
 
-    def _build_model(self):
-        inputs = Input(shape=self.input_shape, name='images')
+    def _build_model(self, inputs):
         enet = ENetNaiveUpsampling.encoder_build(inputs)
 
         if self.encoder_only:
@@ -548,7 +597,7 @@ class ENetNaiveUpsampling(ModelBase):
         else:
             enet = ENetNaiveUpsampling.decoder_build(enet, nc=self.num_classes)
 
-        return [inputs], [enet]
+        return [enet]
 
     @staticmethod
     def encoder_initial_block(inp, nb_filter=13, nb_row=3, nb_col=3, strides=(2, 2)):
@@ -810,8 +859,7 @@ class ENetMaxUnpooling(ModelBase):
             model_type=model_type,
             lambda_loss_function=lambda_loss_function)
 
-    def _build_model(self):
-        inputs = Input(shape=self.input_shape, name='images')
+    def _build_model(self, inputs):
         enet = ENetMaxUnpooling.encoder_build(inputs)
 
         if self.encoder_only:
@@ -826,7 +874,7 @@ class ENetMaxUnpooling(ModelBase):
         else:
             enet = ENetMaxUnpooling.decoder_build(enet, nc=self.num_classes)
 
-        return [inputs], [enet]
+        return [enet]
 
     @staticmethod
     def encoder_initial_block(inp, nb_filter=13, nb_row=3, nb_col=3, strides=(2, 2)):
@@ -1088,13 +1136,12 @@ class YOLONetModel(ModelBase):
             model_type=model_type,
             lambda_loss_function=lambda_loss_function)
 
-    def _build_model(self):
-        images = Input(name="images", shape=self.input_shape)
+    def _build_model(self, inputs):
 
         """
         Encoder path
         """
-        conv1, pool1 = YOLONetModel.get_encoder_block('encoder_block1', 2, 64, images)
+        conv1, pool1 = YOLONetModel.get_encoder_block('encoder_block1', 2, 64, inputs)
         conv2, pool2 = YOLONetModel.get_encoder_block('encoder_block2', 2, 96, pool1)
         conv3, pool3 = YOLONetModel.get_encoder_block('encoder_block3', 3, 144, pool2)
         conv4, pool4 = YOLONetModel.get_encoder_block('encoder_block4', 3, 216, pool3)
@@ -1116,7 +1163,7 @@ class YOLONetModel(ModelBase):
         """
         conv13 = Conv2D(self.num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv12)
 
-        return [images], [conv13]
+        return [conv13]
 
     @staticmethod
     def get_convolution_block(

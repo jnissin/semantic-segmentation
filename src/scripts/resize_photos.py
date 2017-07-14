@@ -40,7 +40,7 @@ def get_files(path, ignore_hidden_files=True, include_sub_dirs=False):
     return ret_files
 
 
-def resize_to_match(photo_file_path, mask_file_path, path_to_resized_folder, ignore_existing=False):
+def resize_to_match(photo_file_path, mask_file_path, path_to_resized_folder, ignore_existing=False, inplace=False):
     photo_filename = os.path.basename(photo_file_path)
     mask_filename = os.path.basename(mask_file_path)
 
@@ -50,42 +50,50 @@ def resize_to_match(photo_file_path, mask_file_path, path_to_resized_folder, ign
 
     photo = Image.open(photo_file_path)
     mask = Image.open(mask_file_path)
-    resize(photo, photo_filename, mask.size, path_to_resized_folder, ignore_existing)
+    resize(photo, photo_file_path, mask.size, path_to_resized_folder, ignore_existing, inplace)
 
 
-def resize_to_smaller_dimension(photo_file_path, smaller_dimension, path_to_resized_folder, ignore_existing=False):
-    photo_filename = os.path.basename(photo_file_path)
+def resize_to_smaller_dimension(photo_file_path, smaller_dimension, path_to_resized_folder, ignore_existing=False, inplace=False):
     photo = Image.open(photo_file_path)
 
     # Calculate the target size so the smaller dimension matches the specified
     scale_factor = float(smaller_dimension)/float(min(photo.width, photo.height))
     target_width = int(round(scale_factor * photo.width))
     target_height = int(round(scale_factor * photo.height))
-    resize(photo, photo_filename, (target_width, target_height), path_to_resized_folder, ignore_existing)
+    resize(photo, photo_file_path, (target_width, target_height), path_to_resized_folder, ignore_existing, inplace)
 
 
-def resize(photo, photo_filename, target_size, path_to_resized_folder, ignore_existing=False):
-    resized_file_path = os.path.join(path_to_resized_folder, photo_filename)
-
-    if ignore_existing and os.path.exists(resized_file_path):
-        print 'Skipping existing: {}'.format(photo_filename)
-        return
-
+def resize(photo, photo_file_path, target_size, path_to_resized_folder, ignore_existing=False, inplace=False):
     start_time = time.time()
     original_size = photo.size
+    photo_file_name = os.path.basename(photo_file_path)
 
-    if photo.size == target_size:
+    if not inplace:
+        resized_file_path = os.path.join(path_to_resized_folder, photo_file_name)
+
+        if ignore_existing and os.path.exists(resized_file_path):
+            print 'Skipping existing: {}'.format(photo_file_name)
+            return
+
+        if photo.size == target_size:
+            photo.save(resized_file_path)
+        else:
+            photo = photo.resize(target_size, Image.ANTIALIAS)
+
         photo.save(resized_file_path)
     else:
-        photo = photo.resize(target_size, Image.ANTIALIAS)
+        if photo.size == target_size:
+            print 'Image {} already at target size: {}'.format(photo_file_name, target_size)
+            return
 
-    photo.save(resized_file_path)
+        photo = photo.resize(target_size, Image.ANTIALIAS)
+        photo.save(photo_file_path)
 
     if photo.size != target_size:
         raise ValueError('Unmatching photo and target sizes even after resizing: {} vs {}', photo.size, target_size)
 
     dt = time.time() - start_time
-    print 'Resizing of image {} from {} to {} completed in {} sec'.format(photo_filename, original_size, photo.size, dt)
+    print 'Resizing of image {} from {} to {} completed in {} sec'.format(photo_file_name, original_size, photo.size, dt)
 
 
 def main():
@@ -94,7 +102,8 @@ def main():
     ap.add_argument("-p", "--photos", required=True, help="Path to photos folder")
     ap.add_argument("-m", "--masks", required=False, help="Path to masks folder")
     ap.add_argument("-d", "--sdim", required=False, type=int, help="Size of the smaller dimension")
-    ap.add_argument("-o", "--output", required=True, help="Path to the output folder")
+    ap.add_argument("-o", "--output", required=False, help="Path to the output folder")
+    ap.add_argument("-x", "--inplace", required=False, default=False, type=bool, help="Should the resize happen in place")
     ap.add_argument("-i", "--incsub", required=False, default=False, type=bool, help="Include sub directories (default false)")
     ap.add_argument("-s", "--skip", required=False, default=False, type=bool, help="Ignore existing (default false)")
     args = vars(ap.parse_args())
@@ -108,12 +117,16 @@ def main():
     path_to_output = args['output']
     include_sub_dirs = args['incsub']
     ignore_existing = args['skip']
+    inplace = args['inplace']
     num_cores = multiprocessing.cpu_count()
     n_jobs = min(32, num_cores)
 
     photo_files = get_files(path_to_photos, include_sub_dirs=include_sub_dirs)
 
     print 'Starting resizing process for: {} photos'.format(len(photo_files))
+
+    if not inplace and path_to_output is None:
+        raise ValueError('Either inplace has to be true or output has to be specified')
 
     if path_to_masks is not None:
         mask_files = get_files(path_to_masks, include_sub_dirs=include_sub_dirs)
@@ -126,7 +139,8 @@ def main():
                 photo_files[i],
                 mask_files[i],
                 path_to_output,
-                ignore_existing=ignore_existing) for i in range(0, len(photo_files)))
+                ignore_existing=ignore_existing,
+                inplace=inplace) for i in range(0, len(photo_files)))
 
     elif smaller_dim is not None:
         Parallel(n_jobs=n_jobs, backend='threading')(
@@ -134,7 +148,8 @@ def main():
                 photo_files[i],
                 smaller_dim,
                 path_to_output,
-                ignore_existing=ignore_existing) for i in range(0, len(photo_files)))
+                ignore_existing=ignore_existing,
+                inplace=inplace) for i in range(0, len(photo_files)))
 
     else:
         raise RuntimeError('You must provide either sdim or masks to resize')

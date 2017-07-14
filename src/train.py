@@ -22,6 +22,15 @@ def get_data_augmentation_parameters():
 def ema_smoothing_coefficient_function(step_idx):
     # type: (int) -> float
 
+    """
+    Implements a ramp-up period for the Mean Teacher method's EMA smoothing coefficient.
+
+    # Arguments
+        :param step_idx: index of the training step
+    # Returns
+        :return: EMA smoothing coefficient
+    """
+
     if step_idx < 40000:
         a = 0.999
     else:
@@ -31,6 +40,17 @@ def ema_smoothing_coefficient_function(step_idx):
 
 
 def consistency_coefficient_function(step_idx):
+    # type: (int) -> float
+
+    """
+    Implements a ramp-up period for the Mean Teacher method's consistency coefficient.
+
+    # Arguments
+        :param step_idx: index of the training step
+    # Returns
+        :return: consistency coefficient for the given step
+    """
+
     # type: (int) -> float
     # How many steps for the ramp up period
     ramp_up_period = 40000.0
@@ -42,10 +62,36 @@ def consistency_coefficient_function(step_idx):
 
 
 def unlabeled_cost_coefficient_function(step_idx):
+    # type: (int) -> float
+
+    """
+    Returns the unlabeled data cost coefficient for the given training step.
+
+    # Arguments
+        :param step_idx: index of the training step
+    # Return
+        :return: unlabeled cost coefficient
+    """
+
     return 0.9
 
 
 def label_generation_function(np_img):
+    # type: (np.array[float]) -> (np.array[int])
+
+    """
+    Generates superpixel segmentation (labels) for the given image. The image is expected to be
+    in an unnormalized form with color values in range [0, 255]. The superpixel labels are in
+    index encoded format (integers) with array shape HxW, where the entries are superpixel
+    indices. The integer range is continuous in range [0, num_superpixels]. All the images do
+    not necessarily have the same number of superpixels, but the number can be calculated by
+    taking the max from the data.
+
+    # Arguments
+        :param np_img: image as a numpy array
+    # Returns
+        :return: superpixel segmentation
+    """
     normalized_img = image_utils.np_normalize_image_channels(np_img, clamp_to_range=True)
     val = image_utils.np_get_superpixel_segmentation(normalized_img, 200)
     return val
@@ -75,8 +121,7 @@ def main():
                                                     label_generation_function=label_generation_function,
                                                     consistency_cost_coefficient_function=consistency_coefficient_function,
                                                     ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,
-                                                    unlabeled_cost_coefficient_function=unlabeled_cost_coefficient_function,
-                                                    lambda_loss_function=None)
+                                                    unlabeled_cost_coefficient_function=unlabeled_cost_coefficient_function)
         trainer.train()
     elif trainer_type == 'classification':
         raise NotImplementedError('Classification training has not yet been implemented')

@@ -266,7 +266,7 @@ class ExtendedModel(Model):
                             epoch_logs['val_' + l] = o
 
                 if trainer is not None:
-                    trainer.on_epoch_end(epoch, epoch_logs)
+                    trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, epoch_logs)
 
                 callbacks.on_epoch_end(epoch, epoch_logs)
                 epoch += 1

@@ -145,7 +145,7 @@ def process_photo(np_photo,
                         dataset_utils.count_trailing_zeroes(crop_shape[1]) < div2_constraint:
             raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(div2_constraint))
 
-        x1y1, x2y2 = image_utils.np_get_random_crop_area(np_mask, crop_shape[0], crop_shape[1])
+        x1y1, x2y2 = image_utils.np_get_random_crop_area(np_photo, crop_shape[0], crop_shape[1])
         np_photo = image_utils.np_crop_image(np_photo, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
     else:
         # If a crop size is not given, make sure the image dimensions satisfy
@@ -160,7 +160,7 @@ def process_photo(np_photo,
             padded_shape = dataset_utils.get_required_image_dimensions(np_photo.shape, div2_constraint)
             np_photo = image_utils.np_pad_image_to_shape(np_photo, padded_shape, photo_cval)
 
-    return np_photo, np_mask
+    return np_photo
 
 
 def process_segmentation_photo_mask_pair(np_photo,
@@ -714,8 +714,10 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                         delayed(_generate_labels_for_unlabeled_photo)(
                             np_photo, self.label_generation_function) for np_photo in X_unlabeled)
 
-                    X = X + X_unlabeled
-                    Y = Y + Y_unlabeled
+                    #print 'X: {}'.format(X)
+                    #print 'X_unlab: {}'.format(X_unlabeled)
+                    X = list(X) + list(X_unlabeled)
+                    Y = list(Y) + list(Y_unlabeled)
 
                 X, Y = np.array(X), np.array(Y)
 

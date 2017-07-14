@@ -88,12 +88,11 @@ def np_apply_random_transform(images,
         # image and apply true multi-channel cval afterwards
         temp_cval = 919191.0
 
-        h, w = x.shape[img_row_axis], x.shape[img_col_axis]
-        transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
-
         for i in range(0, len(images)):
+            h, w = images[i].shape[img_row_axis], images[i].shape[img_col_axis]
+            transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
             images[i] = apply_transform(images[i], transform_matrix, img_channel_axis,
-                                        fill_mode=fill_mode, cval=cvals[i])
+                                        fill_mode=fill_mode, cval=temp_cval)
             mask = images[i][:, :, 0] == temp_cval
             images[i][mask] = cvals[i]
 

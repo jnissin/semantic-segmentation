@@ -170,8 +170,8 @@ def _tf_calculate_image_entropy(i, y_true_unlabeled, y_pred_unlabeled, num_class
     img_y_true_unlabeled = y_true_unlabeled[i]
     img_y_pred_unlabeled = y_pred_unlabeled[i]
 
-    img_y_pred_unlabeled = K.tf.Print(img_y_pred_unlabeled, [i, img_y_pred_unlabeled], message="img y pred: ", summarize=100)
-    img_y_true_unlabeled = K.tf.Print(img_y_true_unlabeled, [i, img_y_true_unlabeled], message="img y true: ", summarize=100)
+    #img_y_pred_unlabeled = K.tf.Print(img_y_pred_unlabeled, [i, img_y_pred_unlabeled], message="img y pred: ", summarize=100)
+    #img_y_true_unlabeled = K.tf.Print(img_y_true_unlabeled, [i, img_y_true_unlabeled], message="img y true: ", summarize=100)
 
     j, _, _, _, image_entropy = \
         K.tf.while_loop(for_each_superpixel_cond, _tf_calculate_superpixel_entropy,
@@ -211,6 +211,33 @@ def _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, num_unlabe
     mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(num_unlabeled, K.tf.float32))
 
     return mean_image_entropy
+
+
+def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient):
+    """
+    Calculates the consistency cost between mean teacher and student model
+    predictions.
+
+    # Arguments
+        :param y_pred: student predictions from the network (logits)
+        :param mt_pred: mean teacher predictions from the teacher network (logits)
+        :param cons_coefficient: consistency coefficient
+    # Returns
+        :return: the consistency cost (mean for the batch)
+    """
+    student_softmax = _tf_softmax(y_pred)
+    teacher_softmax = _tf_softmax(mt_pred)
+
+    # Calculate the L2 distance between the predictions (softmax)
+    l2_softmax_dist = (student_softmax - teacher_softmax) ** 2
+
+    # Output of the softmax is B_SIZExHxWxN_CLASSES
+    # Sum the last three axes to get the total loss over images
+    l2_softmax_dist = K.tf.reduce_sum(l2_softmax_dist, axis=(1, 2, 3))
+
+    # Take the mean of the loss per image and multiply by the consistency coefficient
+    consistency_cost = K.tf.reduce_mean(l2_softmax_dist) * cons_coefficient[0]
+    return consistency_cost
 
 
 ##############################################
@@ -369,12 +396,11 @@ def default_mean_teacher_lambda_loss(class_weights=None):
 
         # Arguments
             :param args: a list of Tensorflow tensors, described below
-
-            0: y_pred: predictions from the network (logits)
-            1: y_true: ground truth labels in index encoded format
-            2: num_unlabeled: number of unlabeled data
-            3: mt_pred: mean teacher predictions from the teacher network (logits)
-            4: cons_coefficient: consistency cost coefficient
+                0: y_pred: predictions from the network (logits)
+                1: y_true: ground truth labels in index encoded format
+                2: num_unlabeled: number of unlabeled data
+                3: mt_pred: mean teacher predictions from the teacher network (logits)
+                4: cons_coefficient: consistency cost coefficient
         # Returns
             :return: the mean teacher loss (1x1 Tensor)
         """
@@ -405,7 +431,8 @@ def default_mean_teacher_lambda_loss(class_weights=None):
         if class_weights is not None:
             # Weighted pixelwise cross-entropy
             # The labels are index encoded - expand to one hot encoding for weighted_pixelwise_crossentropy calculation
-            y_pred_labeled = K.tf.one_hot(y_pred_labeled, y_pred.shape[-1])
+            y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
+            y_true_labeled = K.tf.one_hot(y_true_labeled, y_pred.shape[-1])
             classification_costs = _weighted_pixelwise_crossentropy(class_weights)(y_true_labeled, y_pred_labeled)
         else:
             # Pixelwise cross-entropy
@@ -419,22 +446,10 @@ def default_mean_teacher_lambda_loss(class_weights=None):
         """
         Consistency costs - for labeled and unlabeled
         """
-
-        student_softmax = _tf_softmax(y_pred)
-        teacher_softmax = _tf_softmax(mt_pred)
-
-        # Calculate the L2 distance between the predictions (softmax)
-        l2_softmax_dist = (student_softmax - teacher_softmax) ** 2
-
-        # Output of the softmax is B_SIZExHxWxN_CLASSES
-        # Sum the last three axes to get the total loss over images
-        l2_softmax_dist = K.tf.reduce_sum(l2_softmax_dist, axis=(1, 2, 3))
-
-        # Take the mean of the loss per image and multiply by the consistency coefficient
-        consistency_costs = K.tf.reduce_mean(l2_softmax_dist) * cons_coefficient[0]
+        consistency_cost = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient[0])
 
         # Total cost
-        total_costs = classification_costs + consistency_costs
+        total_costs = classification_costs + consistency_cost
         return total_costs
 
     return loss
@@ -482,7 +497,8 @@ def default_semisupervised_lambda_loss(class_weights=None):
         if class_weights is not None:
             # Weighted pixelwise cross-entropy
             # The labels are index encoded - expand to one hot encoding for weighted_pixelwise_crossentropy calculation
-            y_pred_labeled = K.tf.one_hot(y_pred_labeled, y_pred.shape[-1])
+            y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
+            y_true_labeled = K.tf.one_hot(y_true_labeled, y_pred.shape[-1])
             labeled_loss = _weighted_pixelwise_crossentropy(class_weights)(y_true_labeled, y_pred_labeled)
         else:
             y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
@@ -499,8 +515,96 @@ def default_semisupervised_lambda_loss(class_weights=None):
         y_true_unlabeled = K.tf.cast(y_true[int_num_labeled:], dtype=K.tf.int32)
         unlabeled_loss = _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, int_num_unlabeled, int_num_classes)
 
-        unlabeled_loss = K.tf.Print(unlabeled_loss, [unlabeled_loss], message="Unlabeled loss: ")
+        #unlabeled_loss = K.tf.Print(unlabeled_loss, [unlabeled_loss], message="Unlabeled loss: ")
         #labeled_loss = K.tf.Print(labeled_loss, [labeled_loss], message="Labeled loss: ")
         return labeled_loss + unlabeled_cost_coefficient[0] * unlabeled_loss
+
+    return loss
+
+
+def mean_teacher_superpixel_lambda_loss(class_weights=None):
+    def loss(args):
+        # type: (list[K.tf.Tensor]) -> K.tf.Tensor
+
+        """
+        Calculates the Mean Teacher loss function, which consists of
+        classification cost and consistency cost as presented in.
+
+            https://arxiv.org/pdf/1703.01780.pdf
+
+        Additionally also uses the generated superpixel labels to calculate
+        a semisupervised cost for the unlabeled.
+
+        The function is used in conjunction with a Lambda layer to create
+        a layer which can calculate the loss. This is done because the
+        parameters to the function change on each training step and thus
+        need to be passed through the network as inputs.
+
+        # Arguments
+            :param args: a list of Tensorflow tensors, described below
+                0: y_pred: predictions from the network (logits)
+                1: y_true: ground truth labels in index encoded format
+                2: num_unlabeled: number of unlabeled data
+                3: mt_pred: mean teacher predictions from the teacher network (logits)
+                4: cons_coefficient: consistency cost coefficient
+                5: unlabeled_cost_coefficient: coefficient for the unlabeled superpixel loss
+        # Returns
+            :return: the mean teacher loss (1x1 Tensor)
+        """
+
+        # TODO: Create option to apply/not apply consistency to labeled data
+        # TODO: Optimize, now might calculate softmax twice for student (not a major thing)
+        # see: https://github.com/CuriousAI/mean-teacher/blob/master/mean_teacher/model.py#L410
+
+        # Extract arguments
+        if len(args) != 6:
+            raise ValueError('Expected 6 arguments (y_pred, y_true, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient), '
+                             'got: {} ({})'.format(len(args), args))
+
+        y_pred, y_true, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient = args
+
+        int_num_unlabeled = K.tf.squeeze(K.tf.to_int32(num_unlabeled[0]))
+        int_num_labeled = K.tf.squeeze(K.tf.subtract(K.tf.shape(y_pred)[0], K.tf.to_int32(num_unlabeled[0])))
+        int_num_classes = K.tf.shape(y_pred)[-1]
+
+        y_pred_labeled = y_pred[0:int_num_labeled]
+        y_true_labeled = y_true[0:int_num_labeled]
+        y_pred_unlabeled = K.tf.cast(K.tf.argmax(y_pred[int_num_labeled:], axis=-1), dtype=K.tf.int32)
+        y_true_unlabeled = K.tf.cast(y_true[int_num_labeled:], dtype=K.tf.int32)
+
+        """
+        Classification cost calculation - only for labeled
+        """
+        classification_costs = None
+
+        if class_weights is not None:
+            # Weighted pixelwise cross-entropy
+            # The labels are index encoded - expand to one hot encoding for weighted_pixelwise_crossentropy calculation
+            y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
+            y_true_labeled = K.tf.one_hot(y_true_labeled, y_pred.shape[-1])
+            classification_costs = _weighted_pixelwise_crossentropy(class_weights)(y_true_labeled, y_pred_labeled)
+        else:
+            # Pixelwise cross-entropy
+            y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
+            xent = K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred_labeled, labels=y_true_labeled)
+            # Returns cross-entropy loss for each pixel, i.e. B_SIZExHxW
+            # calculate the sum of pixel cross-entropies for each image and take the mean of images in the batch
+            xent = K.tf.reduce_sum(xent, axis=(1, 2))
+            classification_costs = K.tf.reduce_mean(xent)
+
+        """
+        Unlabeled classification costs (superpixel seg) - only for unlabeled
+        """
+        unlabeled_classification_cost = _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, int_num_unlabeled, int_num_classes)
+        unlabeled_classification_cost = unlabeled_cost_coefficient[0] * unlabeled_classification_cost
+
+        """
+        Consistency costs - for labeled and unlabeled
+        """
+        consistency_cost = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient[0])
+
+        # Total cost
+        total_costs = classification_costs + unlabeled_classification_cost + consistency_cost
+        return total_costs
 
     return loss
