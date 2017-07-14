@@ -1097,6 +1097,9 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
             file_path = teacher_model_checkpoint_file_path.format(epoch=epoch_index, val_loss=val_loss)
 
+            # Make sure the directory exists
+            TrainerBase._create_path_if_not_existing(file_path)
+
             self.log('Saving mean teacher model weights to file: {}'.format(file_path))
             self.log('At epoch {} end EMA coefficient: {}, consistency cost coefficient: {}'
                      .format(self.ema_smoothing_coefficient_function(step_index),

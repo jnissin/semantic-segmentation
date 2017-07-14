@@ -651,7 +651,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             unlabeled_data_set_size = 0
 
         total_batch_size = num_labeled_per_batch + num_unlabeled_per_batch
-        num_batches = dataset_utils.get_number_of_batches(unlabeled_data_set_size, num_unlabeled_per_batch)
+        num_batches = dataset_utils.get_number_of_batches(labeled_data_set_size, num_labeled_per_batch)
         n_jobs = dataset_utils.get_number_of_parallel_jobs()
 
         while True:
