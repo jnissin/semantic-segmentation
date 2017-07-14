@@ -423,7 +423,7 @@ class TrainerBase:
     def train(self):
         self.log('Starting training at local time {}\n'.format(datetime.datetime.now()))
 
-    def modify_batch_data(self, batch_index, x, y):
+    def modify_batch_data(self, batch_index, x, y, validation=False):
         pass
 
     def on_batch_end(self, batch_index):
@@ -687,6 +687,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         self.training_data_generator = None
         self.validation_data_generator = None
+        self.teacher_validation_data_generator = None
 
         super(SemisupervisedSegmentationTrainer, self).__init__(config_file_path, data_augmentation_parameters)
 
@@ -863,7 +864,19 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             shuffle_data_after_epoch=True
         )
 
-        self.validation_data_generator = SegmentationDataGenerator(
+        # The student lambda loss layer needs semi supervised input, so we need to work around it
+        # to only provide labeled input from the semi-supervised data generator. The dummy data
+        # is appended to each batch so that the batch data maintains it's shape. This is done in the
+        # modify_batch_data function.
+        self.validation_data_generator = SemisupervisedSegmentationDataGenerator(
+            labeled_data=self.validation_set,
+            unlabeled_data=None,
+            params=validation_data_generator_params,
+            label_generation_function=None)
+
+        # Note: The teacher has a regular SegmentationDataGenerator for validation data generation
+        # because it doesn't have the semi supervised loss lambda layer
+        self.teacher_validation_data_generator = SegmentationDataGenerator(
             labeled_data=self.validation_set,
             params=validation_data_generator_params)
 
@@ -900,6 +913,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         if not isinstance(self.model, ExtendedModel):
             raise ValueError('When using semi-supervised training the student must be an instance of ExtendedModel')
 
+        # Note: the student model should not be evaluated using the validation data generator
+        # the generator input will not be meaning
         self.model.fit_generator(
             generator=self.training_data_generator.get_flow(
                 num_labeled_per_batch=num_labeled_per_batch,
@@ -910,7 +925,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             epochs=num_epochs,
             initial_epoch=self.initial_epoch,
             validation_data=self.validation_data_generator.get_flow(
-                batch_size=num_labeled_per_batch,
+                num_labeled_per_batch=num_labeled_per_batch,
+                num_unlabeled_per_batch=0,
                 crop_shape=crop_shape
             ),
             validation_steps=validation_steps_per_epoch,
@@ -921,8 +937,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.log('The training session ended at local time {}\n'.format(datetime.datetime.now()))
         self.log_file.close()
 
-    def modify_batch_data(self, step_index, x, y):
-        # type: (int, list[np.array[np.float32]], np.array) -> (list[np.array[np.float32]], np.array)
+    def modify_batch_data(self, step_index, x, y, validation=False):
+        # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
 
         """
         Invoked by the ExtendedModel right before train_on_batch:
@@ -934,12 +950,13 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         If using standard semi-supervised:
 
-            Modfies the batch data by appending the unlabeled data cost coefficients.
+            Modifies the batch data by appending the unlabeled data cost coefficients.
 
         # Arguments
             :param step_index: the training step index
             :param x: input data
             :param y: output data
+            :param validation: is this a validation data batch
         # Returns
             :return: a tuple of (input data, output data)
         """
@@ -948,31 +965,53 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 raise ValueError('Teacher model is not set, cannot run predictions')
 
             # First dimension in all of the input data should be the batch size
-            batch_size = x[0].shape[0]
             images = x[0]
-            mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
-            consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
-            np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
-            x = x + [mean_teacher_predictions, np_consistency_coefficients]
+            batch_size = images.shape[0]
+
+            if validation:
+                # BxHxWxC
+                mean_teacher_predictions = np.zeros(shape=(images.shape[0], images.shape[1], images.shape[2], self.num_classes))
+                np_consistency_coefficients = np.zeros(shape=[batch_size])
+                x = x + [mean_teacher_predictions, np_consistency_coefficients]
+            else:
+                mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
+                consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
+                np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
+                x = x + [mean_teacher_predictions, np_consistency_coefficients]
         elif self.lambda_loss_function_name == 'default_semisupervised':
+            # First dimension in all of the input data should be the batch size
             batch_size = x[0].shape[0]
-            unlabeled_cost_coefficient = self.unlabeled_cost_coefficient_function(step_index)
-            np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
-            x = x + [np_unlabeled_cost_coefficients]
+
+            if validation:
+                np_unlabeled_cost_coefficients = np.zeros(shape=[batch_size])
+                x = x + [np_unlabeled_cost_coefficients]
+            else:
+                unlabeled_cost_coefficient = self.unlabeled_cost_coefficient_function(step_index)
+                np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
+                x = x + [np_unlabeled_cost_coefficients]
         elif self.lambda_loss_function_name == 'mean_teacher_superpixel':
             if self.teacher_model is None:
                 raise ValueError('Teacher model is not set, cannot run predictions')
 
-            batch_size = x[0].shape[0]
+            # First dimension in all of the input data should be the batch size
             images = x[0]
-            mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
-            consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
-            np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
+            batch_size = images.shape[0]
 
-            unlabeled_cost_coefficient = self.unlabeled_cost_coefficient_function(step_index)
-            np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
+            if validation:
+                # BxHxWxC
+                mean_teacher_predictions = np.zeros(shape=(images.shape[0], images.shape[1], images.shape[2], self.num_classes))
+                np_consistency_coefficients = np.zeros(shape=[batch_size])
+                np_unlabeled_cost_coefficients = np.zeros(shape=[batch_size])
+                x = x + [mean_teacher_predictions, np_consistency_coefficients, np_unlabeled_cost_coefficients]
+            else:
+                mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
+                consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
+                np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
 
-            x = x + [mean_teacher_predictions, np_consistency_coefficients, np_unlabeled_cost_coefficients]
+                unlabeled_cost_coefficient = self.unlabeled_cost_coefficient_function(step_index)
+                np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
+
+                x = x + [mean_teacher_predictions, np_consistency_coefficients, np_unlabeled_cost_coefficients]
 
         return x, y
 
@@ -1031,14 +1070,14 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             # Default to -1.0 validation loss if nothing else is given
             val_loss = -1.0
 
-            if self.validation_data_generator is not None:
+            if self.teacher_validation_data_generator is not None:
                 # Evaluate the mean teacher on the validation data
                 num_labeled_per_batch = self.get_config_value('num_labeled_per_batch')
                 validation_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.validation_set), num_labeled_per_batch)
                 crop_shape = self.get_config_value('crop_shape')
 
                 val_outs = self.teacher_model.evaluate_generator(
-                    generator=self.validation_data_generator.get_flow(
+                    generator=self.teacher_validation_data_generator.get_flow(
                         batch_size=num_labeled_per_batch,
                         crop_shape=crop_shape
                     ),

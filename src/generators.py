@@ -644,7 +644,11 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # divisible by the labeled data batch size then the last batch will be smaller
         # than the rest. However, all labeled data is used on every epoch.
         labeled_data_set_size = len(self.labeled_data)
-        unlabeled_data_set_size = len(self.unlabeled_data)
+
+        if self.unlabeled_data is not None:
+            unlabeled_data_set_size = len(self.unlabeled_data)
+        else:
+            unlabeled_data_set_size = 0
 
         total_batch_size = num_labeled_per_batch + num_unlabeled_per_batch
         num_batches = dataset_utils.get_number_of_batches(unlabeled_data_set_size, num_unlabeled_per_batch)
@@ -660,9 +664,12 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 labeled_batch_files = self.labeled_data[labeled_batch_range[0]:labeled_batch_range[1]]
                 num_labeled_in_batch = len(labeled_batch_files)
 
-                unlabeled_batch_range = dataset_utils.get_batch_index_range(unlabeled_data_set_size, num_unlabeled_per_batch, i)
-                unlabeled_batch_files = self.unlabeled_data[unlabeled_batch_range[0]:unlabeled_batch_range[1]]
-                num_unlabeled_in_batch = len(unlabeled_batch_files)
+                if self.unlabeled_data is not None and num_unlabeled_per_batch > 0:
+                    unlabeled_batch_range = dataset_utils.get_batch_index_range(unlabeled_data_set_size, num_unlabeled_per_batch, i)
+                    unlabeled_batch_files = self.unlabeled_data[unlabeled_batch_range[0]:unlabeled_batch_range[1]]
+                    num_unlabeled_in_batch = len(unlabeled_batch_files)
+                else:
+                    num_unlabeled_in_batch = 0
 
                 samples_in_batch = num_labeled_in_batch + num_unlabeled_in_batch
 
@@ -681,7 +688,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                         div2_constraint=4,
                         mask_type='index') for photo_mask_pair in labeled_batch_files)
 
-                if num_unlabeled_per_batch > 0:
+                if num_labeled_in_batch > 0:
                     # In parallel: Load the unlabeled photos of this batch into numpy arrays
                     np_unlabeled_photos = Parallel(n_jobs=n_jobs, backend='threading')(
                         delayed(img_to_array)(dataset_utils.load_n_channel_image(
@@ -714,8 +721,6 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                         delayed(_generate_labels_for_unlabeled_photo)(
                             np_photo, self.label_generation_function) for np_photo in X_unlabeled)
 
-                    #print 'X: {}'.format(X)
-                    #print 'X_unlab: {}'.format(X_unlabeled)
                     X = list(X) + list(X_unlabeled)
                     Y = list(Y) + list(Y_unlabeled)
 
@@ -733,7 +738,8 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 # Generate a dummy output for the dummy loss function and yield a batch of data
                 dummy_output = np.zeros(shape=[samples_in_batch])
 
-                yield [X, Y, num_unlabeled], dummy_output
+                batch_data = [X, Y, num_unlabeled]
+                yield batch_data, dummy_output
 
     @staticmethod
     def default_label_generator_for_unlabeled_photos(np_image):

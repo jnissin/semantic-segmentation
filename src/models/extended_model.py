@@ -7,6 +7,8 @@ try:
 except ImportError:
     import Queue as queue
 
+import numpy as np
+
 from keras.engine.training import Model
 from keras.engine.training import GeneratorEnqueuer
 
@@ -250,7 +252,9 @@ class ExtendedModel(Model):
                                 validation_steps,
                                 max_q_size=max_q_size,
                                 workers=workers,
-                                pickle_safe=pickle_safe)
+                                pickle_safe=pickle_safe,
+                                trainer=trainer,
+                                validation=True)
                         else:
                             # No need for try/except because
                             # data has already been validated.
@@ -279,3 +283,105 @@ class ExtendedModel(Model):
 
         callbacks.on_train_end()
         return self.history
+
+    @interfaces.legacy_generator_methods_support
+    def evaluate_generator(self, generator, steps,
+                           max_q_size=10, workers=1, pickle_safe=False, trainer=None, validation=False):
+        """Evaluates the model on a data generator.
+
+        The generator should return the same kind of data
+        as accepted by `test_on_batch`.
+
+        # Arguments
+            generator: Generator yielding tuples (inputs, targets)
+                or (inputs, targets, sample_weights)
+            steps: Total number of steps (batches of samples)
+                to yield from `generator` before stopping.
+            max_q_size: maximum size for the generator queue
+            workers: maximum number of processes to spin up
+                when using process based threading
+            pickle_safe: if True, use process based threading.
+                Note that because
+                this implementation relies on multiprocessing,
+                you should not pass
+                non picklable arguments to the generator
+                as they can't be passed
+                easily to children processes.
+            trainer: a reference to Trainer to augment batch data if need be
+            validation: is this a validation run evaluation
+        # Returns
+            Scalar test loss (if the model has a single output and no metrics)
+            or list of scalars (if the model has multiple outputs
+            and/or metrics). The attribute `model.metrics_names` will give you
+            the display labels for the scalar outputs.
+
+        # Raises
+            ValueError: In case the generator yields
+                data in an invalid format.
+        """
+        self._make_test_function()
+
+        steps_done = 0
+        wait_time = 0.01
+        all_outs = []
+        batch_sizes = []
+        enqueuer = None
+
+        try:
+            enqueuer = GeneratorEnqueuer(generator, pickle_safe=pickle_safe)
+            enqueuer.start(workers=workers, max_q_size=max_q_size)
+
+            while steps_done < steps:
+                generator_output = None
+                while enqueuer.is_running():
+                    if not enqueuer.queue.empty():
+                        generator_output = enqueuer.queue.get()
+                        break
+                    else:
+                        time.sleep(wait_time)
+
+                if not hasattr(generator_output, '__len__'):
+                    raise ValueError('output of generator should be a tuple '
+                                     '(x, y, sample_weight) '
+                                     'or (x, y). Found: ' +
+                                     str(generator_output))
+                if len(generator_output) == 2:
+                    x, y = generator_output
+                    sample_weight = None
+                elif len(generator_output) == 3:
+                    x, y, sample_weight = generator_output
+                else:
+                    raise ValueError('output of generator should be a tuple '
+                                     '(x, y, sample_weight) '
+                                     'or (x, y). Found: ' +
+                                     str(generator_output))
+
+                if trainer is not None:
+                    x, y = trainer.modify_batch_data(steps_done, x, y, validation)
+
+                outs = self.test_on_batch(x, y, sample_weight=sample_weight)
+
+                if isinstance(x, list):
+                    batch_size = len(x[0])
+                elif isinstance(x, dict):
+                    batch_size = len(list(x.values())[0])
+                else:
+                    batch_size = len(x)
+                all_outs.append(outs)
+
+                steps_done += 1
+                batch_sizes.append(batch_size)
+
+        finally:
+            if enqueuer is not None:
+                enqueuer.stop()
+
+        if not isinstance(outs, list):
+            return np.average(np.asarray(all_outs),
+                              weights=batch_sizes)
+        else:
+            averages = []
+            for i in range(len(outs)):
+                averages.append(np.average([out[i] for out in all_outs],
+                                           weights=batch_sizes))
+            return averages
