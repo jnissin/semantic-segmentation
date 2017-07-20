@@ -580,7 +580,10 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # type: (list[tuple[str]], list[str], DataGeneratorParameters, Callable[[np.array[np.float32]], np.array]) -> ()
 
         self.labeled_data = labeled_data
-        self.unlabeled_data = unlabeled_data
+        self.unlabeled_data = unlabeled_data if unlabeled_data is not None else []
+
+        if labeled_data is None or len(labeled_data) == 0:
+            raise ValueError('SemisupervisedSegmentationDataGenerator does not support empty labeled data')
 
         if label_generation_function is None:
             self.label_generation_function = SemisupervisedSegmentationDataGenerator.default_label_generator_for_unlabeled_photos
@@ -619,9 +622,111 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         masks = [photo_mask_pair[1] for photo_mask_pair in self.labeled_data]
         return masks
 
+    def has_unlabeled_data(self):
+        # type: () -> bool
+
+        """
+        Returns whether the generator has unlabeled data.
+
+        # Arguments
+            None
+        # Returns
+            :return: true if there is unlabeled data otherwise false
+        """
+        return self.unlabeled_data is not None and len(self.unlabeled_data) > 0
+
+    def get_labeled_batch_data(self, batch_idx, num_labeled_per_batch, crop_shape):
+        # type: (int, int, tuple[int]) -> (list[np.array], list[np.array])
+
+        """
+        # Arguments
+            :param batch_idx: index of the labeled data batch
+            :param num_labeled_per_batch: number of items in a single labeled data batch
+            :param crop_shape: crop shape
+        # Returns
+            :return: labeled data as two lists: (X, Y)
+        """
+
+        labeled_data_set_size = len(self.labeled_data)
+        n_jobs = dataset_utils.get_number_of_parallel_jobs()
+
+        labeled_batch_range = dataset_utils.get_batch_index_range(labeled_data_set_size,
+                                                                  num_labeled_per_batch,
+                                                                  batch_idx)
+        labeled_batch_files = self.labeled_data[labeled_batch_range[0]:labeled_batch_range[1]]
+
+        # In parallel: Process the labeled files for this batch
+        labeled_data = Parallel(n_jobs=n_jobs, backend='threading')(
+            delayed(get_labeled_segmentation_data_pair)(
+                photo_mask_pair=photo_mask_pair,
+                num_color_channels=self.num_color_channels,
+                crop_shape=crop_shape,
+                material_class_information=self.material_class_information,
+                photo_cval=self.photo_cval,
+                mask_cval=self.mask_cval,
+                use_data_augmentation=self.use_data_augmentation,
+                data_augmentation_params=self.data_augmentation_params,
+                img_data_format=self.img_data_format,
+                div2_constraint=4,
+                mask_type='index') for photo_mask_pair in labeled_batch_files)
+
+        # Unzip the photo mask pairs
+        X, Y = zip(*labeled_data)
+
+        return list(X), list(Y)
+
+    def get_unlabeled_batch_data(self, batch_idx, num_unlabeled_per_batch, crop_shape):
+        # type: (int, int, tuple[int]) -> (list[np.array], list[np.array])
+
+        """
+        # Arguments
+            :param batch_idx: index of the unlabeled data batch
+            :param num_unlabeled_per_batch: number of items in a single unlabeled data batch
+            :param crop_shape: crop shape
+        # Returns
+            :return: unlabeled data as two lists: (X, Y)
+        """
+
+        # If we don't have unlabeled data return two empty lists
+        if not self.has_unlabeled_data() or num_unlabeled_per_batch < 1:
+            return [], []
+
+        unlabeled_data_set_size = len(self.unlabeled_data)
+        n_jobs = dataset_utils.get_number_of_parallel_jobs()
+
+        unlabeled_batch_range = dataset_utils.get_batch_index_range(unlabeled_data_set_size,
+                                                                    num_unlabeled_per_batch,
+                                                                    batch_idx)
+
+        unlabeled_batch_files = self.unlabeled_data[unlabeled_batch_range[0]:unlabeled_batch_range[1]]
+
+        # In parallel: Load the unlabeled photos of this batch into numpy arrays
+        np_unlabeled_photos = Parallel(n_jobs=n_jobs, backend='threading')(
+            delayed(img_to_array)(dataset_utils.load_n_channel_image(
+                unlabeled_photo_path, self.num_color_channels)) for unlabeled_photo_path in unlabeled_batch_files)
+
+        # In parallel: Process the unlabeled data pairs (take crops, apply data augmentation, etc).
+        X_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
+            delayed(process_photo)(
+                np_photo=photo,
+                crop_shape=crop_shape,
+                photo_cval=self.photo_cval,
+                use_data_augmentation=self.use_data_augmentation,
+                data_augmentation_params=self.data_augmentation_params,
+                img_data_format=self.img_data_format,
+                div2_constraint=4) for photo in np_unlabeled_photos)
+
+        # In parallel: Generate segmentation masks for the unlabeled photos
+        # Note: cropping and augmentation already applied, but channels not normalized
+        Y_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
+            delayed(_generate_labels_for_unlabeled_photo)(
+                np_photo, self.label_generation_function) for np_photo in X_unlabeled)
+
+        return list(X_unlabeled), list(Y_unlabeled)
+
     @threadsafe
     def get_flow(self, num_labeled_per_batch, num_unlabeled_per_batch, crop_shape=None):
-        # type: (int, int, tuple(int)) -> list[np.array, np.array, np.array, np.array, np.array]
+        # type: (int, int, tuple[int]) -> (list[np.array], np.array)
 
         """
         Generates batches of data for semi supervised mean teacher training. Also handles
@@ -644,86 +749,36 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # divisible by the labeled data batch size then the last batch will be smaller
         # than the rest. However, all labeled data is used on every epoch.
         labeled_data_set_size = len(self.labeled_data)
-
-        if self.unlabeled_data is not None:
-            unlabeled_data_set_size = len(self.unlabeled_data)
-        else:
-            unlabeled_data_set_size = 0
-
-        total_batch_size = num_labeled_per_batch + num_unlabeled_per_batch
+        unlabeled_data_set_size = len(self.unlabeled_data)
         num_batches = dataset_utils.get_number_of_batches(labeled_data_set_size, num_labeled_per_batch)
-        n_jobs = dataset_utils.get_number_of_parallel_jobs()
+        unlabeled_batch_idx = 0
 
         while True:
             if self.shuffle_data_after_epoch:
                 # Shuffle the labeled (photo, mask) data after every epoch
                 random.shuffle(self.labeled_data)
 
-            for i in range(0, num_batches):
-                labeled_batch_range = dataset_utils.get_batch_index_range(labeled_data_set_size, num_labeled_per_batch, i)
-                labeled_batch_files = self.labeled_data[labeled_batch_range[0]:labeled_batch_range[1]]
-                num_labeled_in_batch = len(labeled_batch_files)
+            # Steps (batches) per epoch is determined by the labeled data
+            for labeled_batch_idx in range(0, num_batches):
 
-                if self.unlabeled_data is not None and num_unlabeled_per_batch > 0:
-                    unlabeled_batch_range = dataset_utils.get_batch_index_range(unlabeled_data_set_size, num_unlabeled_per_batch, i)
-                    unlabeled_batch_files = self.unlabeled_data[unlabeled_batch_range[0]:unlabeled_batch_range[1]]
-                    num_unlabeled_in_batch = len(unlabeled_batch_files)
-                else:
-                    num_unlabeled_in_batch = 0
+                X, Y = self.get_labeled_batch_data(labeled_batch_idx, num_labeled_per_batch, crop_shape)
+                X_unlabeled, Y_unlabeled = self.get_unlabeled_batch_data(unlabeled_batch_idx, num_unlabeled_per_batch, crop_shape)
+                X = X + X_unlabeled
+                Y = Y + Y_unlabeled
 
-                samples_in_batch = num_labeled_in_batch + num_unlabeled_in_batch
+                num_unlabeled_samples_in_batch = len(X_unlabeled)
+                num_samples_in_batch = len(X)
 
-                # In parallel: Process the labeled files for this batch
-                labeled_data = Parallel(n_jobs=n_jobs, backend='threading')(
-                    delayed(get_labeled_segmentation_data_pair)(
-                        photo_mask_pair=photo_mask_pair,
-                        num_color_channels=self.num_color_channels,
-                        crop_shape=crop_shape,
-                        material_class_information=self.material_class_information,
-                        photo_cval=self.photo_cval,
-                        mask_cval=self.mask_cval,
-                        use_data_augmentation=self.use_data_augmentation,
-                        data_augmentation_params=self.data_augmentation_params,
-                        img_data_format=self.img_data_format,
-                        div2_constraint=4,
-                        mask_type='index') for photo_mask_pair in labeled_batch_files)
-
-                if num_labeled_in_batch > 0:
-                    # In parallel: Load the unlabeled photos of this batch into numpy arrays
-                    np_unlabeled_photos = Parallel(n_jobs=n_jobs, backend='threading')(
-                        delayed(img_to_array)(dataset_utils.load_n_channel_image(
-                            unlabeled_photo_path, self.num_color_channels)) for unlabeled_photo_path in unlabeled_batch_files)
-
-                    # In parallel: Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-                    X_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
-                        delayed(process_photo)(
-                            np_photo=np_unlabeled_photos[i],
-                            crop_shape=crop_shape,
-                            photo_cval=self.photo_cval,
-                            use_data_augmentation=self.use_data_augmentation,
-                            data_augmentation_params=self.data_augmentation_params,
-                            img_data_format=self.img_data_format,
-                            div2_constraint=4) for i in range(0, num_unlabeled_in_batch))
-
-                    # Check whether we ran out of unlabeled data and shuffle if required
-                    if unlabeled_batch_range[1] == unlabeled_data_set_size or num_unlabeled_in_batch < num_unlabeled_per_batch:
+                # Check whether we ran out of unlabeled data and shuffle the unlabeled data if required
+                if self.has_unlabeled_data() and num_unlabeled_per_batch > 0:
+                    if num_unlabeled_per_batch*unlabeled_batch_idx >= unlabeled_data_set_size:
                         if self.shuffle_data_after_epoch:
                             random.shuffle(self.unlabeled_data)
+                        unlabeled_batch_idx = 0
+                    else:
+                        unlabeled_batch_idx += 1
 
-                # Combine the labeled and unlabeled together so that the unlabeled samples are the M last
-                # samples in the batch
-                X, Y = zip(*labeled_data)
-
-                if num_unlabeled_per_batch > 0:
-                    # In parallel: Generate segmentation masks for the unlabeled photos
-                    # Note: cropping and augmentation already applied, but channels not normalized
-                    Y_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
-                        delayed(_generate_labels_for_unlabeled_photo)(
-                            np_photo, self.label_generation_function) for np_photo in X_unlabeled)
-
-                    X = list(X) + list(X_unlabeled)
-                    Y = list(Y) + list(Y_unlabeled)
-
+                # Cast the lists to numpy arrays
                 X, Y = np.array(X), np.array(Y)
 
                 # Normalize the photo batch data
@@ -733,12 +788,16 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                                      self.per_channel_stddev if self.use_per_channel_stddev_normalization else None)
 
                 # The dimensions of the number of unlabeled in the batch must match with batch dimension
-                num_unlabeled = np.ones(shape=[samples_in_batch], dtype=np.int32) * num_unlabeled_in_batch
+                num_unlabeled = np.ones(shape=[num_samples_in_batch], dtype=np.int32) * num_unlabeled_samples_in_batch
 
                 # Generate a dummy output for the dummy loss function and yield a batch of data
-                dummy_output = np.zeros(shape=[samples_in_batch])
+                dummy_output = np.zeros(shape=[num_samples_in_batch])
 
                 batch_data = [X, Y, num_unlabeled]
+
+                if X.shape[0] != Y.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
+                    print 'Unmatching input first dimensions: {}, {}, {}'.format(X.shape[0], Y.shape[0],  num_unlabeled.shape[0])
+
                 yield batch_data, dummy_output
 
     @staticmethod

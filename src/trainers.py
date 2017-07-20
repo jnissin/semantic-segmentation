@@ -86,9 +86,14 @@ class TrainerBase:
         self.log('Setting Keras image data format to: {}'.format(self.get_config_value('image_data_format')))
         K.set_image_data_format(self.get_config_value('image_data_format'))
 
+        self._init_config()
         self._init_data()
         self._init_models()
         self._init_data_generators()
+
+    @abstractmethod
+    def _init_config(self):
+        self.log('Reading configuration file')
 
     @abstractmethod
     def _init_data(self):
@@ -465,23 +470,51 @@ class SegmentationTrainer(TrainerBase):
 
         super(SegmentationTrainer, self).__init__(config_file_path, data_augmentation_parameters)
 
+    def _init_config(self):
+        self.path_to_labeled_photos = self.get_config_value('path_to_labeled_photos')
+        self.path_to_labeled_masks = self.get_config_value('path_to_labeled_masks')
+        self.path_to_material_class_file = self.get_config_value('path_to_material_class_file')
+        self.data_set_splits = self.get_config_value('data_set_splits')
+        self.use_class_weights = self.get_config_value('use_class_weights')
+
+        self.model_name = self.get_config_value('model')
+        self.input_shape = self.get_config_value('input_shape')
+        self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
+        self.weights_directory_path = self.get_config_value('keras_model_checkpoint_file_path')
+        self.use_transfer_weights = bool(self.get_config_value('transfer_weights'))
+        self.transfer_options = self.get_config_value('transfer_options')
+        self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
+        self.loss_function_name = self.get_config_value('loss_function')
+
+        self.use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
+        self.num_color_channels = self.get_config_value('num_color_channels')
+        self.random_seed = self.get_config_value('random_seed')
+        self.per_channel_mean = self.get_config_value('per_channel_mean')
+        self.per_channel_stddev = self.get_config_value('per_channel_stddev')
+
+        self.num_epochs = self.get_config_value('num_epochs')
+        self.batch_size = self.get_config_value('num_labeled_per_batch')
+        self.crop_shape = self.get_config_value('crop_shape')
+        self.validation_batch_size = self.get_config_value('validation_num_labeled_per_batch')
+        self.validation_crop_shape = self.get_config_value('validation_crop_shape')
+
     def _init_data(self):
         super(SegmentationTrainer, self)._init_data()
 
         # Load material class information
         self.log('Loading material class information')
-        self.material_class_information = dataset_utils.load_material_class_information(self.get_config_value('path_to_material_class_file'))
+        self.material_class_information = dataset_utils.load_material_class_information(self.path_to_material_class_file)
         self.num_classes = len(self.material_class_information)
         self.log('Loaded {} material classes successfully'.format(self.num_classes))
 
         # Labeled photos
-        self.log('Reading labeled photo files from: {}'.format(self.get_config_value('path_to_labeled_photos')))
-        self.labeled_photo_files = list_pictures(self.get_config_value('path_to_labeled_photos'))
+        self.log('Reading labeled photo files from: {}'.format(self.path_to_labeled_photos))
+        self.labeled_photo_files = list_pictures(self.path_to_labeled_photos)
         self.log('Found {} labeled photo files'.format(len(self.labeled_photo_files)))
 
         # Labeled masks
-        self.log('Reading labeled mask files from: {}'.format(self.get_config_value('path_to_labeled_masks')))
-        self.labeled_mask_files = list_pictures(self.get_config_value('path_to_labeled_masks'))
+        self.log('Reading labeled mask files from: {}'.format(self.path_to_labeled_masks))
+        self.labeled_mask_files = list_pictures(self.path_to_labeled_masks)
         self.log('Found {} labeled mask files'.format(len(self.labeled_mask_files)))
 
         if len(self.labeled_photo_files) != len(self.labeled_mask_files):
@@ -490,10 +523,10 @@ class SegmentationTrainer(TrainerBase):
 
         # Generate random splits of the supervised data for training, validation and test
         self.log('Splitting data to training, validation and test sets of sizes (%) of the labeled dataset of size {}: {}'
-            .format(len(self.labeled_photo_files), self.get_config_value('dataset_splits')))
+            .format(len(self.labeled_photo_files), self.data_set_splits))
 
         self.training_set, self.validation_set, self.test_set = \
-            dataset_utils.split_labeled_dataset(self.labeled_photo_files, self.labeled_mask_files, self.get_config_value('dataset_splits'))
+            dataset_utils.split_labeled_dataset(self.labeled_photo_files, self.labeled_mask_files, self.data_set_splits)
 
         self.log('Dataset split complete')
         self.log('Labeled training set size: {}'.format(len(self.training_set)))
@@ -511,7 +544,7 @@ class SegmentationTrainer(TrainerBase):
         # Class weights
         self.class_weights = None
 
-        if self.get_config_value('use_class_weights'):
+        if self.use_class_weights:
             self.class_weights = self.get_class_weights(training_set=self.training_set,
                                                         material_class_information=self.material_class_information)
 
@@ -519,40 +552,34 @@ class SegmentationTrainer(TrainerBase):
         super(SegmentationTrainer, self)._init_models()
 
         # Model creation
-        model_name = self.get_config_value('model')
-        input_shape = self.get_config_value('input_shape')
-
-        self.log('Creating model {} instance with input shape: {}, num classes: {}'.format(model_name, input_shape, self.num_classes))
-        self.model_wrapper = get_model(model_name, input_shape, self.num_classes)
+        self.log('Creating model {} instance with input shape: {}, num classes: {}'
+                 .format(self.model_name, self.input_shape, self.num_classes))
+        self.model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes)
         self.model = self.model_wrapper.model
         self.model.summary()
 
-        if bool(self.get_config_value('continue_from_last_checkpoint')):
-            weights_directory_path = self.get_config_value('keras_model_checkpoint_file_path')
-            self.initial_epoch = self.load_latest_weights_for_model(self.model, weights_directory_path)
+        if self.continue_from_last_checkpoint:
+            self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
 
-        if bool(self.get_config_value('transfer_weights')):
+        if self.use_transfer_weights:
             if self.initial_epoch != 0:
                 self.log('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
             else:
-                self.transfer_weights(self.model_wrapper, self.get_config_value('transfer_options'))
+                self.transfer_weights(self.model_wrapper, self.transfer_options)
 
-        # Get the optimizer for the student model
-        continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
-
-        if continue_from_optimizer_checkpoint and self.initial_epoch == 0:
+        # Get the optimizer for the model
+        if self.continue_from_optimizer_checkpoint and self.initial_epoch == 0:
             self.log('Cannot continue from optimizer checkpoint if initial epoch is 0. Ignoring optimizer checkpoint.')
-            continue_from_optimizer_checkpoint = False
+            self.continue_from_optimizer_checkpoint = False
 
-        optimizer = self.get_optimizer(continue_from_optimizer_checkpoint)
+        optimizer = self.get_optimizer(self.continue_from_optimizer_checkpoint)
 
         # Get the loss function for the student model
-        loss_function_name = self.get_config_value('loss_function')
-        loss_function = self.get_loss_function(loss_function_name,
-                                               self.get_config_value('use_class_weights'),
+        loss_function = self.get_loss_function(self.loss_function_name,
+                                               self.use_class_weights,
                                                self.class_weights)
 
-        # Compile the student model
+        # Compile the model
         self.model.compile(optimizer=optimizer,
                            loss=loss_function,
                            metrics=['accuracy',
@@ -562,20 +589,17 @@ class SegmentationTrainer(TrainerBase):
     def _init_data_generators(self):
         super(SegmentationTrainer, self)._init_data_generators()
 
-        use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
-        num_color_channels = self.get_config_value('num_color_channels')
-
         self.log('Creating training data generator')
 
         training_data_generator_params = DataGeneratorParameters(
             material_class_information=self.material_class_information,
-            num_color_channels=num_color_channels,
-            random_seed=self.get_config_value('random_seed'),
+            num_color_channels=self.num_color_channels,
+            random_seed=self.random_seed,
             use_per_channel_mean_normalization=True,
-            per_channel_mean=self.get_config_value('per_channel_mean'),
+            per_channel_mean=self.per_channel_mean,
             use_per_channel_stddev_normalization=True,
-            per_channel_stddev=self.get_config_value('per_channel_stddev'),
-            use_data_augmentation=use_data_augmentation,
+            per_channel_stddev=self.per_channel_stddev,
+            use_data_augmentation=self.use_data_augmentation,
             data_augmentation_params=self.data_augmentation_parameters,
             shuffle_data_after_epoch=True)
 
@@ -587,8 +611,8 @@ class SegmentationTrainer(TrainerBase):
 
         validation_data_generator_params = DataGeneratorParameters(
             material_class_information=self.material_class_information,
-            num_color_channels=num_color_channels,
-            random_seed=self.get_config_value('random_seed'),
+            num_color_channels=self.num_color_channels,
+            random_seed=self.random_seed,
             use_per_channel_mean_normalization=True,
             per_channel_mean=training_data_generator_params.per_channel_mean,
             use_per_channel_stddev_normalization=True,
@@ -607,32 +631,32 @@ class SegmentationTrainer(TrainerBase):
     def train(self):
         super(SegmentationTrainer, self).train()
 
-        num_epochs = self.get_config_value('num_epochs')
-        batch_size = self.get_config_value('num_labeled_per_batch')
-        crop_shape = self.get_config_value('crop_shape')
-
         # Labeled data set size determines the epochs
-        training_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.training_set), batch_size)
-        validation_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.validation_set), batch_size)
+        training_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.training_set), self.batch_size)
+        validation_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.validation_set), self.validation_batch_size)
 
         self.log('Num epochs: {}, batch size: {}, crop shape: {}, training steps per epoch: {}, '
                  'validation steps per epoch: {}'
-                 .format(num_epochs, batch_size, crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
+                 .format(self.num_epochs,
+                         self.batch_size,
+                         self.crop_shape,
+                         training_steps_per_epoch,
+                         validation_steps_per_epoch))
 
         # Get a list of callbacks
         callbacks = self.get_callbacks()
 
         self.model.fit_generator(
             generator=self.training_data_generator.get_flow(
-                batch_size=batch_size,
-                crop_shape=crop_shape
+                batch_size=self.batch_size,
+                crop_shape=self.crop_shape
             ),
             steps_per_epoch=training_steps_per_epoch,
-            epochs=num_epochs,
+            epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
             validation_data=self.validation_data_generator.get_flow(
-                batch_size=batch_size,
-                crop_shape=crop_shape
+                batch_size=self.validation_batch_size,
+                crop_shape=self.validation_crop_shape
             ),
             validation_steps=validation_steps_per_epoch,
             verbose=1,
@@ -691,23 +715,55 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         super(SemisupervisedSegmentationTrainer, self).__init__(config_file_path, data_augmentation_parameters)
 
+    def _init_config(self):
+        # Read necessary parts from the configuration file
+        self.path_to_material_class_file = self.get_config_value('path_to_material_class_file')
+        self.path_to_labeled_photos = self.get_config_value('path_to_labeled_photos')
+        self.path_to_labeled_masks = self.get_config_value('path_to_labeled_masks')
+        self.path_to_unlabeled_photos = self.get_config_value('path_to_unlabeled_photos')
+        self.data_set_splits = self.get_config_value('data_set_splits')
+        self.use_class_weights = bool(self.get_config_value('use_class_weights'))
+
+        self.use_mean_teacher_method = bool(self.get_config_value('use_mean_teacher_method'))
+        self.model_name = self.get_config_value('model')
+        self.input_shape = self.get_config_value('input_shape')
+        self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
+        self.weights_directory_path = self.get_config_value('keras_model_checkpoint_file_path')
+        self.use_transfer_weights = bool(self.get_config_value('transfer_weights'))
+        self.transfer_options = self.get_config_value('transfer_options')
+        self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
+        self.loss_function_name = self.get_config_value('loss_function')
+
+        self.use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
+        self.num_color_channels = self.get_config_value('num_color_channels')
+        self.random_seed = self.get_config_value('random_seed')
+        self.per_channel_mean = self.get_config_value('per_channel_mean')
+        self.per_channel_stddev = self.get_config_value('per_channel_stddev')
+
+        self.num_epochs = self.get_config_value('num_epochs')
+        self.num_labeled_per_batch = self.get_config_value('num_labeled_per_batch')
+        self.num_unlabeled_per_batch = self.get_config_value('num_unlabeled_per_batch')
+        self.crop_shape = self.get_config_value('crop_shape')
+        self.validation_num_labeled_per_batch = self.get_config_value('validation_num_labeled_per_batch')
+        self.validation_crop_shape = self.get_config_value('validation_crop_shape')
+
     def _init_data(self):
         super(SemisupervisedSegmentationTrainer, self)._init_data()
 
         # Load material class information
         self.log('Loading material class information')
-        self.material_class_information = dataset_utils.load_material_class_information(self.get_config_value('path_to_material_class_file'))
+        self.material_class_information = dataset_utils.load_material_class_information(self.path_to_material_class_file)
         self.num_classes = len(self.material_class_information)
         self.log('Loaded {} material classes successfully'.format(self.num_classes))
 
         # Labeled photos
-        self.log('Reading labeled photo files from: {}'.format(self.get_config_value('path_to_labeled_photos')))
-        self.labeled_photo_files = list_pictures(self.get_config_value('path_to_labeled_photos'))
+        self.log('Reading labeled photo files from: {}'.format(self.path_to_labeled_photos))
+        self.labeled_photo_files = list_pictures(self.path_to_labeled_photos)
         self.log('Found {} labeled photo files'.format(len(self.labeled_photo_files)))
 
         # Labeled masks
-        self.log('Reading labeled mask files from: {}'.format(self.get_config_value('path_to_labeled_masks')))
-        self.labeled_mask_files = list_pictures(self.get_config_value('path_to_labeled_masks'))
+        self.log('Reading labeled mask files from: {}'.format(self.path_to_labeled_masks))
+        self.labeled_mask_files = list_pictures(self.path_to_labeled_masks)
         self.log('Found {} labeled mask files'.format(len(self.labeled_mask_files)))
 
         if len(self.labeled_photo_files) != len(self.labeled_mask_files):
@@ -716,10 +772,10 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         # Generate random splits of the supervised data for training, validation and test
         self.log('Splitting data to training, validation and test sets of sizes (%) of the labeled dataset of size {}: {}'
-            .format(len(self.labeled_photo_files), self.get_config_value('dataset_splits')))
+            .format(len(self.labeled_photo_files), self.data_set_splits))
 
         self.training_set, self.validation_set, self.test_set = \
-            dataset_utils.split_labeled_dataset(self.labeled_photo_files, self.labeled_mask_files, self.get_config_value('dataset_splits'))
+            dataset_utils.split_labeled_dataset(self.labeled_photo_files, self.labeled_mask_files, self.data_set_splits)
 
         self.log('Dataset split complete')
         self.log('Labeled training set size: {}'.format(len(self.training_set)))
@@ -732,8 +788,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.log('Labeled test set: {}\n'.format(self.test_set), False)
 
         # Unlabeled photos
-        self.log('Reading unlabeled photo files from: {}'.format(self.get_config_value('path_to_unlabeled_photos')))
-        self.unlabeled_photo_files = list_pictures(self.get_config_value('path_to_unlabeled_photos'))
+        self.log('Reading unlabeled photo files from: {}'.format(self.path_to_unlabeled_photos))
+        self.unlabeled_photo_files = list_pictures(self.path_to_unlabeled_photos)
         self.log('Found {} unlabeled photo files'.format(len(self.unlabeled_photo_files)))
 
         if len(self.training_set) == 0 and len(self.unlabeled_photo_files) == 0:
@@ -742,7 +798,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # Class weights
         self.class_weights = None
 
-        if self.get_config_value('use_class_weights'):
+        if self.use_class_weights:
             self.class_weights = self.get_class_weights(training_set=self.training_set,
                                                         material_class_information=self.material_class_information)
 
@@ -750,14 +806,11 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         super(SemisupervisedSegmentationTrainer, self)._init_models()
 
         # Are we using the mean teacher method?
-        self.use_mean_teacher_method = bool(self.get_config_value('use_mean_teacher_method'))
         self.log('Use mean teacher method for training: {}'.format(self.use_mean_teacher_method))
 
         # Model creation
-        model_name = self.get_config_value('model')
-        input_shape = self.get_config_value('input_shape')
-
-        self.log('Creating student model {} instance with input shape: {}, num classes: {}'.format(model_name, input_shape, self.num_classes))
+        self.log('Creating student model {} instance with input shape: {}, num classes: {}'
+                 .format(self.model_name, self.input_shape, self.num_classes))
 
         self.lambda_loss_function_name = self.get_config_value('lambda_loss_function')
         self.lambda_loss_function = self.get_lambda_loss_function(self.lambda_loss_function_name,
@@ -766,8 +819,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         model_type = TrainerBase.lambda_loss_function_to_model_type(self.lambda_loss_function_name)
 
-        self.model_wrapper = get_model(model_name,
-                                       input_shape,
+        self.model_wrapper = get_model(self.model_name,
+                                       self.input_shape,
                                        self.num_classes,
                                        model_type=model_type,
                                        lambda_loss_function=self.lambda_loss_function)
@@ -775,56 +828,58 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.model = self.model_wrapper.model
         self.model.summary()
 
-        if bool(self.get_config_value('continue_from_last_checkpoint')):
-            weights_directory_path = self.get_config_value('keras_model_checkpoint_file_path')
-            self.initial_epoch = self.load_latest_weights_for_model(self.model, weights_directory_path)
+        if self.continue_from_last_checkpoint:
+            self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
 
-        if bool(self.get_config_value('transfer_weights')):
+        if self.use_transfer_weights:
             if self.initial_epoch != 0:
                 self.log('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
             else:
-                self.transfer_weights(self.model_wrapper, self.get_config_value('transfer_options'))
+                self.transfer_weights(self.model_wrapper, self.transfer_options)
 
-        # Get the optimizer for the student model
-        continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
-
-        if continue_from_optimizer_checkpoint and self.initial_epoch == 0:
+        # Get the optimizer for the model
+        if self.continue_from_optimizer_checkpoint and self.initial_epoch == 0:
             self.log('Cannot continue from optimizer checkpoint if initial epoch is 0. Ignoring optimizer checkpoint.')
-            continue_from_optimizer_checkpoint = False
+            self.continue_from_optimizer_checkpoint = False
 
-        optimizer = self.get_optimizer(continue_from_optimizer_checkpoint)
+        optimizer = self.get_optimizer(self.continue_from_optimizer_checkpoint)
 
         # Get the loss function for the student model
-        loss_function_name = self.get_config_value('loss_function')
+        if self.loss_function_name != 'dummy':
+            self.log('Semisupervised trainer should use \'dummy\' loss function, got: {}. Ignoring passed loss function.'
+                     .format(self.loss_function_name))
+            self.loss_function_name = 'dummy'
 
-        if loss_function_name != 'dummy':
-            self.log('Semisupervised should use \'dummy\' loss function, got: {}. Ignoring passed loss function.'.format(loss_function_name))
-            loss_function_name = 'dummy'
-
-        loss_function = self.get_loss_function(loss_function_name,
+        loss_function = self.get_loss_function(self.loss_function_name,
                                                use_class_weights=self.get_config_value('use_class_weights'),
                                                class_weights=self.class_weights)
 
         # Compile the student model
         self.model.compile(optimizer=optimizer,
-                           loss=loss_function)#,
+                           loss=loss_function)
                            #metrics=['accuracy',
                            #metrics.mean_iou(self.num_classes),
                            #metrics.mean_per_class_accuracy(self.num_classes)])
 
         # If we are using the mean teacher method create the teacher model
         if self.use_mean_teacher_method:
-            self.log('Creating teacher model {} instance with input shape: {}, num classes: {}'.format(model_name, input_shape, self.num_classes))
-            self.teacher_model_wrapper = get_model(model_name, input_shape, self.num_classes, ModelType.NORMAL)
+            self.log('Creating teacher model {} instance with input shape: {}, num classes: {}'
+                     .format(self.model_name, self.input_shape, self.num_classes))
+            self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, ModelType.NORMAL)
             self.teacher_model = self.teacher_model_wrapper.model
             self.teacher_model.summary()
             self.teacher_model.set_weights(self.model.get_weights())
 
+            teacher_class_weights = self.class_weights if self.use_class_weights else None
+
+            self.teacher_model.compile(optimizer=optimizer,
+                                       loss=losses.pixelwise_crossentropy(teacher_class_weights),
+                                       metrics=['accuracy',
+                                                metrics.mean_iou(self.num_classes),
+                                                metrics.mean_per_class_accuracy(self.num_classes)])
+
     def _init_data_generators(self):
         super(SemisupervisedSegmentationTrainer, self)._init_data_generators()
-
-        use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
-        num_color_channels = self.get_config_value('num_color_channels')
 
         # Create training data and validation data generators
         # Note: training data comes from semi-supervised segmentation data generator and validation
@@ -833,13 +888,13 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         training_data_generator_params = DataGeneratorParameters(
             material_class_information=self.material_class_information,
-            num_color_channels=num_color_channels,
-            random_seed=self.get_config_value('random_seed'),
+            num_color_channels=self.num_color_channels,
+            random_seed=self.random_seed,
             use_per_channel_mean_normalization=True,
-            per_channel_mean=self.get_config_value('per_channel_mean'),
+            per_channel_mean=self.per_channel_mean,
             use_per_channel_stddev_normalization=True,
-            per_channel_stddev=self.get_config_value('per_channel_stddev'),
-            use_data_augmentation=use_data_augmentation,
+            per_channel_stddev=self.per_channel_stddev,
+            use_data_augmentation=self.use_data_augmentation,
             data_augmentation_params=self.data_augmentation_parameters,
             shuffle_data_after_epoch=True)
 
@@ -853,8 +908,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         validation_data_generator_params = DataGeneratorParameters(
             material_class_information=self.material_class_information,
-            num_color_channels=num_color_channels,
-            random_seed=self.get_config_value('random_seed'),
+            num_color_channels=self.num_color_channels,
+            random_seed=self.random_seed,
             use_per_channel_mean_normalization=True,
             per_channel_mean=training_data_generator_params.per_channel_mean,
             use_per_channel_stddev_normalization=True,
@@ -870,7 +925,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # modify_batch_data function.
         self.validation_data_generator = SemisupervisedSegmentationDataGenerator(
             labeled_data=self.validation_set,
-            unlabeled_data=None,
+            unlabeled_data=[],
             params=validation_data_generator_params,
             label_generation_function=None)
 
@@ -886,25 +941,21 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
     def train(self):
         super(SemisupervisedSegmentationTrainer, self).train()
 
-        num_epochs = self.get_config_value('num_epochs')
-        num_labeled_per_batch = self.get_config_value('num_labeled_per_batch')
-        num_unlabeled_per_batch = self.get_config_value('num_unlabeled_per_batch')
         labeled_data_set_size = len(self.training_set)
         unlabeled_data_set_size = len(self.unlabeled_photo_files)
-        crop_shape = self.get_config_value('crop_shape')
-        total_batch_size = num_labeled_per_batch + num_unlabeled_per_batch
+        total_batch_size = self.num_labeled_per_batch + self.num_unlabeled_per_batch
 
         # Labeled data set size determines the epochs
-        training_steps_per_epoch = dataset_utils.get_number_of_batches(labeled_data_set_size, num_labeled_per_batch)
-        validation_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.validation_set), num_labeled_per_batch)
+        training_steps_per_epoch = dataset_utils.get_number_of_batches(labeled_data_set_size, self.num_labeled_per_batch)
+        validation_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.validation_set), self.validation_num_labeled_per_batch)
 
         self.log('Labeled data set size: {}, num labeled per batch: {}, '
                  'unlabeled data set size: {}, num unlabeled per batch: {}'
-                 .format(labeled_data_set_size, num_labeled_per_batch, unlabeled_data_set_size, num_unlabeled_per_batch))
+                 .format(labeled_data_set_size, self.num_labeled_per_batch, unlabeled_data_set_size, self.num_unlabeled_per_batch))
 
         self.log('Num epochs: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, '
                  'validation steps per epoch: {}'
-                 .format(num_epochs, total_batch_size, crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
+                 .format(self.num_epochs, total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
 
         # Get a list of callbacks
         callbacks = self.get_callbacks()
@@ -917,17 +968,17 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # the generator input will not be meaning
         self.model.fit_generator(
             generator=self.training_data_generator.get_flow(
-                num_labeled_per_batch=num_labeled_per_batch,
-                num_unlabeled_per_batch=num_unlabeled_per_batch,
-                crop_shape=crop_shape
+                num_labeled_per_batch=self.num_labeled_per_batch,
+                num_unlabeled_per_batch=self.num_unlabeled_per_batch,
+                crop_shape=self.crop_shape
             ),
             steps_per_epoch=training_steps_per_epoch,
-            epochs=num_epochs,
+            epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
             validation_data=self.validation_data_generator.get_flow(
-                num_labeled_per_batch=num_labeled_per_batch,
+                num_labeled_per_batch=self.validation_num_labeled_per_batch,
                 num_unlabeled_per_batch=0,
-                crop_shape=crop_shape
+                crop_shape=self.validation_crop_shape
             ),
             validation_steps=validation_steps_per_epoch,
             verbose=1,
@@ -999,7 +1050,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
             if validation:
                 # BxHxWxC
-                mean_teacher_predictions = np.zeros(shape=(images.shape[0], images.shape[1], images.shape[2], self.num_classes))
+                mean_teacher_predictions = np.zeros(shape=(batch_size, images.shape[1], images.shape[2], self.num_classes))
                 np_consistency_coefficients = np.zeros(shape=[batch_size])
                 np_unlabeled_cost_coefficients = np.zeros(shape=[batch_size])
                 x = x + [mean_teacher_predictions, np_consistency_coefficients, np_unlabeled_cost_coefficients]
@@ -1072,19 +1123,19 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
             if self.teacher_validation_data_generator is not None:
                 # Evaluate the mean teacher on the validation data
-                num_labeled_per_batch = self.get_config_value('num_labeled_per_batch')
-                validation_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.validation_set), num_labeled_per_batch)
-                crop_shape = self.get_config_value('crop_shape')
+                validation_steps_per_epoch = dataset_utils.get_number_of_batches(
+                    len(self.validation_set),
+                    self.validation_num_labeled_per_batch)
 
                 val_outs = self.teacher_model.evaluate_generator(
                     generator=self.teacher_validation_data_generator.get_flow(
-                        batch_size=num_labeled_per_batch,
-                        crop_shape=crop_shape
+                        batch_size=self.validation_num_labeled_per_batch,
+                        crop_shape=self.validation_crop_shape
                     ),
                     steps=validation_steps_per_epoch)
 
                 val_loss = val_outs[0]
-                self.log('Epoch {} mean teacher validation loss {}'.format(epoch_index, val_loss))
+                self.log('\nEpoch {} mean teacher validation loss {}'.format(epoch_index, val_loss))
 
             # Save the weights
             teacher_model_checkpoint_file_path = self.get_config_value('teacher_model_checkpoint_file_path')
@@ -1100,9 +1151,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             # Make sure the directory exists
             TrainerBase._create_path_if_not_existing(file_path)
 
-            self.log('Saving mean teacher model weights to file: {}'.format(file_path))
-            self.log('At epoch {} end EMA coefficient: {}, consistency cost coefficient: {}'
-                     .format(self.ema_smoothing_coefficient_function(step_index),
-                             self.consistency_cost_coefficient_function(step_index)))
+            self.log('Saving mean teacher model weights to file: {}, at epoch {} EMA coefficient: {}, consistency cost coefficient: {}'
+                     .format(file_path, epoch_index, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))
 
             self.teacher_model.save_weights(file_path, overwrite=True)
