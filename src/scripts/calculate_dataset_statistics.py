@@ -7,6 +7,7 @@ import json
 import random
 import multiprocessing
 import numpy as np
+from PIL import ImageFile
 
 from keras.preprocessing.image import list_pictures, load_img, img_to_array
 from joblib import Parallel, delayed
@@ -116,6 +117,9 @@ def main():
     rseed = args["rseed"]
     split = [float(v.strip()) for v in args["split"].split(',')]
     output_path = args["output"]
+
+    # Without this some truncated images can throw errors
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
 
     print 'Using random seed: {}'.format(rseed)
     random.seed(rseed)
