@@ -208,7 +208,9 @@ def _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, num_unlabe
                         [i, y_true_unlabeled, y_pred_unlabeled, num_classes, batch_entropy])
 
     # Take the mean over the batch images
-    mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(num_unlabeled, K.tf.float32))
+    mean_image_entropy = K.tf.cond(num_unlabeled > 0,
+                                   lambda: K.tf.div(batch_entropy, K.tf.cast(num_unlabeled, K.tf.float32)),
+                                   lambda: 0.0)
 
     return mean_image_entropy
 
@@ -225,6 +227,7 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient):
     # Returns
         :return: the consistency cost (mean for the batch)
     """
+
     student_softmax = _tf_softmax(y_pred)
     teacher_softmax = _tf_softmax(mt_pred)
 
