@@ -171,7 +171,7 @@ def get_files(path, ignore_hidden_files=True):
 
 
 def calculate_per_channel_mean(file_paths, num_channels):
-    # type: (str, list[str], int) -> np.array[np.float32]
+    # type: (list[str], int) -> np.array[np.float32]
 
     """
     Calculates the per-channel mean from all the images in the given

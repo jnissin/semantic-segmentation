@@ -38,14 +38,14 @@ class DatasetStatistics(object):
 
         # Calculate total number of occurences of different materials and record
         # the files that have instances of each material
-        self.material_occurences = [0] * len(self.material_pixels)
-        self.material_occurence_files = [[] for i in range(len(self.material_pixels))]
+        self.material_occurrences = [0] * len(self.material_pixels)
+        self.material_occurrence_files = [[] for i in range(len(self.material_pixels))]
 
         for s in self.mask_statistics:
             for i in range(0, len(s.material_pixels)):
                 if s.material_pixels[i] != 0:
-                    self.material_occurences[i] += 1
-                    self.material_occurence_files[i].append(s.image_name)
+                    self.material_occurrences[i] += 1
+                    self.material_occurrence_files[i].append(s.image_name)
 
         # Calculate median frequency balancing weights
         # freq(c) is the number of pixels of class c divided
