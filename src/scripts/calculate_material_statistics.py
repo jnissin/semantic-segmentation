@@ -49,16 +49,6 @@ class ImageStatistics(object):
         self.material_pixels = material_pixels
 
 
-def get_color_channel_sums(np_img, num_channels=3):
-    tot = np.array([0.0] * num_channels)
-
-    # Store the color value sums
-    for i in range(0, num_channels):
-        tot[i] = np.sum(np_img[:, :, i])
-
-    return tot
-
-
 def calculate_image_statistics(mask_file_path, materials):
     # type: (str, list[MaterialClassInformation]) -> ImageStatistics
 

@@ -342,7 +342,7 @@ def expand_mask(np_mask_img, material_class_information, verbose=False):
         :param material_class_information: an array with the material class information
         :param verbose: should the function print information about the run
     # Returns
-        :return:
+        :return: expanded one-hot encoded mask where each mask is on it's own layer
     """
 
     num_material_classes = len(material_class_information)
