@@ -14,7 +14,8 @@ from ..utils import dataset_utils
 
 class MaterialStatistics(object):
 
-    def __init__(self, image_statistics):
+    def __init__(self,
+                 image_statistics):
         # type: (list[ImageStatistics]) -> ()
 
         self.image_statistics = image_statistics
@@ -38,7 +39,6 @@ class MaterialStatistics(object):
                     self.material_occurences[i] += 1
                     self.material_occurence_files[i].append(s.image_name)
 
-
 class ImageStatistics(object):
 
     def __init__(self, image_name, num_pixels, material_pixels):
@@ -49,15 +49,25 @@ class ImageStatistics(object):
         self.material_pixels = material_pixels
 
 
-def calculate_image_statistics(file_path, materials):
-    # type: (str, dict) -> ImageStatistics
+def get_color_channel_sums(np_img, num_channels=3):
+    tot = np.array([0.0] * num_channels)
 
-    img = load_img(file_path)
-    img_array = img_to_array(img)
-    expanded_mask = dataset_utils.expand_mask(img_array, materials)
+    # Store the color value sums
+    for i in range(0, num_channels):
+        tot[i] = np.sum(np_img[:, :, i])
 
-    image_name = os.path.basename(file_path)
-    num_pixels = img_array.shape[0] * img_array.shape[1]
+    return tot
+
+
+def calculate_image_statistics(mask_file_path, materials):
+    # type: (str, list[MaterialClassInformation]) -> ImageStatistics
+
+    mask_img = load_img(mask_file_path)
+    mask_img_array = img_to_array(mask_img)
+    expanded_mask = dataset_utils.expand_mask(mask_img_array, materials)
+
+    image_name = os.path.basename(mask_file_path)
+    num_pixels = mask_img_array.shape[0] * mask_img_array.shape[1]
     material_pixels = []
 
     for i in range(0, expanded_mask.shape[2]):

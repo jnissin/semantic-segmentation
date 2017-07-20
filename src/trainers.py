@@ -428,7 +428,7 @@ class TrainerBase:
     def train(self):
         self.log('Starting training at local time {}\n'.format(datetime.datetime.now()))
 
-    def modify_batch_data(self, batch_index, x, y, validation=False):
+    def modify_batch_data(self, step_index, x, y, validation=False):
         pass
 
     def on_batch_end(self, batch_index):
