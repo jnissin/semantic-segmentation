@@ -28,6 +28,8 @@ class DatasetStatistics(object):
         self.mask_statistics = mask_statistics
         self.rseed = rseed
         self.split = split
+        self.per_channel_mean = per_channel_mean
+        self.per_channel_stddev = per_channel_stddev
 
         # Calculate total number of pixels
         self.total_mask_pixels = sum([s.num_pixels for s in self.mask_statistics])
@@ -48,26 +50,38 @@ class DatasetStatistics(object):
                     self.material_occurrences[i] += 1
                     self.material_occurrence_files[i].append(s.image_name)
 
-        # Calculate median frequency balancing weights
-        # freq(c) is the number of pixels of class c divided
-        # by the total number of pixels in images where c is present.
-        # Median freq is the median of these frequencies.
+        # Calculate median frequency balancing weights. The frequency of a material freq(c)
+        # is the number of pixels of class c divided by the total number of pixels in images
+        # where c is present. Median freq is the median of these frequencies. If a material is not
+        # present in the training set it will have a zero weight.
         total_pixels_per_material = [0] * len(self.material_pixels)
 
         for s in self.mask_statistics:
             for i in range(0, len(s.material_pixels)):
-                if s.material_pixels[i] != 0:
+                if s.material_pixels[i] > 0:
                     total_pixels_per_material[i] += s.num_pixels
 
         np_material_pixels = np.array(self.material_pixels)
         np_total_pixels_per_material = np.array(total_pixels_per_material)
-        np_material_frequencies = np_material_pixels / np_total_pixels_per_material
+
+        # Avoid NaNs because of zero material frequencies
+        np_material_frequencies = np.zeros_like(np_material_pixels)
+
+        for i in range(0, np_total_pixels_per_material.shape[0]):
+            if np_total_pixels_per_material[i] != 0:
+                np_material_frequencies[i] = np_material_pixels[i] / np_total_pixels_per_material[i]
+
+        # Take the median frequency
         np_median_material_frequency = np.median(np_material_frequencies)
-        np_median_material_frequency_weights = np_median_material_frequency / np_material_frequencies
+
+        # Avoid NaNs because of zero material frequencies
+        np_median_material_frequency_weights = np.zeros_like(np_material_frequencies)
+
+        for i in range(0, np_material_frequencies.shape[0]):
+            if np_material_frequencies[i] != 0:
+                np_median_material_frequency_weights[i] = np_median_material_frequency / np_material_frequencies[i]
 
         self.median_frequency_balancing_weights = np_median_material_frequency_weights.tolist()
-        self.per_channel_mean = per_channel_mean
-        self.per_channel_stddev = per_channel_stddev
 
 
 class MaskStatistics(object):
@@ -90,7 +104,7 @@ def calculate_mask_statistics(mask_file_path, materials):
     num_pixels = mask_img_array.shape[0] * mask_img_array.shape[1]
     material_pixels = []
 
-    for i in range(0, expanded_mask.shape[2]):
+    for i in range(0, expanded_mask.shape[-1]):
         material_pixels.append(float(np.sum(expanded_mask[:, :, i])))
 
     img_stats = MaskStatistics(image_name, num_pixels, material_pixels)
@@ -167,14 +181,14 @@ def main():
     print 'Starting per-channel mean calculation for {} photos with {} jobs'.format(len(photos), n_jobs)
 
     start_time = time.time()
-    per_channel_mean = dataset_utils.calculate_per_channel_mean(photos, 3)
+    per_channel_mean = dataset_utils.calculate_per_channel_mean(photos, 3, verbose=True)
 
     print 'Per-channel mean calculation for {} files finished in {} seconds'\
         .format(len(photos), time.time()-start_time)
 
     print 'Starting per-channel stddev calculation for {} photos with {} jobs'.format(len(photos), n_jobs)
 
-    per_channel_stddev = dataset_utils.calculate_per_channel_stddev(photos, per_channel_mean, 3)
+    per_channel_stddev = dataset_utils.calculate_per_channel_stddev(photos, per_channel_mean, 3, verbose=True)
 
     print 'Per-channel stddev calculation for {} files finished in {} seconds'\
         .format(len(photos), time.time()-start_time)

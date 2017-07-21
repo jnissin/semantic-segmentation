@@ -170,8 +170,11 @@ def get_files(path, ignore_hidden_files=True):
     return files
 
 
-def calculate_per_channel_mean(file_paths, num_channels):
-    # type: (list[str], int) -> np.array[np.float32]
+_per_channel_mean_processed = 0
+
+
+def calculate_per_channel_mean(file_paths, num_channels, verbose=False):
+    # type: (list[str], int, bool) -> np.array[np.float32]
 
     """
     Calculates the per-channel mean from all the images in the given
@@ -189,7 +192,7 @@ def calculate_per_channel_mean(file_paths, num_channels):
 
     data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_calculate_per_channel_mean)(
-            fp, num_channels) for fp in file_paths)
+            fp, num_channels, verbose) for fp in file_paths)
 
     # Calculate the final value
     sums = np.sum(np.vstack(data), axis=0)
@@ -199,10 +202,13 @@ def calculate_per_channel_mean(file_paths, num_channels):
     per_channel_mean = color_tot / px_tot
     print 'Per-channel mean calculation complete: {}'.format(per_channel_mean)
 
+    global _per_channel_mean_processed
+    _per_channel_mean_processed = 0
+
     return per_channel_mean
 
 
-def _calculate_per_channel_mean(path, num_channels):
+def _calculate_per_channel_mean(path, num_channels, verbose):
     img = load_n_channel_image(path, num_channels)
     img_array = img_to_array(img)
 
@@ -219,11 +225,21 @@ def _calculate_per_channel_mean(path, num_channels):
     # In the final index store the number of pixels
     tot[num_channels] = img_array.shape[0] * img_array.shape[1]
 
+    if verbose:
+        global _per_channel_mean_processed
+        _per_channel_mean_processed += 1
+
+        if _per_channel_mean_processed%1000 == 0:
+            print 'Per-channel mean: processed {} images'.format(_per_channel_mean_processed)
+
     return tot
 
 
-def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels):
-    # type: (list[str], np.array[np.float32], int) -> np.array[np.float32]
+_per_channel_stddev_processed = 0
+
+
+def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels, verbose=False):
+    # type: (list[str], np.array[np.float32], int, bool) -> np.array[np.float32]
 
     """
     Calculates the per-channel standard deviation from all the images in the given
@@ -231,7 +247,9 @@ def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels):
 
     # Arguments
         :param file_paths: paths to the files to be used in the calculation
+        :param per_channel_mean: per channel mean for the data set in range [-1,1]
         :param num_channels: number of channels in the image 1,3 or 4
+        :param verbose: print information about the progress of the calculation
     # Returns
         :return: numpy array with the channel means in range [-1, 1]
     """
@@ -241,7 +259,7 @@ def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels):
 
     data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_calculate_per_channel_stddev)(
-            fp, per_channel_mean, num_channels) for fp in file_paths)
+            fp, per_channel_mean, num_channels, verbose) for fp in file_paths)
 
     # Calculate the final value
     sums = np.sum(np.vstack(data), axis=0)
@@ -256,10 +274,13 @@ def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels):
     per_channel_stddev = np.sqrt(per_channel_var)
     print 'Per-channel stddev calculation complete: {}'.format(per_channel_stddev)
 
+    global _per_channel_stddev_processed
+    _per_channel_stddev_processed = 0
+
     return per_channel_stddev
 
 
-def _calculate_per_channel_stddev(path, per_channel_mean, num_channels):
+def _calculate_per_channel_stddev(path, per_channel_mean, num_channels, verbose):
     var_tot = np.array([0.0] * (num_channels + 1))
 
     # Load the image as numpy array
@@ -275,6 +296,13 @@ def _calculate_per_channel_stddev(path, per_channel_mean, num_channels):
 
     # Accumulate the number of total pixels
     var_tot[-1] = img_array.shape[0] * img_array.shape[1]
+
+    if verbose:
+        global _per_channel_stddev_processed
+        _per_channel_stddev_processed += 1
+
+        if _per_channel_stddev_processed%1000 == 0:
+            print 'Per-channel stddev: processed {} images'.format(_per_channel_stddev_processed)
 
     return var_tot
 

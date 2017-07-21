@@ -6,6 +6,7 @@ joblib>=0.11
 h5py>=2.7.0
 cython>=0.25.2
 typing>=3.6.1
+scikit-image
 -e git://github.com/raghakot/keras-vis.git#egg=keras-vis
 -e git+https://github.com/lucasb-eyer/pydensecrf.git
 -e git+git://github.com/keplr-io/quiver.git
