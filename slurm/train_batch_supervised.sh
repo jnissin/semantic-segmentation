@@ -5,7 +5,7 @@
 #SBATCH -p gpu
 #SBATCH --mem 32G
 #SBATCH -c 4
-#SBATCH -t 01:00:00:00
+#SBATCH -t 01-12:00:00
 #SBATCH -D /scratch/work/jhnissin/semantic-segmentation/
 
 module purge
