@@ -8,6 +8,8 @@ cython>=0.25.2
 typing>=3.6.1
 scikit-image
 jsonpickle>=0.9.5
+typing>=3.6.1
+enum34>=1.1.6
 -e git://github.com/raghakot/keras-vis.git#egg=keras-vis
 -e git+https://github.com/lucasb-eyer/pydensecrf.git
 -e git+git://github.com/keplr-io/quiver.git
