@@ -1,22 +1,11 @@
 # coding=utf-8
 
 import argparse
+import os
 import numpy as np
 
 from trainers import SegmentationTrainer, SemisupervisedSegmentationTrainer
-from generators import DataAugmentationParameters
 from utils import image_utils
-
-
-def get_data_augmentation_parameters():
-    data_augmentation_params = DataAugmentationParameters(
-        augmentation_probability=0.5,
-        rotation_range=40.0,
-        zoom_range=0.5,
-        horizontal_flip=True,
-        vertical_flip=False)
-
-    return data_augmentation_params
 
 
 def ema_smoothing_coefficient_function(step_idx):
@@ -100,24 +89,32 @@ def label_generation_function(np_img):
 def main():
     # Construct the argument parser and parge arguments
     ap = argparse.ArgumentParser(description='Training function for material segmentation.')
-    ap.add_argument('-t', '--trainer', required=True, type=str,
-                    choices=['segmentation', 'semisupervised-segmentation', 'classification'],
-                    help='Type of the trainer')
-    ap.add_argument('-c', '--config', required=True, type=str,
-                    help='Path to trainer configuration JSON file')
+    ap.add_argument('-t', '--trainer', required=True, type=str, choices=['segmentation', 'semisupervised-segmentation', 'classification'], help='Type of the trainer')
+    ap.add_argument('-c', '--config', required=True, type=str, help='Path to trainer configuration JSON file')
+    ap.add_argument('-m', '--model', required=True, type=str, help='Name of the neural network model to use')
+    ap.add_argument('-f', '--mfolder', required=True, type=str, help='Name of the model folder')
+    ap.add_argument('-w', '--wdir', required=False, type=str, help="Path to working directory")
     args = vars(ap.parse_args())
 
     trainer_type = args['trainer']
     trainer_config_file_path = args['config']
-    data_augmentation_params = get_data_augmentation_parameters()
+    wdir_path = args['wdir']
+    model_name = args['model']
+    model_folder_name = args['mfolder']
+
+    if wdir_path:
+        print 'Setting working directory to: {}'.format(wdir_path)
+        os.chdir(wdir_path)
 
     if trainer_type == 'segmentation':
-        trainer = SegmentationTrainer(config_file_path=trainer_config_file_path,
-                                      data_augmentation_parameters=data_augmentation_params)
+        trainer = SegmentationTrainer(model_name=model_name,
+                                      model_folder_name=model_folder_name,
+                                      config_file_path=trainer_config_file_path)
         trainer.train()
     elif trainer_type == 'semisupervised-segmentation':
-        trainer = SemisupervisedSegmentationTrainer(config_file_path=trainer_config_file_path,
-                                                    data_augmentation_parameters=data_augmentation_params,
+        trainer = SemisupervisedSegmentationTrainer(model_name=model_name,
+                                                    model_folder_name=model_folder_name,
+                                                    config_file_path=trainer_config_file_path,
                                                     label_generation_function=label_generation_function,
                                                     consistency_cost_coefficient_function=consistency_coefficient_function,
                                                     ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,

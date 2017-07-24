@@ -382,7 +382,7 @@ def dummy_loss(y_true, y_pred):
     return y_pred
 
 
-def default_mean_teacher_lambda_loss(class_weights=None):
+def mean_teacher_lambda_loss(class_weights=None):
     def loss(args):
         # type: (list[K.tf.Tensor]) -> K.tf.Tensor
 
@@ -458,7 +458,7 @@ def default_mean_teacher_lambda_loss(class_weights=None):
     return loss
 
 
-def default_semisupervised_lambda_loss(class_weights=None):
+def semisupervised_superpixel_lambda_loss(class_weights=None):
     def loss(args):
         """
         Calculates semi-supervised segmentation loss. If the class weights are

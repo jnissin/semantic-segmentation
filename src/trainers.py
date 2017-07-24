@@ -43,21 +43,23 @@ class TrainerBase:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, config_file_path, data_augmentation_parameters=None):
-        # type: (str, DataAugmentationParameters) -> ()
+    def __init__(self, model_name, model_folder_name, config_file_path):
+        # type: (str, str, str) -> ()
 
         """
         Initializes the trainer i.e. seeds random, loads material class information and
         data sets etc.
 
         # Arguments
+            :param model_name: name of the NN model to instantiate
+            :param model_folder_name: name of the model folder (for saving data)
             :param config_file_path: path to the configuration file
-            :param data_augmentation_parameters: data augmentation parameters
         # Returns
             Nothing
         """
 
-        self.data_augmentation_parameters = data_augmentation_parameters
+        self.model_name = model_name
+        self.model_folder_name = model_folder_name
 
         # Without this some truncated images can throw errors
         ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -67,7 +69,7 @@ class TrainerBase:
 
         # Setup the log file path to enable logging
         self.log_file = None
-        self.log_file_path = self.get_config_value('log_file_path')
+        self.log_file_path = self.get_config_value('log_file_path').format(model_folder=self.model_folder_name)
         self.log_to_stdout = self.get_config_value('log_to_stdout')
 
         # Log the Keras and Tensorflow versions
@@ -84,6 +86,31 @@ class TrainerBase:
         # Set image data format
         self.log('Setting Keras image data format to: {}'.format(self.get_config_value('image_data_format')))
         K.set_image_data_format(self.get_config_value('image_data_format'))
+
+        # Parse data augmentation parameters
+        if self.get_config_value('use_data_augmentation'):
+            self.log('Parsing data augmentation parameters')
+
+            augmentation_config = self.get_config_value('data_augmentation_params')
+
+            if not augmentation_config:
+                raise ValueError('No data with key data_augmentation_params was found in the configuration file')
+
+            augmentation_probability = augmentation_config.get('augmentation_probability')
+            rotation_range = augmentation_config.get('rotation_range')
+            zoom_range = augmentation_config.get('zoom_range')
+            horizontal_flip = augmentation_config.get('horizontal_flip')
+            vertical_flip = augmentation_config.get('vertical_flip')
+
+            self.data_augmentation_parameters = DataAugmentationParameters(
+                augmentation_probability=augmentation_probability,
+                rotation_range=rotation_range,
+                zoom_range=zoom_range,
+                horizontal_flip=horizontal_flip,
+                vertical_flip=vertical_flip)
+
+            self.log('Data augmentation params: augmentation probability: {}, rotation range: {}, zoom range: {}, horizontal flip: {}, vertical flip: {}'
+                     .format(augmentation_probability, rotation_range, zoom_range, horizontal_flip, vertical_flip))
 
         self._init_config()
         self._init_data()
@@ -167,11 +194,14 @@ class TrainerBase:
             os.makedirs(os.path.dirname(path))
 
     def get_callbacks(self):
-        keras_model_checkpoint_file_path=self.get_config_value('keras_model_checkpoint_file_path')
-        keras_tensorboard_log_path=self.get_config_value('keras_tensorboard_log_path')
-        keras_csv_log_file_path=self.get_config_value('keras_csv_log_file_path')
+        keras_model_checkpoint_file_path=os.path.join(
+            os.path.dirname(self.get_config_value('keras_model_checkpoint_file_path')).format(model_folder=self.model_folder_name),
+            os.path.basename(self.get_config_value('keras_model_checkpoint_file_path')))
+
+        keras_tensorboard_log_path=self.get_config_value('keras_tensorboard_log_path').format(model_folder=self.model_folder_name)
+        keras_csv_log_file_path=self.get_config_value('keras_csv_log_file_path').format(model_folder=self.model_folder_name)
         reduce_lr_on_plateau=self.get_config_value('reduce_lr_on_plateau')
-        optimizer_checkpoint_file_path=self.get_config_value('optimizer_checkpoint_file_path')
+        optimizer_checkpoint_file_path=self.get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
 
         callbacks = []
 
@@ -257,7 +287,7 @@ class TrainerBase:
         else:
             raise ValueError('Unsupported loss function: {}'.format(loss_function_name))
 
-        self.log('Using {} loss function, using class weights: {}'.format(loss_function_name, use_class_weights))
+        self.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, class_weights))
         return loss_function
 
     def get_lambda_loss_function(self, lambda_loss_function_name, use_class_weights, class_weights):
@@ -267,10 +297,10 @@ class TrainerBase:
             print 'Provided class weigths when use class weights is False. Ignoring class weights for lambda loss function.'
             class_weights = None
 
-        if lambda_loss_function_name == 'default_mean_teacher':
-            lambda_loss_function = losses.default_mean_teacher_lambda_loss(class_weights)
-        elif lambda_loss_function_name == 'default_semisupervised':
-            lambda_loss_function = losses.default_semisupervised_lambda_loss(class_weights)
+        if lambda_loss_function_name == 'mean_teacher':
+            lambda_loss_function = losses.mean_teacher_lambda_loss(class_weights)
+        elif lambda_loss_function_name == 'semisupervised_superpixel':
+            lambda_loss_function = losses.semisupervised_superpixel_lambda_loss(class_weights)
         elif lambda_loss_function_name == 'mean_teacher_superpixel':
             lambda_loss_function = losses.mean_teacher_superpixel_lambda_loss(class_weights)
         else:
@@ -281,9 +311,9 @@ class TrainerBase:
 
     @staticmethod
     def lambda_loss_function_to_model_type(lambda_loss_function_name):
-        if lambda_loss_function_name == 'default_mean_teacher':
+        if lambda_loss_function_name == 'mean_teacher':
             return ModelType.MEAN_TEACHER_STUDENT
-        elif lambda_loss_function_name == 'default_semisupervised':
+        elif lambda_loss_function_name == 'semisupervised_superpixel':
             return ModelType.SEMISUPERVISED
         elif lambda_loss_function_name == 'mean_teacher_superpixel':
             return ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL
@@ -444,8 +474,8 @@ class TrainerBase:
 
 class SegmentationTrainer(TrainerBase):
 
-    def __init__(self, config_file_path, data_augmentation_parameters):
-        # type: (str, DataAugmentationParameters) -> ()
+    def __init__(self, model_name, model_folder_name, config_file_path):
+        # type: (str, str, str) -> ()
 
         # Declare variables that are going to be initialized in the _init_ functions
         self.material_class_information = None
@@ -466,7 +496,7 @@ class SegmentationTrainer(TrainerBase):
         self.training_data_generator = None
         self.validation_data_generator = None
 
-        super(SegmentationTrainer, self).__init__(config_file_path, data_augmentation_parameters)
+        super(SegmentationTrainer, self).__init__(model_name, model_folder_name, config_file_path)
 
     def _init_config(self):
         super(SegmentationTrainer, self)._init_config()
@@ -477,10 +507,9 @@ class SegmentationTrainer(TrainerBase):
         self.path_to_labeled_masks = self.get_config_value('path_to_labeled_masks')
         self.use_class_weights = self.get_config_value('use_class_weights')
 
-        self.model_name = self.get_config_value('model')
         self.input_shape = self.get_config_value('input_shape')
         self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
-        self.weights_directory_path = self.get_config_value('keras_model_checkpoint_file_path')
+        self.weights_directory_path = os.path.dirname(self.get_config_value('keras_model_checkpoint_file_path')).format(model_folder=self.model_folder_name)
         self.use_transfer_weights = bool(self.get_config_value('transfer_weights'))
         self.transfer_options = self.get_config_value('transfer_options')
         self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
@@ -509,7 +538,7 @@ class SegmentationTrainer(TrainerBase):
         self.log('Loading data set information from: {}'.format(self.path_to_data_set_information_file))
         self.data_set_information = dataset_utils.load_segmentation_data_set_information(self.path_to_data_set_information_file)
         self.log('Loaded data set information successfully with set sizes (tr,va,te): {}, {}, {}'
-                 .format(self.data_set_information.training_set.labeled_size + self.data_set_information.training_set.unlabeled_photos,
+                 .format(self.data_set_information.training_set.labeled_size,
                          self.data_set_information.validation_set.labeled_size,
                          self.data_set_information.test_set.labeled_size))
 
@@ -538,11 +567,11 @@ class SegmentationTrainer(TrainerBase):
 
         # Labeled test set
         self.log('Constructing test set')
-        self.validation_set = LabeledImageDataSet('test_set',
-                                                  self.path_to_labeled_photos,
-                                                  self.path_to_labeled_masks,
-                                                  photo_file_list=self.data_set_information.test_set.labeled_photos,
-                                                  mask_file_list=self.data_set_information.test_set.labeled_masks)
+        self.test_set = LabeledImageDataSet('test_set',
+                                            self.path_to_labeled_photos,
+                                            self.path_to_labeled_masks,
+                                            photo_file_list=self.data_set_information.test_set.labeled_photos,
+                                            mask_file_list=self.data_set_information.test_set.labeled_masks)
         self.log('Labeled test set size: {}'.format(self.test_set.size))
 
         self.log('Total data set size: {}'.format(self.training_set.size + self.validation_set.size + self.test_set.size))
@@ -612,7 +641,9 @@ class SegmentationTrainer(TrainerBase):
 
         self.training_data_generator = SegmentationDataGenerator(
             labeled_data_set=self.training_set,
-            params=training_data_generator_params)
+            num_labeled_per_batch=self.batch_size,
+            params=training_data_generator_params,
+            crop_shape=self.crop_shape)
 
         self.log('Creating validation data generator')
 
@@ -630,7 +661,9 @@ class SegmentationTrainer(TrainerBase):
 
         self.validation_data_generator = SegmentationDataGenerator(
             labeled_data_set=self.validation_set,
-            params=validation_data_generator_params)
+            num_labeled_per_batch=self.validation_batch_size,
+            params=validation_data_generator_params,
+            crop_shape=self.validation_crop_shape)
 
         self.log('Using per-channel mean: {}'.format(self.training_data_generator.per_channel_mean))
         self.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
@@ -639,8 +672,8 @@ class SegmentationTrainer(TrainerBase):
         super(SegmentationTrainer, self).train()
 
         # Labeled data set size determines the epochs
-        training_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.training_set), self.batch_size)
-        validation_steps_per_epoch = dataset_utils.get_number_of_batches(len(self.validation_set), self.validation_batch_size)
+        training_steps_per_epoch = dataset_utils.get_number_of_batches(self.training_set.size, self.batch_size)
+        validation_steps_per_epoch = dataset_utils.get_number_of_batches(self.validation_set.size, self.validation_batch_size)
 
         self.log('Num epochs: {}, batch size: {}, crop shape: {}, training steps per epoch: {}, '
                  'validation steps per epoch: {}'
@@ -654,17 +687,11 @@ class SegmentationTrainer(TrainerBase):
         callbacks = self.get_callbacks()
 
         self.model.fit_generator(
-            generator=self.training_data_generator.get_flow(
-                batch_size=self.batch_size,
-                crop_shape=self.crop_shape
-            ),
+            generator=self.training_data_generator,
             steps_per_epoch=training_steps_per_epoch,
             epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
-            validation_data=self.validation_data_generator.get_flow(
-                batch_size=self.validation_batch_size,
-                crop_shape=self.validation_crop_shape
-            ),
+            validation_data=self.validation_data_generator,
             validation_steps=validation_steps_per_epoch,
             verbose=1,
             callbacks=callbacks,
@@ -682,14 +709,15 @@ class SegmentationTrainer(TrainerBase):
 class SemisupervisedSegmentationTrainer(TrainerBase):
 
     def __init__(self,
+                 model_name,
+                 model_folder_name,
                  config_file_path,
-                 data_augmentation_parameters=None,
                  label_generation_function=None,
                  consistency_cost_coefficient_function=None,
                  ema_smoothing_coefficient_function=None,
                  unlabeled_cost_coefficient_function=None):
 
-        # type: (str, DataAugmentationParameters, Callable[[np.array[np.float32]], np.array], Callable[[int], float], Callable[[int], float], Callable[[int], float]) -> ()
+        # type: (str, str, str, Callable[[np.array[np.float32]], np.array], Callable[[int], float], Callable[[int], float], Callable[[int], float]) -> ()
 
         self.label_generation_function = label_generation_function
         self.consistency_cost_coefficient_function = consistency_cost_coefficient_function
@@ -723,7 +751,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.validation_data_generator = None
         self.teacher_validation_data_generator = None
 
-        super(SemisupervisedSegmentationTrainer, self).__init__(config_file_path, data_augmentation_parameters)
+        super(SemisupervisedSegmentationTrainer, self).__init__(model_name, model_folder_name, config_file_path)
 
     def _init_config(self):
         super(SemisupervisedSegmentationTrainer, self)._init_config()
@@ -736,10 +764,9 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.use_class_weights = self.get_config_value('use_class_weights')
 
         self.use_mean_teacher_method = bool(self.get_config_value('use_mean_teacher_method'))
-        self.model_name = self.get_config_value('model')
         self.input_shape = self.get_config_value('input_shape')
         self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
-        self.weights_directory_path = self.get_config_value('keras_model_checkpoint_file_path')
+        self.weights_directory_path = os.path.dirname(self.get_config_value('keras_model_checkpoint_file_path')).format(model_folder=self.model_folder_name)
         self.use_transfer_weights = bool(self.get_config_value('transfer_weights'))
         self.transfer_options = self.get_config_value('transfer_options')
         self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
@@ -991,7 +1018,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # the generator input will not be meaning
         self.model.fit_generator(
             generator=self.training_data_generator,
-            steps_per_epoch=5,#training_steps_per_epoch,
+            steps_per_epoch=training_steps_per_epoch,
             epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
             validation_data=self.validation_data_generator,
@@ -1027,7 +1054,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # Returns
             :return: a tuple of (input data, output data)
         """
-        if self.lambda_loss_function_name == 'default_mean_teacher':
+        if self.lambda_loss_function_name == 'mean_teacher':
             if self.teacher_model is None:
                 raise ValueError('Teacher model is not set, cannot run predictions')
 
@@ -1045,7 +1072,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
                 np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
                 x = x + [mean_teacher_predictions, np_consistency_coefficients]
-        elif self.lambda_loss_function_name == 'default_semisupervised':
+        elif self.lambda_loss_function_name == 'semisupervised_superpixel':
             # First dimension in all of the input data should be the batch size
             batch_size = x[0].shape[0]
 
@@ -1133,6 +1160,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # Returns
             Nothing
         """
+
         if self.use_mean_teacher_method:
             if self.teacher_model is None:
                 raise ValueError('Teacher model is not set, cannot save weights')
@@ -1163,7 +1191,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 self.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to student directory')
                 teacher_model_checkpoint_file_path = self.get_config_value('keras_model_checkpoint_file_path') + '.teacher'
 
-            file_path = teacher_model_checkpoint_file_path.format(epoch=epoch_index, val_loss=val_loss)
+            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss)
 
             # Make sure the directory exists
             TrainerBase._create_path_if_not_existing(file_path)

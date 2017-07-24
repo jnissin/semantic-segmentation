@@ -156,7 +156,7 @@ class ImageSet(object):
         self._tar_file = None
         self._tar_read_lock = threading.Lock()
 
-        if tarfile.is_tarfile(path_to_archive):
+        if os.path.isfile(path_to_archive) and tarfile.is_tarfile(path_to_archive):
             self._tar_file = tarfile.open(name=path_to_archive, mode=mode)
 
             if self._tar_file is None:
@@ -168,7 +168,7 @@ class ImageSet(object):
             for tar_info in tar_file_members:
                 if tar_info.isfile() and not os.path.basename(tar_info.name).startswith('.'):
                     self._image_files.append(ImageFile(tar_file=self._tar_file, tar_info=tar_info, tar_read_lock=self._tar_read_lock))
-        else:
+        elif os.path.isdir(path_to_archive):
             image_paths = ImageSet.list_pictures(path_to_archive)
 
             for image_path in image_paths:

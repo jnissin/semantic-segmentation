@@ -5,14 +5,47 @@
     "path_to_labeled_masks": "data/debug/1024/labeled/masks.tar.gz",
     "path_to_unlabeled_photos": "data/debug/1024/unlabeled.tar.gz",
 
-    "log_file_path": "logs/segnet/log.txt",
+    "log_file_path": "logs/{model_folder}/log.txt",
     "log_to_stdout": true,
 
-    "keras_tensorboard_log_path": "logs/segnet/tensorboard/",
-    "keras_model_checkpoint_file_path": "checkpoints/segnet/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "teacher_model_checkpoint_file_path": "checkpoints/segnet/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "keras_csv_log_file_path": "logs/segnet/per-epoch-data.csv",
-    "optimizer_checkpoint_file_path": "checkpoints/segnet/optimizer/optimizer-checkpoint.json",
+    "keras_tensorboard_log_path": "logs/{model_folder}/tensorboard/",
+    "keras_model_checkpoint_file_path": "checkpoints/{model_folder}/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "logs/{model_folder}/per-epoch-data.csv",
+    "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
+
+    "use_mean_teacher_method": true,
+    "loss_function": "pixelwise_crossentropy",
+    "lambda_loss_function": "mean_teacher",
+
+    "num_epochs": 100,
+    "input_shape": [null, null, 3],
+    "num_labeled_per_batch": 5,
+    "num_unlabeled_per_batch": 0,
+    "crop_shape": [256, 256],
+
+    "validation_num_labeled_per_batch": 1,
+    "validation_crop_shape": null,
+
+    "num_color_channels": 3,
+    "random_seed": 14874,
+
+    "optimizer": {
+      "name": "adam",
+      "learning_rate": 5e-3,
+      "momentum": 0.9,
+      "decay": 2e-5
+    },
+
+    "use_data_augmentation": true,
+
+    "data_augmentation_params": {
+        "augmentation_probability": 0.5,
+        "rotation_range": 40.0,
+        "zoom_range": 0.5,
+        "horizontal_flip": true,
+        "vertical_flip": false
+    },
 
     "reduce_lr_on_plateau": {
       "factor": 0.1,
@@ -25,45 +58,10 @@
 
     "image_data_format": "channels_last",
     "continue_from_last_checkpoint": false,
-    "use_data_augmentation": true,
+    "transfer_weights": false,
+    "use_class_weights": true,
 
     "background_class_prediction_weight": 0.2,
     "use_crf_in_prediction": true,
-    "crf_iterations": 1,
-
-    "num_epochs": 100,
-    "input_shape": [null, null, 3],
-    "num_labeled_per_batch": 1,
-    "num_unlabeled_per_batch": 4,
-    "crop_shape": [256, 256],
-
-    "validation_num_labeled_per_batch": 1,
-    "validation_crop_shape": null,
-
-    "data_set_splits": [0.8, 0.05, 0.15],
-    "num_color_channels": 3,
-    "random_seed": 14874,
-
-    "model": "segnet",
-
-    "use_mean_teacher_method": true,
-    "loss_function": "dummy",
-    "lambda_loss_function": "mean_teacher_superpixel",
-
-    "optimizer": {
-      "name": "adam",
-      "learning_rate": 5e-3,
-      "momentum": 0.9,
-      "decay": 2e-5
-    },
-
-    "transfer_weights": false,
-
-    "per_channel_mean": [-0.05767406, -0.20355854, -0.34503157],
-    "per_channel_mean_255": [120, 102, 84],
-    "per_channel_variance": [0.2769143, 0.26319826, 0.26892483],
-    "per_channel_stddev": [0.52622648, 0.51302852, 0.51857963],
-
-    "use_class_weights": true,
-    "_class_weights": [0.0, 0.7378643, 0.80591773, 1.44479095, 1.56364591, 0.65335371, 2.52654934, 0.774687, 1.90705871, 0.99703705, 0.55474188, 1.83327988, 1.09939849, 1.00298061,  1.48639132,  0.51568217, 3.00462681, 2.26531756, 1.61073584, 0.37116353, 0.70423113, 0.63882269, 2.61278558, 0.80365708]
+    "crf_iterations": 1
 }
