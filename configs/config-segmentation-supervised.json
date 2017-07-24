@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_data_set_information_file": "data/debug/1024/data-set-0.json",
-    "path_to_labeled_photos": "data/debug/1024/labeled/photos.tar.gz",
-    "path_to_labeled_masks": "data/debug/1024/labeled/masks.tar.gz",
-    "path_to_unlabeled_photos": "data/debug/1024/unlabeled.tar.gz",
+    "path_to_data_set_information_file": "data/1024/data-set-information.json",
+    "path_to_labeled_photos": "data/1024/labeled/photos.tar.gz",
+    "path_to_labeled_masks": "data/1024/labeled/masks.tar.gz",
+    "path_to_unlabeled_photos": "data/1024/unlabeled.tar.gz",
 
     "log_file_path": "logs/{model_folder}/log.txt",
     "log_to_stdout": true,
@@ -14,16 +14,16 @@
     "keras_csv_log_file_path": "logs/{model_folder}/per-epoch-data.csv",
     "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
 
-    "use_mean_teacher_method": true,
     "loss_function": "pixelwise_crossentropy",
-    "lambda_loss_function": "mean_teacher",
+    "use_mean_teacher_method": false,
+    "lambda_loss_function": "none",
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
-    "num_labeled_per_batch": 5,
-    "num_unlabeled_per_batch": 0,
     "crop_shape": [256, 256],
 
+    "num_labeled_per_batch": 5,
+    "num_unlabeled_per_batch": 0,
     "validation_num_labeled_per_batch": 1,
     "validation_crop_shape": null,
 
@@ -57,7 +57,7 @@
     },
 
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": false,
+    "continue_from_last_checkpoint": true,
     "transfer_weights": false,
     "use_class_weights": true,
 

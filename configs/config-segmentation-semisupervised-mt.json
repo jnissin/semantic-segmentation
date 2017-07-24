@@ -1,0 +1,67 @@
+{
+    "path_to_material_class_file": "categories/materials-minc.csv",
+    "path_to_data_set_information_file": "data/1024/data-set-information.json",
+    "path_to_labeled_photos": "data/1024/labeled/photos.tar.gz",
+    "path_to_labeled_masks": "data/1024/labeled/masks.tar.gz",
+    "path_to_unlabeled_photos": "data/1024/unlabeled.tar.gz",
+
+    "log_file_path": "logs/{model_folder}/log.txt",
+    "log_to_stdout": true,
+
+    "keras_tensorboard_log_path": "logs/{model_folder}/tensorboard/",
+    "keras_model_checkpoint_file_path": "checkpoints/{model_folder}/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "logs/{model_folder}/per-epoch-data.csv",
+    "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
+
+    "loss_function": "dummy",
+    "use_mean_teacher_method": true,
+    "lambda_loss_function": "mean_teacher",
+
+    "num_epochs": 100,
+    "input_shape": [null, null, 3],
+    "crop_shape": [256, 256],
+
+    "num_labeled_per_batch": 1,
+    "num_unlabeled_per_batch": 5,
+    "validation_num_labeled_per_batch": 1,
+    "validation_crop_shape": null,
+
+    "num_color_channels": 3,
+    "random_seed": 14874,
+
+    "optimizer": {
+      "name": "adam",
+      "learning_rate": 5e-3,
+      "momentum": 0.9,
+      "decay": 2e-5
+    },
+
+    "use_data_augmentation": true,
+
+    "data_augmentation_params": {
+        "augmentation_probability": 0.5,
+        "rotation_range": 40.0,
+        "zoom_range": 0.5,
+        "horizontal_flip": true,
+        "vertical_flip": false
+    },
+
+    "reduce_lr_on_plateau": {
+      "factor": 0.1,
+      "verbose": 1,
+      "patience": 3,
+      "epsilon": 0.0001,
+      "cooldown": 0,
+      "min_lr": 0
+    },
+
+    "image_data_format": "channels_last",
+    "continue_from_last_checkpoint": true,
+    "transfer_weights": false,
+    "use_class_weights": true,
+
+    "background_class_prediction_weight": 0.2,
+    "use_crf_in_prediction": true,
+    "crf_iterations": 1
+}
