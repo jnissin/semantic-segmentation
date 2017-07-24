@@ -4,6 +4,7 @@ import os
 import random
 import multiprocessing
 import math
+import jsonpickle
 
 import numpy as np
 
@@ -12,6 +13,7 @@ from joblib import Parallel, delayed
 from keras.preprocessing.image import load_img, img_to_array
 
 import image_utils
+from ..data_set import ImageFile
 
 ##############################################
 # UTILITY CLASSES
@@ -30,9 +32,69 @@ class MaterialClassInformation(object):
         self.color = color
 
 
+class SegmentationSetInformation(object):
+    def __init__(self,
+                 labeled_photos,
+                 labeled_masks):
+        # type: (list[str], list[str]) -> ()
+
+        if len(labeled_photos) != len(labeled_masks):
+            raise ValueError('Unmatching photo and mask lengths in the data set: {} vs {}'
+                             .format(len(labeled_photos), len(labeled_masks)))
+
+        self.labeled_photos = labeled_photos
+        self.labeled_masks = labeled_masks
+        self.labeled_size = len(labeled_photos)
+
+
+class SegmentationTrainingSetInformation(SegmentationSetInformation):
+    def __init__(self,
+                 labeled_photos,
+                 labeled_masks,
+                 unlabeled_photos=[]):
+        # type: (list[str], list[str], list[str]) -> ()
+
+        super(SegmentationTrainingSetInformation, self).__init__(labeled_photos, labeled_masks)
+        self.unlabeled_photos = unlabeled_photos
+        self.unlabeled_size = len(unlabeled_photos)
+
+
+class SegmentationDataSetInformation(object):
+    def __init__(self,
+                 training_set,
+                 validation_set,
+                 test_set,
+                 random_seed,
+                 per_channel_mean=[],
+                 per_channel_stddev=[],
+                 class_weights=[]):
+        # type: (SegmentationTrainingSetInformation, SegmentationSetInformation, SegmentationSetInformation, int, list[float], list[float], list[float], list[float]) -> ()
+
+        self.training_set = training_set
+        self.validation_set = validation_set
+        self.test_set = test_set
+        self.random_seed = random_seed
+
+        self.per_channel_mean = per_channel_mean
+        self.per_channel_stddev = per_channel_stddev
+        self.class_weights = class_weights
+
+
 ##############################################
 # UTILITY FUNCTIONS
 ##############################################
+
+def load_segmentation_data_set_information(data_set_information_file_path):
+    # type: (str) -> SegmentationDataSetInformation
+
+    with open(data_set_information_file_path, 'r') as f:
+        json_str = f.read()
+        data_set_information = jsonpickle.decode(json_str)
+
+        if not isinstance(data_set_information, SegmentationDataSetInformation):
+            raise ValueError('Read JSON file could not be decoded as SegmentationDataSetInformation')
+
+    return data_set_information
 
 
 def load_material_class_information(material_labels_file_path):
@@ -173,15 +235,15 @@ def get_files(path, ignore_hidden_files=True):
 _per_channel_mean_processed = 0
 
 
-def calculate_per_channel_mean(file_paths, num_channels, verbose=False):
-    # type: (list[str], int, bool) -> np.array[np.float32]
+def calculate_per_channel_mean(image_files, num_channels, verbose=False):
+    # type: (list[ImageFile], int, bool) -> np.array[np.float32]
 
     """
     Calculates the per-channel mean from all the images in the given
     path and returns it as a num_channels dimensional numpy array.
 
     # Arguments
-        :param file_paths: paths to the files to be used in the calculation
+        :param image_files: ImageFiles to be used in the calculation
         :param num_channels: number of channels in the image 1,3 or 4
     # Returns
         :return: numpy array with the channel means in range [-1, 1]
@@ -190,9 +252,8 @@ def calculate_per_channel_mean(file_paths, num_channels, verbose=False):
     # Parallelize per-channel sum calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='threading')(
-        delayed(_calculate_per_channel_mean)(
-            fp, num_channels, verbose) for fp in file_paths)
+    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+        delayed(_calculate_per_channel_mean)(image_file, num_channels, verbose) for image_file in image_files)
 
     # Calculate the final value
     sums = np.sum(np.vstack(data), axis=0)
@@ -208,8 +269,10 @@ def calculate_per_channel_mean(file_paths, num_channels, verbose=False):
     return per_channel_mean
 
 
-def _calculate_per_channel_mean(path, num_channels, verbose):
-    img = load_n_channel_image(path, num_channels)
+def _calculate_per_channel_mean(image_file, num_channels, verbose):
+    # type: (ImageFile, int, bool) -> np.array[np.float32]
+
+    img = image_file.get_image(color_channels=num_channels)
     img_array = img_to_array(img)
 
     # Normalize color channels to zero-centered range [-1, 1]
@@ -238,15 +301,15 @@ def _calculate_per_channel_mean(path, num_channels, verbose):
 _per_channel_stddev_processed = 0
 
 
-def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels, verbose=False):
-    # type: (list[str], np.array[np.float32], int, bool) -> np.array[np.float32]
+def calculate_per_channel_stddev(image_files, per_channel_mean, num_channels, verbose=False):
+    # type: (list[ImageFile], np.array[np.float32], int, bool) -> np.array[np.float32]
 
     """
     Calculates the per-channel standard deviation from all the images in the given
     path and returns it as a num_channels dimensional numpy array.
 
     # Arguments
-        :param file_paths: paths to the files to be used in the calculation
+        :param image_files: list of ImageFiles to be used in the calculation
         :param per_channel_mean: per channel mean for the data set in range [-1,1]
         :param num_channels: number of channels in the image 1,3 or 4
         :param verbose: print information about the progress of the calculation
@@ -257,9 +320,9 @@ def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels, ver
     # Parallelize per-channel variance calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='threading')(
+    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
         delayed(_calculate_per_channel_stddev)(
-            fp, per_channel_mean, num_channels, verbose) for fp in file_paths)
+            image_file, per_channel_mean, num_channels, verbose) for image_file in image_files)
 
     # Calculate the final value
     sums = np.sum(np.vstack(data), axis=0)
@@ -280,11 +343,13 @@ def calculate_per_channel_stddev(file_paths, per_channel_mean, num_channels, ver
     return per_channel_stddev
 
 
-def _calculate_per_channel_stddev(path, per_channel_mean, num_channels, verbose):
+def _calculate_per_channel_stddev(image_file, per_channel_mean, num_channels, verbose):
+    # type: (ImageFile, np.array[np.float32], int, bool) -> np.array[np.float32]
+
     var_tot = np.array([0.0] * (num_channels + 1))
 
     # Load the image as numpy array
-    img = load_n_channel_image(path, num_channels)
+    img = image_file.get_image(color_channels=num_channels)
     img_array = img_to_array(img)
 
     # Normalize colors to zero-centered range [-1, 1]
@@ -307,16 +372,15 @@ def _calculate_per_channel_stddev(path, per_channel_mean, num_channels, verbose)
     return var_tot
 
 
-def calculate_median_frequency_balancing_weights(file_paths, material_class_information):
-    # type: (str, list[str], list[MaterialClassInformation]) -> np.array[np.float32]
+def calculate_median_frequency_balancing_weights(image_files, material_class_information):
+    # type: (list[ImageFile], list[MaterialClassInformation]) -> np.array[np.float32]
 
     """
     Calculates the median frequency balancing weights for provided
     segmentation masks.
 
     # Arguments
-        :param file_paths: paths to the mask files
-        :param files: segmentation masks
+        :param image_files: list of ImageFiles of the mask files
         :param material_class_information: material class information of the dataset
     # Returns
         :return: a Numpy array with N_CLASSES values each describing the weight for that specific class
@@ -324,9 +388,9 @@ def calculate_median_frequency_balancing_weights(file_paths, material_class_info
 
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='threading')(
+    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
         delayed(_calculate_mask_class_frequencies)(
-            fp, material_class_information) for fp in file_paths)
+            image_file, material_class_information) for image_file in image_files)
     data = zip(*data)
 
     class_pixels = data[0]
@@ -337,20 +401,33 @@ def calculate_median_frequency_balancing_weights(file_paths, material_class_info
     # freq(c) is the number of pixels of class c divided
     # by the total number of pixels in images where c is present.
     # Median freq is the median of these frequencies.
-    class_frequencies = class_pixels / img_pixels
+    class_frequencies = np.zeros_like(class_pixels, dtype=np.float32)
+
+    # Avoid NaNs/infs by looping
+    for i in range(class_frequencies.shape[0]):
+        if class_pixels[i] != 0 and img_pixels[i] != 0:
+            class_frequencies[i] = class_pixels[i] / img_pixels[i]
+
     median_frequency = np.median(class_frequencies)
-    median_frequency_weights = median_frequency / class_frequencies
+
+    # Avoid NaNs/infs by looping
+    median_frequency_weights = np.zeros_like(class_frequencies, dtype=np.float32)
+
+    for i in range(class_frequencies.shape[0]):
+        if class_frequencies[i] != 0:
+            median_frequency_weights[i] = median_frequency / class_frequencies[i]
 
     return median_frequency_weights
 
 
-def _calculate_mask_class_frequencies(mask_file_path, material_class_information):
-    img_array = img_to_array(load_img(mask_file_path))
+def _calculate_mask_class_frequencies(image_file, material_class_information):
+    # type: (ImageFile, list[MaterialClassInformation]) -> (np.array[np.int32], int)
+
+    img_array = img_to_array(image_file.get_image())
     expanded_mask = expand_mask(img_array, material_class_information)
     class_pixels = np.sum(expanded_mask, axis=(0, 1))
 
-    # Select all classes which appear in the picture i.e.
-    # have a value over zero
+    # Select all classes which appear in the picture i.e. have a value over zero
     num_pixels = img_array.shape[0] * img_array.shape[1]
     img_pixels = (class_pixels > 0.0) * num_pixels
 

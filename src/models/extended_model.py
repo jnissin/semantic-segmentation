@@ -229,15 +229,15 @@ class ExtendedModel(Model):
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
 
-                    if trainer is not None:
-                        trainer.on_batch_end(step_index)
-
                     if not isinstance(outs, list):
                         outs = [outs]
                     for l, o in zip(out_labels, outs):
                         batch_logs[l] = o
 
                     callbacks.on_batch_end(batch_index, batch_logs)
+
+                    if trainer is not None:
+                        trainer.on_batch_end(step_index)
 
                     # Construct epoch logs.
                     epoch_logs = {}
@@ -269,10 +269,11 @@ class ExtendedModel(Model):
                         for l, o in zip(out_labels, val_outs):
                             epoch_logs['val_' + l] = o
 
+                callbacks.on_epoch_end(epoch, epoch_logs)
+
                 if trainer is not None:
                     trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, epoch_logs)
 
-                callbacks.on_epoch_end(epoch, epoch_logs)
                 epoch += 1
                 if callback_model.stop_training:
                     break

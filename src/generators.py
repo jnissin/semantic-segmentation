@@ -2,7 +2,7 @@
 
 import random
 import numpy as np
-import os
+import threading
 
 from keras.preprocessing.image import img_to_array
 from PIL import Image
@@ -10,11 +10,10 @@ from PIL import Image
 from utils import dataset_utils
 from utils import image_utils
 from utils.dataset_utils import MaterialClassInformation
-from utils.thread_utils import threadsafe
+from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile
 
 from abc import ABCMeta, abstractmethod
 import keras.backend as K
-from joblib import Parallel, delayed
 from typing import Callable
 
 
@@ -33,7 +32,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
                                        img_data_format='channels_last',
                                        div2_constraint=4,
                                        mask_type='one_hot'):
-    # type: (tuple[str], int, tuple[int], list[MaterialClassInformation], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
+    # type: (tuple[ImageFile], int, tuple[int], list[MaterialClassInformation], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
 
     """
     Returns a photo mask pair for supervised segmentation training. Will apply data augmentation
@@ -42,7 +41,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
     The photos are not normalized to range [-1,1] within the function.
 
     # Arguments
-        :param photo_mask_pair: a pair of paths (path_to_photo, path_to_mask)
+        :param photo_mask_pair: a pair of ImageFiles (photo, mask)
         :param num_color_channels: number of channels in the photos; 1, 3 or 4
         :param crop_shape: size of the crop or None if no cropping should be applied
         :param material_class_information: material class information to expand the mask
@@ -57,8 +56,8 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
     """
 
     # Load the image and mask as PIL images
-    photo = dataset_utils.load_n_channel_image(photo_mask_pair[0], num_color_channels)
-    mask = dataset_utils.load_n_channel_image(photo_mask_pair[1], 3)
+    photo = photo_mask_pair[0].get_image(color_channels=num_color_channels)
+    mask = photo_mask_pair[1].get_image(color_channels=3)
 
     # Resize the photo to match the mask size if necessary, since
     # the original photos are sometimes huge
@@ -95,20 +94,22 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
     return np_photo, np_mask
 
 
-def process_photo(np_photo,
+def process_photo(photo,
+                  num_color_channels,
                   crop_shape,
                   photo_cval,
                   use_data_augmentation=False,
                   data_augmentation_params=None,
                   img_data_format='channels_last',
                   div2_constraint=4):
-    # type: (np.array, tuple[int], np.array, np.array, bool, str, int) -> np.array
+    # type: (ImageFile, int, tuple[int], np.array, np.array, bool, str, int) -> np.array
 
     """
     Applies cropping and data augmentation to a single photo.
 
     # Arguments
-        :param np_photo: the photo as a numpy array
+        :param photo: the photo as ImageFile
+        :param num_color_channels: number of color channels in the image
         :param crop_shape: size of the crop or None if no cropping should be applied
         :param photo_cval: fill color value for photos [0,255]
         :param use_data_augmentation: should data augmentation be used
@@ -118,6 +119,8 @@ def process_photo(np_photo,
     # Returns
         :return: the augmented photo as a numpy array
     """
+
+    np_photo = img_to_array(photo.get_image(color_channels=num_color_channels))
 
     # Check whether any of the image dimensions is smaller than the crop,
     # if so pad with the assigned fill colors
@@ -346,6 +349,61 @@ class DataGeneratorParameters(object):
 
 
 #######################################
+# ITERATOR
+#######################################
+
+class DataSetIterator(object):
+    """
+    A class for iterating over a data set in batches.
+    """
+
+    def __init__(self, n, batch_size, shuffle, seed):
+        """
+        # Arguments
+            :param n: Integer, total number of samples in the dataset to loop over.
+            :param batch_size: Integer, size of a batch.
+            :param shuffle: Boolean, whether to shuffle the data between epochs.
+            :param seed: Random seeding for data shuffling.
+        # Returns
+            Nothing
+        """
+
+        self.n = n
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.seed = seed
+        self.batch_index = 0
+        self.total_batches_seen = 0
+        self.index_array = np.arange(n)
+
+    def reset(self):
+        self.batch_index = 0
+
+    def get_next_batch(self):
+
+        if self.seed is not None:
+            np.random.seed(self.seed + self.total_batches_seen)
+
+        if self.batch_index == 0:
+            self.index_array = np.arange(self.n)
+            if self.shuffle:
+                self.index_array = np.random.permutation(self.n)
+
+        current_index = (self.batch_index * self.batch_size) % self.n
+
+        if self.n > current_index + self.batch_size:
+            current_batch_size = self.batch_size
+            self.batch_index += 1
+        else:
+            current_batch_size = self.n - current_index
+            self.batch_index = 0
+        self.total_batches_seen += 1
+
+        return self.index_array[current_index: current_index + current_batch_size], current_index, current_batch_size
+
+
+
+#######################################
 # DATA GENERATOR
 #######################################
 
@@ -360,6 +418,8 @@ class DataGenerator(object):
 
     def __init__(self, params):
         # type: (DataGeneratorParameters) -> ()
+
+        self.lock = threading.Lock()
 
         # Unwrap DataGeneratorParameters to member variables
         self.material_class_information = params.material_class_information
@@ -387,15 +447,13 @@ class DataGenerator(object):
             self.per_channel_stddev = np.array(self.per_channel_stddev)
 
         # Calculate missing per-channel mean if necessary
-        if self.use_per_channel_mean_normalization and self.per_channel_mean is None:
-            photos = self.get_all_photos()
-            self.per_channel_mean = dataset_utils.calculate_per_channel_mean(photos, self.num_color_channels)
+        if self.use_per_channel_mean_normalization and (self.per_channel_mean is None or len(self.per_channel_mean) < self.num_color_channels):
+            self.per_channel_mean = dataset_utils.calculate_per_channel_mean(self.get_all_photos(), self.num_color_channels)
             print 'DataGenerator: Using per-channel mean: {}'.format(self.per_channel_mean)
 
         # Calculate missing per-channel stddev if necessary
-        if self.use_per_channel_stddev_normalization and self.per_channel_stddev is None:
-            photos = self.get_all_photos()
-            self.per_channel_stddev = dataset_utils.calculate_per_channel_stddev(photos, self.per_channel_mean, self.num_color_channels)
+        if self.use_per_channel_stddev_normalization and (self.per_channel_stddev is None or len(self.per_channel_stddev) < self.num_color_channels):
+            self.per_channel_stddev = dataset_utils.calculate_per_channel_stddev(self.get_all_photos(), self.per_channel_mean, self.num_color_channels)
             print 'DataGenerator: Using per-channel stddev: {}'.format(self.per_channel_stddev)
 
         # Use per-channel mean but in range [0, 255] if nothing else is given.
@@ -420,34 +478,34 @@ class DataGenerator(object):
 
     @abstractmethod
     def get_all_photos(self):
-        # type: () -> list[str]
+        # type: () -> list[ImageFile]
 
         """
-        Returns all the photo file paths as a list
+        Returns all the photo ImageFile instances as a list
 
         # Arguments
             None
         # Returns
-            :return: all the photo file paths as a list
+            :return: all the photo ImageFiles as a list
         """
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
     @abstractmethod
     def get_all_masks(self):
-        # type: () -> list[str]
+        # type: () -> list[ImageFile]
 
         """
-        Returns all the mask file paths as a list.
+        Returns all the mask ImageFile instances as a list.
 
         # Arguments
             None
         # Returns
-            :return: all the mask file paths as a list
+            :return: all the mask ImageFiles as a list
         """
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
     @abstractmethod
-    def get_flow(self):
+    def next(self):
         # type: () -> ()
 
         """
@@ -471,98 +529,101 @@ class SegmentationDataGenerator(DataGenerator):
     of matching image segmentation mask pairs.
     """
 
-    def __init__(
-            self,
-            labeled_data,
-            params):
-        # type: (list[tuple[str]], DataGeneratorParameters) -> ()
+    def __init__(self, labeled_data_set, num_labeled_per_batch, params, crop_shape):
+        # type: (LabeledImageDataSet, int, DataGeneratorParameters, tuple[int]) -> ()
 
-        self.labeled_data = labeled_data
+        """
+        # Arguments
+            :param labeled_data_set: LabeledImageDataSet instance of the data
+            :param num_labeled_per_batch: number of labeled data set samples per batch
+            :param params: DataGeneratorParams instance for parameters
+            :param crop_shape: the crop shape
+        """
+
+        self.labeled_data_set = labeled_data_set
+        self.num_labeled_per_batch = num_labeled_per_batch
+        self.crop_shape = crop_shape
+
         super(SegmentationDataGenerator, self).__init__(params)
 
+        self.labeled_data_iterator = DataSetIterator(
+            n=self.labeled_data_set.size,
+            batch_size=num_labeled_per_batch,
+            shuffle=self.shuffle_data_after_epoch,
+            seed=self.random_seed)
+
     def get_all_photos(self):
-        # type: () -> list[str]
+        # type: () -> list[ImageFile]
 
         """
-        Returns all the photo file paths as a list
+        Returns all the photo ImageFile instances as list.
 
         # Arguments
             None
         # Returns
-            :return: all the photo file paths as a list
+            :return: all the photo ImageFiles as a list
         """
-        return [photo_mask_pair[0] for photo_mask_pair in self.labeled_data]
+        photos = []
+        photos += self.labeled_data_set.photo_image_set.image_files
+        return photos
 
     def get_all_masks(self):
-        # type: () -> list[str]
+        # type: () -> list[ImageFile]
 
         """
-        Returns all the mask file paths as a list.
+        Returns all the mask ImageFile instances as a list.
 
         # Arguments
             None
         # Returns
-            :return: all the mask file paths as a list
+            :return: all the mask ImageFiles as a list
         """
-        return [photo_mask_pair[1] for photo_mask_pair in self.labeled_data]
+        masks = []
+        masks += self.labeled_data_set.mask_image_set.image_files
+        return masks
 
-    @threadsafe
-    def get_flow(self, batch_size, crop_shape=None):
+    def next(self):
         # type: (int, tuple[int]) -> (np.array, np.array)
 
         """
         Yields batches of data endlessly.
 
         # Arguments
-            :param batch_size: size of a single minibatch
-            :param crop_shape: shape of the crop WxH, None if no cropping should be applied
+            None
         # Returns
             :return: batch of input image, segmentation mask data as a tuple (X,Y)
         """
 
-        # Calculate the number of batches. If the length of the data is not
-        # divisible by the batch size then the last batch will be smaller
-        # than the rest. However, all data is used on every epoch.
-        data_set_size = len(self.labeled_data)
-        num_batches = dataset_utils.get_number_of_batches(data_set_size, batch_size)
-        n_jobs = dataset_utils.get_number_of_parallel_jobs()
+        with self.lock:
+            labeled_index_array, labeled_current_index, labeled_current_batch_size = self.labeled_data_iterator.get_next_batch()
 
-        while True:
-            if self.shuffle_data_after_epoch:
-                # Shuffle the (photo, mask) -pairs after every epoch
-                random.shuffle(self.labeled_data)
+        batch_files = self.labeled_data_set.get_indices(labeled_index_array)
 
-            for i in range(0, num_batches):
-                # The files for this batch
-                batch_range = dataset_utils.get_batch_index_range(data_set_size, batch_size, i)
-                batch_files = self.labeled_data[batch_range[0]:batch_range[1]]
+        # Parallel processing of the files in this batch
+        data = [get_labeled_segmentation_data_pair(
+                photo_mask_pair=photo_mask_pair,
+                num_color_channels=self.num_color_channels,
+                crop_shape=self.crop_shape,
+                material_class_information=self.material_class_information,
+                photo_cval=self.photo_cval,
+                mask_cval=self.mask_cval,
+                use_data_augmentation=self.use_data_augmentation,
+                data_augmentation_params=self.data_augmentation_params,
+                img_data_format=self.img_data_format,
+                div2_constraint=4,
+                mask_type='one_hot') for photo_mask_pair in batch_files]
 
-                # Parallel processing of the files in this batch
-                data = Parallel(n_jobs=n_jobs, backend='threading')(
-                    delayed(get_labeled_segmentation_data_pair)(
-                        photo_mask_pair=photo_mask_pair,
-                        num_color_channels=self.num_color_channels,
-                        crop_shape=crop_shape,
-                        material_class_information=self.material_class_information,
-                        photo_cval=self.photo_cval,
-                        mask_cval=self.mask_cval,
-                        use_data_augmentation=self.use_data_augmentation,
-                        data_augmentation_params=self.data_augmentation_params,
-                        img_data_format=self.img_data_format,
-                        div2_constraint=4,
-                        mask_type='one_hot') for photo_mask_pair in batch_files)
+        # Note: all the examples in the batch have to have the same dimensions
+        X, Y = zip(*data)
+        X, Y = np.array(X), np.array(Y)
 
-                # Note: all the examples in the batch have to have the same dimensions
-                X, Y = zip(*data)
-                X, Y = np.array(X), np.array(Y)
+        # Normalize the photo batch data
+        X = dataset_utils \
+            .normalize_batch(X,
+                             self.per_channel_mean if self.use_per_channel_mean_normalization else None,
+                             self.per_channel_stddev if self.use_per_channel_stddev_normalization else None)
 
-                # Normalize the photo batch data
-                X = dataset_utils \
-                    .normalize_batch(X,
-                                     self.per_channel_mean if self.use_per_channel_mean_normalization else None,
-                                     self.per_channel_stddev if self.use_per_channel_stddev_normalization else None)
-
-                yield X, Y
+        return X, Y
 
 
 ################################################
@@ -573,27 +634,60 @@ class SegmentationDataGenerator(DataGenerator):
 class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
     def __init__(self,
-                 labeled_data,
-                 unlabeled_data,
+                 labeled_data_set,
+                 unlabeled_data_set,
+                 num_labeled_per_batch,
+                 num_unlabeled_per_batch,
                  params,
+                 crop_shape=None,
                  label_generation_function=None):
-        # type: (list[tuple[str]], list[str], DataGeneratorParameters, Callable[[np.array[np.float32]], np.array]) -> ()
+        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, tuple[int], Callable[[np.array[np.float32]], np.array]) -> ()
 
-        self.labeled_data = labeled_data
-        self.unlabeled_data = unlabeled_data if unlabeled_data is not None else []
+        """
+        # Arguments
+            :param labeled_data_set:
+            :param unlabeled_data_set:
+            :param num_labeled_per_batch: number of labeled images per batch
+            :param num_unlabeled_per_batch: number of unlabeled images per batch
+            :param params:
+            :param crop_shape: crop size of the images (WxH)
+            :param label_generation_function:
+        """
 
-        if labeled_data is None or len(labeled_data) == 0:
-            raise ValueError('SemisupervisedSegmentationDataGenerator does not support empty labeled data')
+        self.labeled_data_set = labeled_data_set
+        self.unlabeled_data_set = unlabeled_data_set
+
+        self.num_labeled_per_batch = num_labeled_per_batch
+        self.num_unlabeled_per_batch = num_unlabeled_per_batch
+        self.crop_shape = crop_shape
+
+        super(SemisupervisedSegmentationDataGenerator, self).__init__(params)
+
+        self.labeled_data_iterator = DataSetIterator(
+            n=self.labeled_data_set.size,
+            batch_size=num_labeled_per_batch,
+            shuffle=self.shuffle_data_after_epoch,
+            seed=self.random_seed)
+
+        self.unlabeled_data_iterator = None
+
+        if unlabeled_data_set is not None and unlabeled_data_set.size > 0:
+            self.unlabeled_data_iterator = DataSetIterator(
+                n=self.unlabeled_data_set.size,
+                batch_size=num_unlabeled_per_batch,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed)
+
+        if labeled_data_set is None:
+            raise ValueError('SemisupervisedSegmentationDataGenerator does not support empty labeled data set')
 
         if label_generation_function is None:
             self.label_generation_function = SemisupervisedSegmentationDataGenerator.default_label_generator_for_unlabeled_photos
         else:
             self.label_generation_function = label_generation_function
 
-        super(SemisupervisedSegmentationDataGenerator, self).__init__(params)
-
     def get_all_photos(self):
-        # type: () -> list[str]
+        # type: () -> list[ImageFile]
 
         """
         Returns all the photo file paths as a list
@@ -603,13 +697,17 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Returns
             :return: all the photo file paths as a list
         """
-        photos = [photo_mask_pair[0] for photo_mask_pair in self.labeled_data]
-        if self.unlabeled_data is not None:
-            photos += self.unlabeled_data
+
+        photos = []
+        photos += self.labeled_data_set.photo_image_set.image_files
+
+        if self.unlabeled_data_set is not None:
+            photos += self.unlabeled_data_set.photo_image_set.image_files
+
         return photos
 
     def get_all_masks(self):
-        # type: () -> list[str]
+        # type: () -> list[ImageFile]
 
         """
         Returns all the mask file paths as a list.
@@ -619,7 +717,8 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Returns
             :return: all the mask file paths as a list
         """
-        masks = [photo_mask_pair[1] for photo_mask_pair in self.labeled_data]
+        masks = []
+        masks += self.labeled_data_set.mask_image_set.image_files
         return masks
 
     def has_unlabeled_data(self):
@@ -633,34 +732,25 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Returns
             :return: true if there is unlabeled data otherwise false
         """
-        return self.unlabeled_data is not None and len(self.unlabeled_data) > 0
+        return self.unlabeled_data_set is not None and self.unlabeled_data_set.size > 0 and self.unlabeled_data_iterator is not None
 
-    def get_labeled_batch_data(self, batch_idx, num_labeled_per_batch, crop_shape):
-        # type: (int, int, tuple[int]) -> (list[np.array], list[np.array])
+    def get_labeled_batch_data(self, index_array):
+        # type: (np.array[int]) -> (list[np.array], list[np.array])
 
         """
         # Arguments
-            :param batch_idx: index of the labeled data batch
-            :param num_labeled_per_batch: number of items in a single labeled data batch
-            :param crop_shape: crop shape
+            :param index_array: indices of the labeled data
         # Returns
             :return: labeled data as two lists: (X, Y)
         """
 
-        labeled_data_set_size = len(self.labeled_data)
-        n_jobs = dataset_utils.get_number_of_parallel_jobs()
-
-        labeled_batch_range = dataset_utils.get_batch_index_range(labeled_data_set_size,
-                                                                  num_labeled_per_batch,
-                                                                  batch_idx)
-        labeled_batch_files = self.labeled_data[labeled_batch_range[0]:labeled_batch_range[1]]
+        labeled_batch_files = self.labeled_data_set.get_indices(index_array)
 
         # In parallel: Process the labeled files for this batch
-        labeled_data = Parallel(n_jobs=n_jobs, backend='threading')(
-            delayed(get_labeled_segmentation_data_pair)(
+        labeled_data = [get_labeled_segmentation_data_pair(
                 photo_mask_pair=photo_mask_pair,
                 num_color_channels=self.num_color_channels,
-                crop_shape=crop_shape,
+                crop_shape=self.crop_shape,
                 material_class_information=self.material_class_information,
                 photo_cval=self.photo_cval,
                 mask_cval=self.mask_cval,
@@ -668,76 +758,57 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 data_augmentation_params=self.data_augmentation_params,
                 img_data_format=self.img_data_format,
                 div2_constraint=4,
-                mask_type='index') for photo_mask_pair in labeled_batch_files)
+                mask_type='index') for photo_mask_pair in labeled_batch_files]
 
         # Unzip the photo mask pairs
         X, Y = zip(*labeled_data)
 
         return list(X), list(Y)
 
-    def get_unlabeled_batch_data(self, batch_idx, num_unlabeled_per_batch, crop_shape):
-        # type: (int, int, tuple[int]) -> (list[np.array], list[np.array])
+    def get_unlabeled_batch_data(self, index_array):
+        # type: (np.array[int]) -> (list[np.array], list[np.array])
 
         """
         # Arguments
-            :param batch_idx: index of the unlabeled data batch
-            :param num_unlabeled_per_batch: number of items in a single unlabeled data batch
-            :param crop_shape: crop shape
+            :param index_array: indices of the unlabeled data
         # Returns
             :return: unlabeled data as two lists: (X, Y)
         """
 
         # If we don't have unlabeled data return two empty lists
-        if not self.has_unlabeled_data() or num_unlabeled_per_batch < 1:
+        if not self.has_unlabeled_data():
             return [], []
 
-        unlabeled_data_set_size = len(self.unlabeled_data)
-        n_jobs = dataset_utils.get_number_of_parallel_jobs()
-
-        unlabeled_batch_range = dataset_utils.get_batch_index_range(unlabeled_data_set_size,
-                                                                    num_unlabeled_per_batch,
-                                                                    batch_idx)
-
-        unlabeled_batch_files = self.unlabeled_data[unlabeled_batch_range[0]:unlabeled_batch_range[1]]
-
-        # In parallel: Load the unlabeled photos of this batch into numpy arrays
-        np_unlabeled_photos = Parallel(n_jobs=n_jobs, backend='threading')(
-            delayed(img_to_array)(dataset_utils.load_n_channel_image(
-                unlabeled_photo_path, self.num_color_channels)) for unlabeled_photo_path in unlabeled_batch_files)
+        unlabeled_batch_files = self.unlabeled_data_set.get_indices(index_array)
 
         # In parallel: Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        X_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
-            delayed(process_photo)(
-                np_photo=photo,
-                crop_shape=crop_shape,
-                photo_cval=self.photo_cval,
-                use_data_augmentation=self.use_data_augmentation,
-                data_augmentation_params=self.data_augmentation_params,
-                img_data_format=self.img_data_format,
-                div2_constraint=4) for photo in np_unlabeled_photos)
+        X_unlabeled = [process_photo(
+            photo=photo,
+            num_color_channels=self.num_color_channels,
+            crop_shape=self.crop_shape,
+            photo_cval=self.photo_cval,
+            use_data_augmentation=self.use_data_augmentation,
+            data_augmentation_params=self.data_augmentation_params,
+            img_data_format=self.img_data_format,
+            div2_constraint=4) for photo in unlabeled_batch_files]
 
         # In parallel: Generate segmentation masks for the unlabeled photos
         # Note: cropping and augmentation already applied, but channels not normalized
-        Y_unlabeled = Parallel(n_jobs=n_jobs, backend='threading')(
-            delayed(_generate_labels_for_unlabeled_photo)(
-                np_photo, self.label_generation_function) for np_photo in X_unlabeled)
+        Y_unlabeled = [_generate_labels_for_unlabeled_photo(np_photo, self.label_generation_function) for np_photo in X_unlabeled]
 
         return list(X_unlabeled), list(Y_unlabeled)
 
-    @threadsafe
-    def get_flow(self, num_labeled_per_batch, num_unlabeled_per_batch, crop_shape=None):
+    def next(self):
         # type: (int, int, tuple[int]) -> (list[np.array], np.array)
 
         """
-        Generates batches of data for semi supervised mean teacher training. Also handles
-        updating the mean teacher model after every batch of data.
+        Generates batches of data for semi supervised mean teacher training.
 
         # Arguments
-            :param num_labeled_per_batch: number of labeled images per batch
-            :param num_unlabeled_per_batch: number of unlabeled images per batch
-            :param crop_shape: crop size of the images (WxH)
+            None
         # Returns
-            :return: A list of inputs in the following order
+            :return: A batch of data for semi supervised training as a tuple of (X,Y).
+            The input data (X) has the following:
 
             0: Input images consisting of both labeled and unlabeled images. The unlabeled images are
                the M last images in the batch.
@@ -745,60 +816,46 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                and the unlabeled images.
             2: Number of unlabeled data in the X and Y (photos and labels).
         """
-        # Calculate the number of batches. If the length of the labeled data is not
-        # divisible by the labeled data batch size then the last batch will be smaller
-        # than the rest. However, all labeled data is used on every epoch.
-        labeled_data_set_size = len(self.labeled_data)
-        unlabeled_data_set_size = len(self.unlabeled_data)
-        num_batches = dataset_utils.get_number_of_batches(labeled_data_set_size, num_labeled_per_batch)
-        unlabeled_batch_idx = 0
 
-        while True:
-            if self.shuffle_data_after_epoch:
-                # Shuffle the labeled (photo, mask) data after every epoch
-                random.shuffle(self.labeled_data)
+        with self.lock:
+            labeled_index_array, labeled_current_index, labeled_current_batch_size = self.labeled_data_iterator.get_next_batch()
 
-            # Steps (batches) per epoch is determined by the labeled data
-            for labeled_batch_idx in range(0, num_batches):
+            unlabeled_index_array = None
+            unlabeled_current_index = None
+            unlabeled_current_batch_size = None
 
-                X, Y = self.get_labeled_batch_data(labeled_batch_idx, num_labeled_per_batch, crop_shape)
-                X_unlabeled, Y_unlabeled = self.get_unlabeled_batch_data(unlabeled_batch_idx, num_unlabeled_per_batch, crop_shape)
-                X = X + X_unlabeled
-                Y = Y + Y_unlabeled
+            if self.has_unlabeled_data():
+                unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size = self.unlabeled_data_iterator.get_next_batch()
 
-                num_unlabeled_samples_in_batch = len(X_unlabeled)
-                num_samples_in_batch = len(X)
+        X, Y = self.get_labeled_batch_data(labeled_index_array)
+        X_unlabeled, Y_unlabeled = self.get_unlabeled_batch_data(unlabeled_index_array)
+        X = X + X_unlabeled
+        Y = Y + Y_unlabeled
 
-                # Check whether we ran out of unlabeled data and shuffle the unlabeled data if required
-                if self.has_unlabeled_data() and num_unlabeled_per_batch > 0:
-                    if num_unlabeled_per_batch*unlabeled_batch_idx >= unlabeled_data_set_size:
-                        if self.shuffle_data_after_epoch:
-                            random.shuffle(self.unlabeled_data)
-                        unlabeled_batch_idx = 0
-                    else:
-                        unlabeled_batch_idx += 1
+        num_unlabeled_samples_in_batch = len(X_unlabeled)
+        num_samples_in_batch = len(X)
 
-                # Cast the lists to numpy arrays
-                X, Y = np.array(X), np.array(Y)
+        # Cast the lists to numpy arrays
+        X, Y = np.array(X), np.array(Y)
 
-                # Normalize the photo batch data
-                X = dataset_utils\
-                    .normalize_batch(X,
-                                     self.per_channel_mean if self.use_per_channel_mean_normalization else None,
-                                     self.per_channel_stddev if self.use_per_channel_stddev_normalization else None)
+        # Normalize the photo batch data
+        X = dataset_utils\
+            .normalize_batch(X,
+                             self.per_channel_mean if self.use_per_channel_mean_normalization else None,
+                             self.per_channel_stddev if self.use_per_channel_stddev_normalization else None)
 
-                # The dimensions of the number of unlabeled in the batch must match with batch dimension
-                num_unlabeled = np.ones(shape=[num_samples_in_batch], dtype=np.int32) * num_unlabeled_samples_in_batch
+        # The dimensions of the number of unlabeled in the batch must match with batch dimension
+        num_unlabeled = np.ones(shape=[num_samples_in_batch], dtype=np.int32) * num_unlabeled_samples_in_batch
 
-                # Generate a dummy output for the dummy loss function and yield a batch of data
-                dummy_output = np.zeros(shape=[num_samples_in_batch])
+        # Generate a dummy output for the dummy loss function and yield a batch of data
+        dummy_output = np.zeros(shape=[num_samples_in_batch])
 
-                batch_data = [X, Y, num_unlabeled]
+        batch_data = [X, Y, num_unlabeled]
 
-                if X.shape[0] != Y.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
-                    print 'Unmatching input first dimensions: {}, {}, {}'.format(X.shape[0], Y.shape[0],  num_unlabeled.shape[0])
+        if X.shape[0] != Y.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
+            print 'Unmatching input first dimensions: {}, {}, {}'.format(X.shape[0], Y.shape[0],  num_unlabeled.shape[0])
 
-                yield batch_data, dummy_output
+        return batch_data, dummy_output
 
     @staticmethod
     def default_label_generator_for_unlabeled_photos(np_image):
@@ -818,121 +875,122 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 # CLASSIFICATION DATA GENERATOR
 ################################################
 
-# Dirty trick to make pickling possible for member functions, see:
-# https://stackoverflow.com/questions/1816958/cant-pickle-type-instancemethod-when-using-pythons-multiprocessing-pool-ma
-def unwrap_get_data_pair(arg, **kwarg):
-    return ClassificationDataGenerator.get_data_pair(*arg, **kwarg)
-
-
-class ClassificationDataGenerator(object):
-    """
-    DataGenerator which provides supervised classification data. Produces batches
-    of matching image one-hot-encoded vector pairs.
-    """
-
-    def __init__(self,
-                 path_to_images_folder,
-                 per_channel_mean,
-                 path_to_labels_file,
-                 path_to_categories_file,
-                 num_channels,
-                 random_seed=None,
-                 verbose=False,
-                 shuffle_data_after_epoch=True):
-
-        self.path_to_images_folder = path_to_images_folder
-        self.per_channel_mean = per_channel_mean
-        self.path_to_labels_file = path_to_labels_file
-        self.path_to_categories_file = path_to_categories_file
-        self.num_channels = num_channels
-        self.verbose = verbose
-        self.shuffle_data_after_epoch = shuffle_data_after_epoch
-
-        # Read categories file and build the categories dictionary
-        # category name -> category index
-        self.categories = {}
-
-        with open(path_to_categories_file, 'r') as f:
-            lines = f.readlines()
-            # Remove whitespace characters like `\n` at the end of each line
-            lines = [x.strip() for x in lines]
-
-            for idx, category in enumerate(lines):
-                self.categories[category] = idx
-
-        self.num_categories = len(self.categories)
-
-        if self.verbose:
-            print 'Found {} categories: {}'.format(self.num_categories, self.categories)
-
-        # Read the image file paths into an array
-        with open(path_to_labels_file, 'r') as f:
-            self.files = f.readlines()
-            # Remove whitespace characters like `\n` at the end of each line
-            self.files = [x.strip() for x in self.files]
-
-        self.num_samples = len(self.files)
-
-        if self.verbose:
-            print 'Found {} samples'.format(self.num_samples)
-
-        if random_seed is not None:
-            np.random.seed(random_seed)
-            random.seed()
-
-    def get_data_pair(self, f):
-        # type: (str) -> (np.array, np.array)
-
-        """
-        Creates a data pair of image and one-hot-encoded category vector from a MINC
-        photo path.
-
-        # Arguments
-            :param f: path to MINC photo
-        # Returns
-            :return: a tuple of numpy arrays (image, one-hot-encoded category vector)
-        """
-
-        # The path is always /images/<category>/<filename>
-        file_parts = f.split('/')
-        category = file_parts[1]
-        filename = file_parts[2]
-
-        # Build the complete path
-        file_path = os.path.join(self.path_to_images_folder, category, filename)
-
-        # Load the image
-        img = dataset_utils.load_n_channel_image(file_path, self.num_channels)
-        x = img_to_array(img)
-
-        # Create the one-hot-vector for the classification
-        category_index = self.categories[category]
-        y = np.zeros(self.num_categories)
-        y[category_index] = 1.0
-
-        return x, y
-
-    @threadsafe
-    def get_flow(self, batch_size):
-
-        dataset_size = len(self.files)
-        num_batches = dataset_utils.get_number_of_batches(dataset_size, batch_size)
-        n_jobs = dataset_utils.get_number_of_parallel_jobs()
-
-        while True:
-            if self.shuffle_data_after_epoch:
-                # Shuffle the files
-                random.shuffle(self.files)
-
-            for i in range(0, num_batches):
-                # Get the files for this batch
-                batch_range = dataset_utils.get_batch_index_range(dataset_size, batch_size, i)
-                files = self.files[batch_range[0]:batch_range[1]]
-
-                data = Parallel(n_jobs=n_jobs, backend='threading')(
-                    delayed(unwrap_get_data_pair)((self, f)) for f in files)
-
-                X, Y = zip(*data)
-                X, Y = dataset_utils.normalize_batch(np.array(X)), np.array(Y)
-
-                yield X, Y
+#
+# # Dirty trick to make pickling possible for member functions, see:
+# # https://stackoverflow.com/questions/1816958/cant-pickle-type-instancemethod-when-using-pythons-multiprocessing-pool-ma
+# def unwrap_get_data_pair(arg, **kwarg):
+#     return ClassificationDataGenerator.get_data_pair(*arg, **kwarg)
+#
+#
+# class ClassificationDataGenerator(object):
+#     """
+#     DataGenerator which provides supervised classification data. Produces batches
+#     of matching image one-hot-encoded vector pairs.
+#     """
+#
+#     def __init__(self,
+#                  path_to_images_folder,
+#                  per_channel_mean,
+#                  path_to_labels_file,
+#                  path_to_categories_file,
+#                  num_channels,
+#                  random_seed=None,
+#                  verbose=False,
+#                  shuffle_data_after_epoch=True):
+#
+#         self.path_to_images_folder = path_to_images_folder
+#         self.per_channel_mean = per_channel_mean
+#         self.path_to_labels_file = path_to_labels_file
+#         self.path_to_categories_file = path_to_categories_file
+#         self.num_channels = num_channels
+#         self.verbose = verbose
+#         self.shuffle_data_after_epoch = shuffle_data_after_epoch
+#
+#         # Read categories file and build the categories dictionary
+#         # category name -> category index
+#         self.categories = {}
+#
+#         with open(path_to_categories_file, 'r') as f:
+#             lines = f.readlines()
+#             # Remove whitespace characters like `\n` at the end of each line
+#             lines = [x.strip() for x in lines]
+#
+#             for idx, category in enumerate(lines):
+#                 self.categories[category] = idx
+#
+#         self.num_categories = len(self.categories)
+#
+#         if self.verbose:
+#             print 'Found {} categories: {}'.format(self.num_categories, self.categories)
+#
+#         # Read the image file paths into an array
+#         with open(path_to_labels_file, 'r') as f:
+#             self.files = f.readlines()
+#             # Remove whitespace characters like `\n` at the end of each line
+#             self.files = [x.strip() for x in self.files]
+#
+#         self.num_samples = len(self.files)
+#
+#         if self.verbose:
+#             print 'Found {} samples'.format(self.num_samples)
+#
+#         if random_seed is not None:
+#             np.random.seed(random_seed)
+#             random.seed()
+#
+#     def get_data_pair(self, f):
+#         # type: (str) -> (np.array, np.array)
+#
+#         """
+#         Creates a data pair of image and one-hot-encoded category vector from a MINC
+#         photo path.
+#
+#         # Arguments
+#             :param f: path to MINC photo
+#         # Returns
+#             :return: a tuple of numpy arrays (image, one-hot-encoded category vector)
+#         """
+#
+#         # The path is always /images/<category>/<filename>
+#         file_parts = f.split('/')
+#         category = file_parts[1]
+#         filename = file_parts[2]
+#
+#         # Build the complete path
+#         file_path = os.path.join(self.path_to_images_folder, category, filename)
+#
+#         # Load the image
+#         img = dataset_utils.load_n_channel_image(file_path, self.num_channels)
+#         x = img_to_array(img)
+#
+#         # Create the one-hot-vector for the classification
+#         category_index = self.categories[category]
+#         y = np.zeros(self.num_categories)
+#         y[category_index] = 1.0
+#
+#         return x, y
+#
+#     @threadsafe
+#     def get_flow(self, batch_size):
+#
+#         dataset_size = len(self.files)
+#         num_batches = dataset_utils.get_number_of_batches(dataset_size, batch_size)
+#         n_jobs = dataset_utils.get_number_of_parallel_jobs()
+#
+#         while True:
+#             if self.shuffle_data_after_epoch:
+#                 # Shuffle the files
+#                 random.shuffle(self.files)
+#
+#             for i in range(0, num_batches):
+#                 # Get the files for this batch
+#                 batch_range = dataset_utils.get_batch_index_range(dataset_size, batch_size, i)
+#                 files = self.files[batch_range[0]:batch_range[1]]
+#
+#                 data = Parallel(n_jobs=n_jobs, backend='threading')(
+#                     delayed(unwrap_get_data_pair)((self, f)) for f in files)
+#
+#                 X, Y = zip(*data)
+#                 X, Y = dataset_utils.normalize_batch(np.array(X)), np.array(Y)
+#
+#                 yield X, Y

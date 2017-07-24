@@ -171,7 +171,7 @@ if __name__ == '__main__':
     num_cores = multiprocessing.cpu_count()
     n_jobs = min(32, num_cores)
 
-    Parallel(n_jobs=n_jobs, backend='threading')(
+    Parallel(n_jobs=n_jobs, backend='multiprocessing')(
         delayed(combine_mask)(
             masks_directory_path,
             category_directories,

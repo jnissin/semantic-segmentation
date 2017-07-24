@@ -144,7 +144,7 @@ def main():
     if str(res).lower() != 'y':
         exit(0)
 
-    Parallel(n_jobs=n_jobs, backend='threading')(
+    Parallel(n_jobs=n_jobs, backend='multiprocessing')(
         delayed(filter_pair)(
             threshold,
             photo_files[i],

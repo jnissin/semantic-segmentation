@@ -152,7 +152,7 @@ def main():
         if len(photo_files) != len(mask_files):
             raise ValueError('Unmatching photo and mask file dataset sizes: {} vs {}'.format(len(photo_files), len(mask_files)))
 
-        Parallel(n_jobs=n_jobs, backend='threading')(
+        Parallel(n_jobs=n_jobs, backend='multiprocessing')(
             delayed(resize_to_match)(
                 photo_files[i],
                 mask_files[i],
