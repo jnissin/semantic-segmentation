@@ -173,17 +173,20 @@ class ImageSet(object):
 
             for image_path in image_paths:
                 self._image_files.append(ImageFile(file_path=image_path))
+        else:
+            raise ValueError('The given archive path is not recognized as a tar file or a directory: {}'.format(path_to_archive))
 
         # If a file list was provided filter so that image files only contains those files
         if self._file_list is not None:
-            self._image_files = [img_file for img_file in self._image_files if img_file.file_name in self._file_list]
+            # Accelerate lookups by building a temporary set
+            file_list_set = set(self._file_list)
+            self._image_files = [img_file for img_file in self._image_files if img_file.file_name in file_list_set]
 
             # Check that the ImageFiles match to the given file set are identical if not raise an exception
             if len(self._image_files) != len(self._file_list):
 
                 image_file_names = set([f.file_name for f in self._image_files])
-                file_list_file_names = set(self._file_list)
-                diff = file_list_file_names.difference(image_file_names)
+                diff = file_list_set.difference(image_file_names)
 
                 raise ValueError('Could not satisfy the given file list, image files and file list do not match: {} vs {}. Diff: {}'
                                  .format(len(self._image_files), len(self._file_list), diff))

@@ -800,7 +800,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                          self.data_set_information.validation_set.labeled_size,
                          self.data_set_information.test_set.labeled_size))
 
-        self.log('Constructing data sets with photo files from: {} and mask files from: {}'.format(self.path_to_labeled_photos, self.path_to_labeled_masks))
+        self.log('Constructing labeled data sets with photo files from: {} and mask files from: {}'.format(self.path_to_labeled_photos, self.path_to_labeled_masks))
 
         # Labeled training set
         self.log('Constructing labeled training set')
@@ -815,7 +815,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             raise ValueError('No training data found')
 
         # Unlabeled training set
-        self.log('Constructing unlabeled training set')
+        self.log('Constructing unlabeled training set from: {}'.format(self.path_to_unlabeled_photos))
         self.training_set_unlabeled = UnlabeledImageDataSet('training_set_unlabeled',
                                                             path_to_photo_archive=self.path_to_unlabeled_photos,
                                                             photo_file_list=self.data_set_information.training_set.unlabeled_photos)
