@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sinteractive -t 00:30:00 -p gpushort --gres=gpu:teslak80:1 clear-c 4 --mem=32G
+sinteractive -t 00:30:00 -p gpushort --gres=gpu:teslak80:1 -c 4 --mem=32G
 
 module purge
 module load anaconda2
