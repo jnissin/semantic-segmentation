@@ -4,6 +4,7 @@ import os
 import json
 import random
 import datetime
+import time
 import numpy as np
 
 from PIL import ImageFile
@@ -546,33 +547,36 @@ class SegmentationTrainer(TrainerBase):
 
         # Labeled training set
         self.log('Constructing training set')
-        self.training_set = LabeledImageDataSet('training_set',
+        stime = time.time()
+        self.training_set = LabeledImageDataSet('training_set_labeled',
                                                 path_to_photo_archive=self.path_to_labeled_photos,
                                                 path_to_mask_archive=self.path_to_labeled_masks,
                                                 photo_file_list=self.data_set_information.training_set.labeled_photos,
                                                 mask_file_list=self.data_set_information.training_set.labeled_masks)
-        self.log('Labeled training set size: {}'.format(self.training_set.size))
+        self.log('Training set construction took: {} s, size: {}'.format(time.time()-stime, self.training_set.size))
 
         if self.training_set.size == 0:
             raise ValueError('No training data found')
 
         # Labeled validation set
         self.log('Constructing validation set')
+        stime = time.time()
         self.validation_set = LabeledImageDataSet('validation_set',
                                                   self.path_to_labeled_photos,
                                                   self.path_to_labeled_masks,
                                                   photo_file_list=self.data_set_information.validation_set.labeled_photos,
                                                   mask_file_list=self.data_set_information.validation_set.labeled_masks)
-        self.log('Labeled validation set size: {}'.format(self.validation_set.size))
+        self.log('Labeled validation set construction took: {} s, size: {}'.format(time.time()-stime, self.validation_set.size))
 
         # Labeled test set
         self.log('Constructing test set')
+        stime = time.time()
         self.test_set = LabeledImageDataSet('test_set',
                                             self.path_to_labeled_photos,
                                             self.path_to_labeled_masks,
                                             photo_file_list=self.data_set_information.test_set.labeled_photos,
                                             mask_file_list=self.data_set_information.test_set.labeled_masks)
-        self.log('Labeled test set size: {}'.format(self.test_set.size))
+        self.log('Labeled test set construction took: {} s, size: {}'.format(time.time()-stime, self.test_set.size))
 
         self.log('Total data set size: {}'.format(self.training_set.size + self.validation_set.size + self.test_set.size))
 
@@ -804,40 +808,44 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         # Labeled training set
         self.log('Constructing labeled training set')
+        stime = time.time()
         self.training_set_labeled = LabeledImageDataSet('training_set_labeled',
                                                         path_to_photo_archive=self.path_to_labeled_photos,
                                                         path_to_mask_archive=self.path_to_labeled_masks,
                                                         photo_file_list=self.data_set_information.training_set.labeled_photos,
                                                         mask_file_list=self.data_set_information.training_set.labeled_masks)
-        self.log('Labeled training set size: {}'.format(self.training_set_labeled.size))
+        self.log('Labeled training set construction took: {} s, size: {}'.format(time.time()-stime, self.training_set_labeled.size))
 
         if self.training_set_labeled.size == 0:
             raise ValueError('No training data found')
 
         # Unlabeled training set
         self.log('Constructing unlabeled training set from: {}'.format(self.path_to_unlabeled_photos))
+        stime = time.time()
         self.training_set_unlabeled = UnlabeledImageDataSet('training_set_unlabeled',
                                                             path_to_photo_archive=self.path_to_unlabeled_photos,
                                                             photo_file_list=self.data_set_information.training_set.unlabeled_photos)
-        self.log('Unlabeled training set size: {}'.format(self.training_set_unlabeled.size))
+        self.log('Unlabeled training set construction took: {} s, size: {}'.format(time.time()-stime, self.training_set_unlabeled.size))
 
         # Labeled validation set
         self.log('Constructing validation set')
+        stime = time.time()
         self.validation_set = LabeledImageDataSet('validation_set',
                                                   self.path_to_labeled_photos,
                                                   self.path_to_labeled_masks,
                                                   photo_file_list=self.data_set_information.validation_set.labeled_photos,
                                                   mask_file_list=self.data_set_information.validation_set.labeled_masks)
-        self.log('Labeled validation set size: {}'.format(self.validation_set.size))
+        self.log('Labeled validation set construction took: {} s, size: {}'.format(time.time()-stime, self.validation_set.size))
 
         # Labeled test set
         self.log('Constructing test set')
+        stime = time.time()
         self.test_set = LabeledImageDataSet('test_set',
                                             self.path_to_labeled_photos,
                                             self.path_to_labeled_masks,
                                             photo_file_list=self.data_set_information.test_set.labeled_photos,
                                             mask_file_list=self.data_set_information.test_set.labeled_masks)
-        self.log('Labeled test set size: {}'.format(self.test_set.size))
+        self.log('Labeled test set construction took: {} s, size: {}'.format(time.time()-stime, self.test_set.size))
 
         self.log('Total data set size: {}'
                  .format(self.training_set_labeled.size + self.training_set_unlabeled.size + self.validation_set.size + self.test_set.size))
