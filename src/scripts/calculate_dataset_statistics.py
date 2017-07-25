@@ -1,7 +1,6 @@
 # coding=utf-8
 
 import argparse
-import os
 import time
 import json
 import jsonpickle
@@ -209,6 +208,7 @@ def main():
     ap.add_argument("-c", "--categories", required=True, type=str, help="Path to materials CSV file")
     ap.add_argument("-d", "--dataset", required=False, type=str, help="Path to the data set .json file")
     ap.add_argument("-o", "--output", required=True, help="Path to the output JSON file")
+    ap.add_argument("--jobs", required=False, type=int, help="Number of jobs to use in the processing")
     args = vars(ap.parse_args())
 
     photos_path = args["photos"]
@@ -216,6 +216,7 @@ def main():
     unlabeled_path = args["unlabeled"]
     materials_path = args["categories"]
     path_to_data_set_information_file = args["dataset"]
+    jobs = args["jobs"]
     output_path = args["output"]
 
     # Without this some truncated images can throw errors
@@ -253,7 +254,11 @@ def main():
         data_set_information = dataset_utils.load_segmentation_data_set_information(path_to_data_set_information_file)
 
     num_cores = multiprocessing.cpu_count()
-    n_jobs = min(32, num_cores)
+
+    if not jobs:
+        n_jobs = min(32, num_cores)
+    else:
+        n_jobs = min(jobs, num_cores)
 
     # Calculate material statistics for all masks in the data set
     print 'Starting material statistics calculation for {} masks with {} jobs'.format(masks.size, n_jobs)
