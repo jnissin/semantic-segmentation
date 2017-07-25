@@ -393,7 +393,11 @@ class TrainerBase:
 
         try:
             # Try to find weights from the checkpoint path
-            weights_folder = os.path.dirname(weights_directory_path)
+            if os.path.isdir(weights_directory_path):
+                weights_folder = weights_directory_path
+            else:
+                weights_folder = os.path.dirname(weights_directory_path)
+
             self.log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
             weight_file_path = TrainerBase.get_latest_weights_file_path(weights_folder)
 
