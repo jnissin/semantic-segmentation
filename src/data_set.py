@@ -17,12 +17,13 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 # IMAGE FILE
 ##############################################
 
-class ImageFile(object):
+class ImageFileType(Enum):
+    NONE = -1
+    TAR = 0,
+    FILE_PATH = 1
 
-    class ImageFileType(Enum):
-        NONE = -1
-        TAR = 0,
-        FILE_PATH = 1
+
+class ImageFile(object):
 
     def __init__(self, file_path=None, tar_file=None, tar_info=None, tar_read_lock=None):
         # type: (str, TarFile, TarInfo) -> ()
@@ -53,14 +54,14 @@ class ImageFile(object):
         self._tar_read_lock = tar_read_lock
 
         self._file_name = None
-        self.type = ImageFile.ImageFileType.NONE
+        self.type = ImageFileType.NONE
 
         if tar_file is not None and tar_info is not None:
             self._file_name = os.path.basename(tar_info.name)
-            self.type = ImageFile.ImageFileType.TAR
+            self.type = ImageFileType.TAR
         elif file_path is not None:
             self._file_name = os.path.basename(file_path)
-            self.type = ImageFile.ImageFileType.FILE_PATH
+            self.type = ImageFileType.FILE_PATH
 
     def __eq__(self, other):
         if not isinstance(other, ImageFile):
@@ -111,12 +112,12 @@ class ImageFile(object):
         # Loading the data from the TAR file is not thread safe. So for each
         # image load the image data before releasing the lock. Regular files
         # can be lazy loaded, opening is enough.
-        if self.type == ImageFile.ImageFileType.TAR:
+        if self.type == ImageFileType.TAR:
             with self._tar_read_lock:
                 f = self._tar_file.extractfile(self._tar_info)
                 img = Image.open(f)
                 img.load()
-        elif self.type == ImageFile.ImageFileType.FILE_PATH:
+        elif self.type == ImageFileType.FILE_PATH:
             img = Image.open(self._file_path)
         else:
             raise ValueError('Cannot open ImageFileType: {}'.format(self.type))

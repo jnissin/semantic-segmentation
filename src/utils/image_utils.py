@@ -274,8 +274,7 @@ def np_get_random_crop_area(np_image, crop_width, crop_height):
     """
 
     if crop_width > np_image.shape[1] or crop_height > np_image.shape[0]:
-        raise ValueError('Crop dimensions are bigger than image dimensions: [{},{}] vs '
-                         .format(crop_height, crop_width, np_image.shape))
+        raise ValueError('Crop dimensions are bigger than image dimensions: [{},{}] vs '.format(crop_height, crop_width, np_image.shape))
 
     x1 = np.random.randint(0, np_image.shape[1] - crop_width + 1)
     y1 = np.random.randint(0, np_image.shape[0] - crop_height + 1)

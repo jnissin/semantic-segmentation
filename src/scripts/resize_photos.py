@@ -162,7 +162,7 @@ def main():
                 inplace=inplace) for i in range(0, len(photo_files)))
 
     elif smaller_dim is not None:
-        Parallel(n_jobs=n_jobs, backend='threading')(
+        Parallel(n_jobs=n_jobs, backend='multiprocessing')(
             delayed(resize_to_smaller_dimension)(
                 photo_files[i],
                 smaller_dim,
