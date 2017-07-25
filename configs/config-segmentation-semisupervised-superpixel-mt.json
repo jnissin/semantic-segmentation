@@ -20,7 +20,7 @@
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
-    "crop_shape": [256, 256],
+    "crop_shape": [512, 512],
 
     "num_labeled_per_batch": 1,
     "num_unlabeled_per_batch": 5,
