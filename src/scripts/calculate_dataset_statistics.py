@@ -13,7 +13,8 @@ from joblib import Parallel, delayed
 
 from ..utils import dataset_utils
 from ..utils.dataset_utils import SegmentationDataSetInformation, MaterialClassInformation
-from ..data_set import ImageSet, ImageFile
+from ..data_set import ImageSet
+from .. import data_set
 
 
 class MaterialStatistics(object):
@@ -173,7 +174,7 @@ class SetStatistics(object):
 
 
 def calculate_material_statistics(mask_img_file, materials):
-    # type: (ImageFile, list[MaterialClassInformation]) -> MaterialStatistics
+    # type: (data_set.ImageFile, list[MaterialClassInformation]) -> MaterialStatistics
 
     mask_img = mask_img_file.get_image()
     mask_img_array = img_to_array(mask_img)
@@ -190,7 +191,7 @@ def calculate_material_statistics(mask_img_file, materials):
 
 
 def calculate_photo_statistics(photo_img_file):
-    # type: (ImageFile) -> PhotoStatistics
+    # type: (data_set.ImageFile) -> PhotoStatistics
 
     photo_img = photo_img_file.get_image()
     image_name = photo_img_file.file_name
