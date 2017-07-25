@@ -264,13 +264,13 @@ def main():
     # Calculate material statistics for all masks in the data set
     print 'Starting material statistics calculation for {} masks with {} jobs'.format(masks.size, n_jobs)
     start_time = time.time()
-    mask_stats = Parallel(n_jobs=n_jobs, backend='multiprocessing')(delayed(calculate_material_statistics)(f, materials) for f in masks.image_files)
+    mask_stats = Parallel(n_jobs=n_jobs, backend='threading')(delayed(calculate_material_statistics)(f, materials) for f in masks.image_files)
     print 'Material statistics calculation of {} files finished in {} seconds'.format(len(mask_stats), time.time()-start_time)
 
     # Calculate photo statistics for all photos in the data set
     print 'Starting photo statistics calculation for {} photos with {} jobs'.format(photos.size, n_jobs)
     start_time = time.time()
-    photo_stats = Parallel(n_jobs, backend='multiprocessing')(delayed(calculate_photo_statistics)(f) for f in photos_image_files)
+    photo_stats = Parallel(n_jobs, backend='threading')(delayed(calculate_photo_statistics)(f) for f in photos_image_files)
     print 'Photo statistics calculation of {} files finished in {} seconds'.format(len(photo_stats), time.time()-start_time)
 
     data_set_materials = [m.name for m in materials]
