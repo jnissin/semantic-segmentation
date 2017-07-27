@@ -509,7 +509,7 @@ class TrainerBase:
         return {}
 
     def modify_batch_data(self, step_index, x, y, validation=False):
-        pass
+        return x, y
 
     def on_batch_end(self, batch_index):
         if self.debug:
@@ -1136,7 +1136,6 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # Returns
             :return: a tuple of (input data, output data)
         """
-        super(SemisupervisedSegmentationTrainer, self).modify_batch_data(step_index, x, y, validation)
 
         if self.lambda_loss_function_name == 'mean_teacher':
             if self.teacher_model is None:
@@ -1265,7 +1264,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
                 val_outs = self.teacher_model.evaluate_generator(
                     generator=self.teacher_validation_data_generator,
-                    steps=validation_steps_per_epoch,
+                    steps=validation_steps_per_epoch if not self.debug else self.debug_steps_per_epoch,
                     workers=dataset_utils.get_number_of_parallel_jobs(32))
 
                 val_loss = val_outs[0]
