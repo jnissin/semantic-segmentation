@@ -751,11 +751,11 @@ class SegmentationTrainer(TrainerBase):
 
         self.model.fit_generator(
             generator=self.training_data_generator,
-            steps_per_epoch=training_steps_per_epoch,
+            steps_per_epoch=training_steps_per_epoch if not self.debug else self.debug_steps_per_epoch,
             epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
             validation_data=self.validation_data_generator,
-            validation_steps=validation_steps_per_epoch,
+            validation_steps=validation_steps_per_epoch if not self.debug else self.debug_steps_per_epoch,
             verbose=1,
             callbacks=callbacks,
             trainer=self if self.debug else None,
