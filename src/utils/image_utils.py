@@ -2,6 +2,7 @@
 
 import numpy as np
 from skimage.segmentation import slic
+from scipy.misc import imresize
 
 from keras.preprocessing.image import flip_axis, apply_transform, transform_matrix_offset_center
 
@@ -149,6 +150,38 @@ def np_crop_image(np_img, x1, y1, x2, y2):
                          .format(np_img.shape, x1, y1, x2, y2))
 
     return np_img[y1:y2, x1:x2]
+
+
+def np_scale_image_with_padding(np_img, shape, cval, interp='bilinear'):
+    # type: (np.array, tuple[int], np.array, str) -> np.array
+
+    """
+    Scales the image to the desired shape filling the overflowing area with the provided constant
+    color value.
+
+    # Arguments
+        :param np_img:
+        :param shape: Desired shape
+        :param cval: The value to use for filling the pixels that possibly go over due to aspect ratio mismatch
+        :param interp: interpolation type ‘nearest’, ‘lanczos’, ‘bilinear’, ‘bicubic’ or ‘cubic’
+    # Returns
+        :return: The resized image as a numpy array
+    """
+
+    # Scale so that the bigger dimension matches
+    sfactor = float(max(shape[0], shape[1])) / float(max(np_img.shape[0], np_img.shape[1]))
+
+    # If the image's bigger dimension already matches
+    if sfactor == 1:
+        np_img_resized = np_img
+    else:
+        target_shape = (int(round(sfactor*np_img.shape[0])), int(round(sfactor*np_img.shape[1])))
+        np_img_resized = imresize(arr=np_img, size=target_shape, interp=interp)
+
+    # Pad to the final desired shape afterwards
+    np_img_resized = np_pad_image_to_shape(np_img_resized, shape=shape, cval=cval)
+
+    return np_img_resized
 
 
 def np_pad_image_to_shape(np_img, shape, cval):

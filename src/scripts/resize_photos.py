@@ -140,6 +140,14 @@ def main():
     n_jobs = min(32, num_cores)
 
     photo_files = get_files(path_to_photos, include_sub_dirs=include_sub_dirs)
+    num_all_photo_files = len(photo_files)
+
+    # Quickly filter out the existing files using sets
+    if ignore_existing:
+        existing_photo_files = get_files(path_to_output, include_sub_dirs=include_sub_dirs)
+        tmp = [os.path.join(path_to_photos, os.path.basename(f)) for f in existing_photo_files]
+        photo_files = list(set(photo_files).difference(set(tmp)))
+        print 'Skipped {} existing photo files, {} photo files remain'.format(len(existing_photo_files), len(photo_files))
 
     print 'Starting resizing process for: {} photos'.format(len(photo_files))
 
@@ -149,7 +157,7 @@ def main():
     if path_to_masks is not None:
         mask_files = get_files(path_to_masks, include_sub_dirs=include_sub_dirs)
 
-        if len(photo_files) != len(mask_files):
+        if num_all_photo_files != len(mask_files):
             raise ValueError('Unmatching photo and mask file dataset sizes: {} vs {}'.format(len(photo_files), len(mask_files)))
 
         Parallel(n_jobs=n_jobs, backend='multiprocessing')(

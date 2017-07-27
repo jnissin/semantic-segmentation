@@ -108,7 +108,6 @@ def _tf_softmax(y_pred, epsilon=None):
 
 def _tf_weighted_pixelwise_cross_entropy(softmax, y_true, class_weights):
     epsilon = _to_tensor(_EPSILON, softmax.dtype.base_dtype)
-
     xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
     xent = _tf_filter_nans(xent, epsilon)
     xent = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2, 3)))

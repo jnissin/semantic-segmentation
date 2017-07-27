@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_data_set_information_file": "data/1024/data-set-information.json",
-    "path_to_labeled_photos": "data/1024/labeled/photos.tar.gz",
-    "path_to_labeled_masks": "data/1024/labeled/masks.tar.gz",
-    "path_to_unlabeled_photos": "data/1024/unlabeled.tar.gz",
+    "path_to_data_set_information_file": "data/debug/1024/data-set-information.json",
+    "path_to_labeled_photos": "data/debug/1024/labeled/photos",
+    "path_to_labeled_masks": "data/debug/1024/labeled/masks",
+    "path_to_unlabeled_photos": "data/debug/1024/unlabeled",
 
     "log_file_path": "logs/{model_folder}/log.txt",
     "log_to_stdout": true,
@@ -16,17 +16,17 @@
 
     "loss_function": "dummy",
     "use_mean_teacher_method": true,
-    "lambda_loss_function": "mean_teacher",
+    "lambda_loss_function": "mean_teacher_superpixel",
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
-    "crop_shape": [512, 512],
+    "crop_shape": [128, 128],
     "resize_shape": null,
 
-    "num_labeled_per_batch": 5,
-    "num_unlabeled_per_batch": 0,
+    "num_labeled_per_batch": 1,
+    "num_unlabeled_per_batch": 5,
     "validation_num_labeled_per_batch": 1,
-    "validation_crop_shape": null,
+    "validation_crop_shape": [128, 128],
     "validation_resize_shape": null,
 
     "num_color_channels": 3,
@@ -59,7 +59,7 @@
     },
 
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": true,
+    "continue_from_last_checkpoint": false,
     "transfer_weights": false,
     "use_class_weights": true,
 

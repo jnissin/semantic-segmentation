@@ -24,6 +24,7 @@ from typing import Callable
 def get_labeled_segmentation_data_pair(photo_mask_pair,
                                        num_color_channels,
                                        crop_shape,
+                                       resize_shape,
                                        material_class_information,
                                        photo_cval,
                                        mask_cval,
@@ -32,7 +33,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
                                        img_data_format='channels_last',
                                        div2_constraint=4,
                                        mask_type='one_hot'):
-    # type: (tuple[ImageFile], int, tuple[int], list[MaterialClassInformation], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
+    # type: (tuple[ImageFile], int, tuple[int], tuple[int], list[MaterialClassInformation], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
 
     """
     Returns a photo mask pair for supervised segmentation training. Will apply data augmentation
@@ -44,6 +45,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
         :param photo_mask_pair: a pair of ImageFiles (photo, mask)
         :param num_color_channels: number of channels in the photos; 1, 3 or 4
         :param crop_shape: size of the crop or None if no cropping should be applied
+        :param resize_shape: size of the desired rezied images, None if no resizing should be applied
         :param material_class_information: material class information to expand the mask
         :param photo_cval: fill color value for photos [0,255]
         :param mask_cval: fill color value for masks [0,255]
@@ -76,6 +78,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
     np_photo, np_mask = process_segmentation_photo_mask_pair(np_photo=np_photo,
                                                              np_mask=np_mask,
                                                              crop_shape=crop_shape,
+                                                             resize_shape=resize_shape,
                                                              photo_cval=photo_cval,
                                                              mask_cval=mask_cval,
                                                              use_data_augmentation=use_data_augmentation,
@@ -97,12 +100,13 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
 def process_photo(photo,
                   num_color_channels,
                   crop_shape,
+                  resize_shape,
                   photo_cval,
                   use_data_augmentation=False,
                   data_augmentation_params=None,
                   img_data_format='channels_last',
                   div2_constraint=4):
-    # type: (ImageFile, int, tuple[int], np.array, np.array, bool, str, int) -> np.array
+    # type: (ImageFile, int, tuple[int], tuple[int], np.array, np.array, bool, str, int) -> np.array
 
     """
     Applies cropping and data augmentation to a single photo.
@@ -110,7 +114,8 @@ def process_photo(photo,
     # Arguments
         :param photo: the photo as ImageFile
         :param num_color_channels: number of color channels in the image
-        :param crop_shape: size of the crop or None if no cropping should be applied
+        :param crop_shape: size of the crop, or None if no cropping should be applied
+        :param resize_shape: size of the resize, or None if no resizing should be applied
         :param photo_cval: fill color value for photos [0,255]
         :param use_data_augmentation: should data augmentation be used
         :param data_augmentation_params: parameters for data augmentation
@@ -122,13 +127,17 @@ def process_photo(photo,
 
     np_photo = img_to_array(photo.get_image(color_channels=num_color_channels))
 
+    # Check whether we need to resize the photo to a constant size
+    if resize_shape is not None:
+        np_photo = image_utils.np_scale_image_with_padding(np_photo, shape=resize_shape, cval=photo_cval, interp='bilinear')
+
     # Check whether any of the image dimensions is smaller than the crop,
     # if so pad with the assigned fill colors
-    if crop_shape is not None and (np_photo.shape[1] < crop_shape[0] or np_photo.shape[0] < crop_shape[1]):
+    if crop_shape is not None and (np_photo.shape[0] < crop_shape[0] or np_photo.shape[1] < crop_shape[1]):
         # Image dimensions must be at minimum the same as the crop dimension
         # on each axis. The photo needs to be filled with the photo_cval color and masks
         # with the mask cval color
-        min_img_shape = (max(crop_shape[1], np_photo.shape[0]), max(crop_shape[0], np_photo.shape[1]))
+        min_img_shape = (max(crop_shape[0], np_photo.shape[0]), max(crop_shape[1], np_photo.shape[1]))
         np_photo = image_utils.np_pad_image_to_shape(np_photo, min_img_shape, photo_cval)
 
     # If we are using data augmentation apply the random transformation
@@ -148,7 +157,7 @@ def process_photo(photo,
                         dataset_utils.count_trailing_zeroes(crop_shape[1]) < div2_constraint:
             raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(div2_constraint))
 
-        x1y1, x2y2 = image_utils.np_get_random_crop_area(np_photo, crop_shape[0], crop_shape[1])
+        x1y1, x2y2 = image_utils.np_get_random_crop_area(np_photo, crop_shape[1], crop_shape[0])
         np_photo = image_utils.np_crop_image(np_photo, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
     else:
         # If a crop size is not given, make sure the image dimensions satisfy
@@ -169,13 +178,14 @@ def process_photo(photo,
 def process_segmentation_photo_mask_pair(np_photo,
                                          np_mask,
                                          crop_shape,
+                                         resize_shape,
                                          photo_cval,
                                          mask_cval,
                                          use_data_augmentation=False,
                                          data_augmentation_params=None,
                                          img_data_format='channels_last',
                                          div2_constraint=4):
-    # type: (np.array, np.array, tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int) -> (np.array, np.array)
+    # type: (np.array, np.array, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int) -> (np.array, np.array)
 
     """
     Applies crop and data augmentation to two numpy arrays representing the photo and
@@ -185,7 +195,8 @@ def process_segmentation_photo_mask_pair(np_photo,
     # Arguments
         :param np_photo: the photo as a numpy array
         :param np_mask: the mask as a numpy array must have same spatial dimensions (HxW) as np_photo
-        :param crop_shape: size of the crop or None if no cropping should be applied
+        :param crop_shape: size of the crop or, None if no cropping should be applied
+        :param resize_shape: size of the resized images, None if no resizing should be applied
         :param photo_cval: fill color value for photos [0,255]
         :param mask_cval: fill color value for masks [0,255]
         :param use_data_augmentation: should data augmentation be used
@@ -199,13 +210,18 @@ def process_segmentation_photo_mask_pair(np_photo,
     if np_photo.shape[:2] != np_mask.shape[:2]:
         raise ValueError('Non-matching photo and mask shapes: {} != {}'.format(np_photo.shape, np_mask.shape))
 
+    # Check whether we need to resize the photo and the mask to a constant size
+    if resize_shape is not None:
+        np_photo = image_utils.np_scale_image_with_padding(np_photo, shape=resize_shape, cval=photo_cval, interp='bilinear')
+        np_mask = image_utils.np_scale_image_with_padding(np_mask, shape=resize_shape, cval=mask_cval, interp='nearest')
+
     # Check whether any of the image dimensions is smaller than the crop,
     # if so pad with the assigned fill colors
-    if crop_shape is not None and (np_photo.shape[1] < crop_shape[0] or np_photo.shape[0] < crop_shape[1]):
+    if crop_shape is not None and (np_photo.shape[0] < crop_shape[0] or np_photo.shape[1] < crop_shape[1]):
         # Image dimensions must be at minimum the same as the crop dimension
         # on each axis. The photo needs to be filled with the photo_cval color and masks
         # with the mask cval color
-        min_img_shape = (max(crop_shape[1], np_photo.shape[0]), max(crop_shape[0], np_photo.shape[1]))
+        min_img_shape = (max(crop_shape[0], np_photo.shape[0]), max(crop_shape[1], np_photo.shape[1]))
         np_photo = image_utils.np_pad_image_to_shape(np_photo, min_img_shape, photo_cval)
         np_mask = image_utils.np_pad_image_to_shape(np_mask, min_img_shape, mask_cval)
 
@@ -234,7 +250,7 @@ def process_segmentation_photo_mask_pair(np_photo,
         attempts = 5
 
         while attempts > 0:
-            x1y1, x2y2 = image_utils.np_get_random_crop_area(np_mask, crop_shape[0], crop_shape[1])
+            x1y1, x2y2 = image_utils.np_get_random_crop_area(np_mask, crop_shape[1], crop_shape[0])
             mask_crop = image_utils.np_crop_image(np_mask, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
 
             # If the mask crop is only background (all R channel is zero) - try another crop
@@ -261,12 +277,6 @@ def process_segmentation_photo_mask_pair(np_photo,
         np_mask = image_utils.np_pad_image_to_shape(np_mask, padded_shape, mask_cval)
 
     return np_photo, np_mask
-
-
-# Workaround to make the calls to label generation pickable
-def _generate_labels_for_unlabeled_photo(np_photo, func):
-    # type: (np.array[float32], Callable[[np.array[float32]], np.array]) -> np.array
-    return func(np_photo)
 
 
 #######################################
@@ -324,6 +334,8 @@ class DataGeneratorParameters(object):
                  material_class_information,
                  num_color_channels,
                  random_seed=None,
+                 crop_shape=None,
+                 resize_shape=None,
                  use_per_channel_mean_normalization=True,
                  per_channel_mean=None,
                  use_per_channel_stddev_normalization=True,
@@ -337,6 +349,8 @@ class DataGeneratorParameters(object):
         self.material_class_information = material_class_information
         self.num_color_channels = num_color_channels
         self.random_seed = random_seed
+        self.crop_shape = crop_shape
+        self.resize_shape = resize_shape
         self.use_per_channel_mean_normalization = use_per_channel_mean_normalization
         self.per_channel_mean = per_channel_mean
         self.use_per_channel_stddev_normalization = use_per_channel_stddev_normalization
@@ -425,6 +439,8 @@ class DataGenerator(object):
         self.material_class_information = params.material_class_information
         self.num_color_channels = params.num_color_channels
         self.random_seed = params.random_seed
+        self.crop_shape = params.crop_shape
+        self.resize_shape = params.resize_shape
         self.use_per_channel_mean_normalization = params.use_per_channel_mean_normalization
         self.per_channel_mean = params.per_channel_mean
         self.use_per_channel_stddev_normalization = params.use_per_channel_stddev_normalization
@@ -529,20 +545,18 @@ class SegmentationDataGenerator(DataGenerator):
     of matching image segmentation mask pairs.
     """
 
-    def __init__(self, labeled_data_set, num_labeled_per_batch, params, crop_shape):
-        # type: (LabeledImageDataSet, int, DataGeneratorParameters, tuple[int]) -> ()
+    def __init__(self, labeled_data_set, num_labeled_per_batch, params):
+        # type: (LabeledImageDataSet, int, DataGeneratorParameters) -> ()
 
         """
         # Arguments
             :param labeled_data_set: LabeledImageDataSet instance of the data
             :param num_labeled_per_batch: number of labeled data set samples per batch
             :param params: DataGeneratorParams instance for parameters
-            :param crop_shape: the crop shape
         """
 
         self.labeled_data_set = labeled_data_set
         self.num_labeled_per_batch = num_labeled_per_batch
-        self.crop_shape = crop_shape
 
         super(SegmentationDataGenerator, self).__init__(params)
 
@@ -604,6 +618,7 @@ class SegmentationDataGenerator(DataGenerator):
                 photo_mask_pair=photo_mask_pair,
                 num_color_channels=self.num_color_channels,
                 crop_shape=self.crop_shape,
+                resize_shape=self.resize_shape,
                 material_class_information=self.material_class_information,
                 photo_cval=self.photo_cval,
                 mask_cval=self.mask_cval,
@@ -639,9 +654,8 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                  num_labeled_per_batch,
                  num_unlabeled_per_batch,
                  params,
-                 crop_shape=None,
                  label_generation_function=None):
-        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, tuple[int], Callable[[np.array[np.float32]], np.array]) -> ()
+        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, Callable[[np.array[np.float32]], np.array]) -> ()
 
         """
         # Arguments
@@ -649,8 +663,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             :param unlabeled_data_set:
             :param num_labeled_per_batch: number of labeled images per batch
             :param num_unlabeled_per_batch: number of unlabeled images per batch
-            :param params:
-            :param crop_shape: crop size of the images (WxH)
+            :param params: DataGeneratorParameters object
             :param label_generation_function:
         """
 
@@ -659,7 +672,6 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         self.num_labeled_per_batch = num_labeled_per_batch
         self.num_unlabeled_per_batch = num_unlabeled_per_batch
-        self.crop_shape = crop_shape
 
         super(SemisupervisedSegmentationDataGenerator, self).__init__(params)
 
@@ -751,6 +763,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 photo_mask_pair=photo_mask_pair,
                 num_color_channels=self.num_color_channels,
                 crop_shape=self.crop_shape,
+                resize_shape=self.resize_shape,
                 material_class_information=self.material_class_information,
                 photo_cval=self.photo_cval,
                 mask_cval=self.mask_cval,
@@ -786,6 +799,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             photo=photo,
             num_color_channels=self.num_color_channels,
             crop_shape=self.crop_shape,
+            resize_shape=self.resize_shape,
             photo_cval=self.photo_cval,
             use_data_augmentation=self.use_data_augmentation,
             data_augmentation_params=self.data_augmentation_params,
@@ -794,7 +808,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         # In parallel: Generate segmentation masks for the unlabeled photos
         # Note: cropping and augmentation already applied, but channels not normalized
-        Y_unlabeled = [_generate_labels_for_unlabeled_photo(np_photo, self.label_generation_function) for np_photo in X_unlabeled]
+        Y_unlabeled = [self.label_generation_function(np_photo) for np_photo in X_unlabeled]
 
         return list(X_unlabeled), list(Y_unlabeled)
 

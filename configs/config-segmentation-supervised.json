@@ -21,11 +21,13 @@
     "num_epochs": 100,
     "input_shape": [null, null, 3],
     "crop_shape": [512, 512],
+    "resize_shape": null,
 
     "num_labeled_per_batch": 5,
     "num_unlabeled_per_batch": 0,
     "validation_num_labeled_per_batch": 1,
     "validation_crop_shape": null,
+    "validation_resize_shape": null,
 
     "num_color_channels": 3,
     "random_seed": 14874,

@@ -94,6 +94,7 @@ def main():
     ap.add_argument('-m', '--model', required=True, type=str, help='Name of the neural network model to use')
     ap.add_argument('-f', '--mfolder', required=True, type=str, help='Name of the model folder')
     ap.add_argument('-w', '--wdir', required=False, type=str, help="Path to working directory")
+    ap.add_argument('-d', '--debug', required=False, type=str, help="Path to debug output")
     args = vars(ap.parse_args())
 
     trainer_type = args['trainer']
@@ -101,20 +102,26 @@ def main():
     wdir_path = args['wdir']
     model_name = args['model']
     model_folder_name = args['mfolder']
+    debug = args['debug']
 
     if wdir_path:
         print 'Setting working directory to: {}'.format(wdir_path)
         os.chdir(wdir_path)
 
+    if debug:
+        print 'Running in debug mode, output will be saved to: {}'.format(debug)
+
     if trainer_type == 'segmentation':
         trainer = SegmentationTrainer(model_name=model_name,
                                       model_folder_name=model_folder_name,
-                                      config_file_path=trainer_config_file_path)
+                                      config_file_path=trainer_config_file_path,
+                                      debug=debug)
         trainer.train()
     elif trainer_type == 'semisupervised-segmentation':
         trainer = SemisupervisedSegmentationTrainer(model_name=model_name,
                                                     model_folder_name=model_folder_name,
                                                     config_file_path=trainer_config_file_path,
+                                                    debug=debug,
                                                     label_generation_function=label_generation_function,
                                                     consistency_cost_coefficient_function=consistency_coefficient_function,
                                                     ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,
