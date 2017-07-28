@@ -46,7 +46,7 @@ def ema_smoothing_coefficient_function(step_idx):
     """
 
     # Original paper: 40 000
-    if step_idx < 12000:
+    if step_idx < 10000:
         a = 0.999
     else:
         a = 0.99
@@ -69,7 +69,7 @@ def consistency_coefficient_function(step_idx):
     # type: (int) -> float
     # How many steps for the ramp up period
     # Original paper: 40 000
-    ramp_up_period = 12000.0
+    ramp_up_period = 10000.0
 
     # x exists [0,1]
     x = float(step_idx)/ramp_up_period

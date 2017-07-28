@@ -1059,7 +1059,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 self.log('Loading latest teacher model weights from path: {}'.format(self.teacher_weights_directory_path))
                 initial_teacher_epoch = self.load_latest_weights_for_model(self.teacher_model, self.teacher_weights_directory_path)
 
-                if initial_teacher_epoch == 0:
+                if initial_teacher_epoch < 1:
                     self.log('Could not find suitable weights, initializing teacher with student model weights')
                     self.teacher_model.set_weights(self.model.get_weights())
             else:
