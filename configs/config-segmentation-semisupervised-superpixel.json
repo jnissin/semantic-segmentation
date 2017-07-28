@@ -27,7 +27,7 @@
     "num_unlabeled_per_batch": 20,
     "validation_num_labeled_per_batch": 5,
     "validation_crop_shape": null,
-    "validation_resize_shape": [768, 768],
+    "validation_resize_shape": [640, 640],
 
     "num_color_channels": 3,
     "random_seed": 14874,
