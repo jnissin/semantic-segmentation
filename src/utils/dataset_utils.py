@@ -257,7 +257,7 @@ def calculate_per_channel_mean(image_files, num_channels, verbose=False):
     # Parallelize per-channel sum calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+    data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_calculate_per_channel_mean)(image_file, num_channels, verbose) for image_file in image_files)
 
     # Calculate the final value
@@ -325,7 +325,7 @@ def calculate_per_channel_stddev(image_files, per_channel_mean, num_channels, ve
     # Parallelize per-channel variance calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+    data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_calculate_per_channel_stddev)(
             image_file, per_channel_mean, num_channels, verbose) for image_file in image_files)
 
@@ -393,7 +393,7 @@ def calculate_median_frequency_balancing_weights(image_files, material_class_inf
 
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+    data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_calculate_mask_class_frequencies)(
             image_file, material_class_information) for image_file in image_files)
     data = zip(*data)
