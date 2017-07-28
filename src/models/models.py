@@ -857,7 +857,7 @@ class ENetMaxUnpooling(ModelBase):
             lambda_loss_function=lambda_loss_function)
 
     def _build_model(self, inputs):
-        enet = ENetMaxUnpooling.encoder_build(inputs)
+        enet, pooling_indices = ENetMaxUnpooling.encoder_build(inputs)
 
         if self.encoder_only:
             # In order to avoid increasing the number of variables with a huge dense layer
@@ -869,7 +869,7 @@ class ENetMaxUnpooling(ModelBase):
             enet = Flatten(name='flatten')(enet)
             enet = Dense(self.num_classes, activation='softmax', name='fc1')(enet)
         else:
-            enet = ENetMaxUnpooling.decoder_build(enet, nc=self.num_classes)
+            enet = ENetMaxUnpooling.decoder_build(enet, index_stack=pooling_indices, nc=self.num_classes)
 
         return [enet]
 
