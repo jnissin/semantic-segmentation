@@ -1386,10 +1386,11 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             # Don't crash here, too much effort done - save with a different name to the same path as
             # the student model
             if teacher_model_checkpoint_file_path is None:
-                self.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to student directory')
-                teacher_model_checkpoint_file_path = self.get_config_value('keras_model_checkpoint_file_path') + file_extension
+                self.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to teacher folder under student directory')
+                file_name_format = os.path.basename(self.get_config_value('keras_model_checkpoint_file_path'))
+                teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.weights_directory_path, 'teacher/'), file_name_format)
 
-            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss)
+            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
 
             # Make sure the directory exists
             TrainerBase._create_path_if_not_existing(file_path)
