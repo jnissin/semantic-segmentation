@@ -783,7 +783,7 @@ class SegmentationTrainer(TrainerBase):
             verbose=1,
             callbacks=callbacks,
             trainer=self if self.debug else None,
-            workers=dataset_utils.get_number_of_parallel_jobs(32))
+            workers=dataset_utils.get_number_of_parallel_jobs())
 
         if self.debug:
             self.log('Saving debug data to: {}'.format(self.debug))
@@ -1172,7 +1172,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             verbose=1,
             trainer=self,
             callbacks=callbacks,
-            workers=dataset_utils.get_number_of_parallel_jobs(32))
+            workers=dataset_utils.get_number_of_parallel_jobs())
 
         if self.debug:
             self.log('Saving debug data to: {}'.format(self.debug))
@@ -1357,7 +1357,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 val_outs = self.teacher_model.evaluate_generator(
                     generator=self.teacher_validation_data_generator,
                     steps=validation_steps_per_epoch if not self.debug else self.debug_steps_per_epoch,
-                    workers=dataset_utils.get_number_of_parallel_jobs(32))
+                    workers=dataset_utils.get_number_of_parallel_jobs())
 
                 val_loss = val_outs[0]
                 self.log('\nEpoch {}: Mean teacher validation loss {}'.format(epoch_index, val_loss))

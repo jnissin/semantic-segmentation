@@ -13,6 +13,7 @@ from joblib import Parallel, delayed
 from keras.preprocessing.image import load_img, img_to_array
 
 import image_utils
+from .. import settings
 from ..data_set import ImageFile
 
 ##############################################
@@ -159,18 +160,23 @@ def load_material_class_information(material_labels_file_path):
     return materials
 
 
-def get_number_of_parallel_jobs(max=32):
+def get_number_of_parallel_jobs(override_max=None):
     """
     Returns the optimal number of parallel jobs by inspecting the available CPU
     count.
 
     # Arguments
-        :param max: maximum number of jobs
+        :param override_max: maximum number of jobs which overrides the number in settings, None if settings max used
     # Returns
         :return: number of jobs that scales well for the platform
     """
     num_cores = multiprocessing.cpu_count()
-    n_jobs = min(max, num_cores)
+
+    if override_max is None:
+        n_jobs = min(num_cores, settings.MAX_NUMBER_OF_JOBS)
+    else:
+        n_jobs = min(num_cores, override_max)
+
     return n_jobs
 
 

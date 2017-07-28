@@ -6,10 +6,12 @@ import numpy as np
 import signal
 import sys
 
+import settings
 from trainers import SegmentationTrainer, SemisupervisedSegmentationTrainer, TrainerBase
 from utils import image_utils
 
 early_exit_signal_handler_called = False
+
 
 def get_signal_handler(trainer):
     # type: (TrainerBase) -> ()
@@ -120,6 +122,7 @@ def main():
     ap.add_argument('-f', '--mfolder', required=True, type=str, help='Name of the model folder')
     ap.add_argument('-w', '--wdir', required=False, type=str, help="Path to working directory")
     ap.add_argument('-d', '--debug', required=False, type=str, help="Path to debug output")
+    ap.add_argument('--maxjobs', required=False, type=int, help="Maximum number of parallel jobs (threads/processes)")
     args = vars(ap.parse_args())
 
     trainer_type = args['trainer']
@@ -127,11 +130,16 @@ def main():
     wdir_path = args['wdir']
     model_name = args['model']
     model_folder_name = args['mfolder']
+    max_jobs = args['maxjobs']
     debug = args['debug']
 
     if wdir_path:
         print 'Setting working directory to: {}'.format(wdir_path)
         os.chdir(wdir_path)
+
+    if max_jobs:
+        print 'Setting maximum number of parallel jobs to: {}'.format(max_jobs)
+        settings.MAX_NUMBER_OF_JOBS = max_jobs
 
     if debug:
         print 'Running in debug mode, output will be saved to: {}'.format(debug)
