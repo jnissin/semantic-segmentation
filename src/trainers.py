@@ -760,6 +760,7 @@ class SegmentationTrainer(TrainerBase):
         # Labeled data set size determines the epochs
         training_steps_per_epoch = dataset_utils.get_number_of_batches(self.training_set.size, self.batch_size)
         validation_steps_per_epoch = dataset_utils.get_number_of_batches(self.validation_set.size, self.validation_batch_size)
+        num_workers = dataset_utils.get_number_of_parallel_jobs()
 
         self.log('Num epochs: {}, initial epoch: {}, batch size: {}, crop shape: {}, training steps per epoch: {}, '
                  'validation steps per epoch: {}'
@@ -769,6 +770,8 @@ class SegmentationTrainer(TrainerBase):
                          self.crop_shape,
                          training_steps_per_epoch,
                          validation_steps_per_epoch))
+
+        self.log('Num workers: {}'.format(num_workers))
 
         # Get a list of callbacks
         callbacks = self.get_callbacks()
@@ -783,7 +786,7 @@ class SegmentationTrainer(TrainerBase):
             verbose=1,
             callbacks=callbacks,
             trainer=self if self.debug else None,
-            workers=dataset_utils.get_number_of_parallel_jobs())
+            workers=num_workers)
 
         if self.debug:
             self.log('Saving debug data to: {}'.format(self.debug))
@@ -1147,12 +1150,15 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         total_batch_size = self.num_labeled_per_batch + self.num_unlabeled_per_batch
         training_steps_per_epoch = dataset_utils.get_number_of_batches(self.training_set_labeled.size, self.num_labeled_per_batch)
         validation_steps_per_epoch = dataset_utils.get_number_of_batches(self.validation_set.size, self.validation_num_labeled_per_batch)
+        num_workers = dataset_utils.get_number_of_parallel_jobs()
 
         self.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
                  .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
 
         self.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
                  .format(self.num_epochs, self.initial_epoch, total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
+
+        self.log('Num workers: {}'.format(num_workers))
 
         # Get a list of callbacks
         callbacks = self.get_callbacks()
@@ -1173,7 +1179,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             verbose=1,
             trainer=self,
             callbacks=callbacks,
-            workers=dataset_utils.get_number_of_parallel_jobs())
+            workers=num_workers)
 
         if self.debug:
             self.log('Saving debug data to: {}'.format(self.debug))

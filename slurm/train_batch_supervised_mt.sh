@@ -13,4 +13,4 @@ module load anaconda2
 source activate semantic-segmentation
 module load CUDA/8.0.61 cudnn/5.1-CUDA-7.5
 
-srun python -m src.train --model enet-naive-upsampling --mfolder enet-naive-upsampling-supervised-mt --trainer semisupervised-segmentation --config ./configs/config-segmentation-supervised-mt.json --wdir /scratch/work/jhnissin/semantic-segmentation/
+srun python -m src.train --model enet-naive-upsampling --mfolder enet-naive-upsampling-supervised-mt --trainer semisupervised-segmentation --config ./configs/config-segmentation-supervised-mt.json --wdir /scratch/work/jhnissin/semantic-segmentation/ --maxjobs 4
