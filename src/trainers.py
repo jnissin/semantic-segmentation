@@ -719,9 +719,9 @@ class SegmentationTrainer(TrainerBase):
             crop_shape=self.crop_shape,
             resize_shape=self.resize_shape,
             use_per_channel_mean_normalization=True,
-            per_channel_mean=self.data_set_information.per_channel_mean,
+            per_channel_mean=self.data_set_information.labeled_per_channel_mean,
             use_per_channel_stddev_normalization=True,
-            per_channel_stddev=self.data_set_information.per_channel_stddev,
+            per_channel_stddev=self.data_set_information.labeled_per_channel_stddev,
             use_data_augmentation=self.use_data_augmentation,
             data_augmentation_params=self.data_augmentation_parameters,
             shuffle_data_after_epoch=True)
@@ -1072,9 +1072,9 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             crop_shape=self.crop_shape,
             resize_shape=self.resize_shape,
             use_per_channel_mean_normalization=True,
-            per_channel_mean=self.data_set_information.per_channel_mean,
+            per_channel_mean=self.data_set_information.per_channel_mean if self.num_unlabeled_per_batch > 0 else self.data_set_information.labeled_per_channel_mean,
             use_per_channel_stddev_normalization=True,
-            per_channel_stddev=self.data_set_information.per_channel_mean,
+            per_channel_stddev=self.data_set_information.per_channel_mean if self.num_unlabeled_per_batch > 0 else self.data_set_information.labeled_per_channel_stddev,
             use_data_augmentation=self.use_data_augmentation,
             data_augmentation_params=self.data_augmentation_parameters,
             shuffle_data_after_epoch=True)
