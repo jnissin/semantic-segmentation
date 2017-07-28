@@ -602,7 +602,6 @@ def mean_teacher_superpixel_lambda_loss(class_weights=None):
         consistency_cost = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient[0])
         #consistency_cost = K.tf.Print(consistency_cost, [consistency_cost], message="mt loss: ", summarize=24)
 
-
         # Total cost
         total_costs = classification_costs + unlabeled_classification_cost + consistency_cost
         return total_costs

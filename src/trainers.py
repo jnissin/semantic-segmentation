@@ -422,7 +422,7 @@ class TrainerBase:
             weight_files.sort()
             weight_file = weight_files[-1]
 
-            if os.path.isfile(os.path.join(weights_folder_path, weight_file)) and weight_file.endswith(".hdf5"):
+            if os.path.isfile(os.path.join(weights_folder_path, weight_file)) and (".hdf5" in weight_file):
                 return os.path.join(weights_folder_path, weight_file)
 
         return None
