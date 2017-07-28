@@ -4,7 +4,6 @@ import argparse
 import os
 import time
 import json
-import multiprocessing
 import numpy as np
 
 from keras.preprocessing.image import list_pictures, load_img, img_to_array
@@ -88,8 +87,7 @@ def main():
     masks = list_pictures(masks_path)
     print 'Found {} mask images'.format(len(masks))
 
-    num_cores = multiprocessing.cpu_count()
-    n_jobs = min(32, num_cores)
+    n_jobs = dataset_utils.get_number_of_parallel_jobs()
 
     print 'Starting per-image material statistics calculation with {} jobs'.format(n_jobs)
 

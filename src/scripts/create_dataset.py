@@ -116,7 +116,7 @@ def main():
 
         print 'Starting labeled only per-channel stddev calculation for {} labeled photos with {} jobs'.format(len(training_labeled_photos), n_jobs)
         start_time = time.time()
-        labeled_per_channel_stddev = dataset_utils.calculate_per_channel_stddev(training_labeled_photos, labeled_per_channel_mean, 3)
+        labeled_per_channel_stddev = dataset_utils.calculate_per_channel_stddev(training_labeled_photos, labeled_per_channel_mean, 3).tolist()
         print 'Labeled only per-channel stddev calculation for {} files finished in {} seconds'.format(len(training_labeled_photos), time.time()-start_time)
 
         # Median frequency balancing weights

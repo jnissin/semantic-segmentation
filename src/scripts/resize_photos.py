@@ -5,12 +5,13 @@ This script resizes all the photos to match the mask sizes or a given smaller di
 """
 
 import os
-import multiprocessing
 import time
 import argparse
 
 from PIL import Image, ImageFile
 from joblib import Parallel, delayed
+
+from ..utils import dataset_utils
 
 
 def get_files(path, ignore_hidden_files=True, include_sub_dirs=False):
@@ -136,9 +137,6 @@ def main():
     resampling = Image.NEAREST if resampling.lower() == 'nearest' else Image.ANTIALIAS
     print 'Using anti-alias for resampling: {}'.format(resampling == Image.ANTIALIAS)
 
-    num_cores = multiprocessing.cpu_count()
-    n_jobs = min(32, num_cores)
-
     photo_files = get_files(path_to_photos, include_sub_dirs=include_sub_dirs)
     num_all_photo_files = len(photo_files)
 
@@ -160,7 +158,7 @@ def main():
         if num_all_photo_files != len(mask_files):
             raise ValueError('Unmatching photo and mask file dataset sizes: {} vs {}'.format(len(photo_files), len(mask_files)))
 
-        Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+        Parallel(n_jobs=dataset_utils.get_number_of_parallel_jobs(), backend='multiprocessing')(
             delayed(resize_to_match)(
                 photo_files[i],
                 mask_files[i],
@@ -170,7 +168,7 @@ def main():
                 inplace=inplace) for i in range(0, len(photo_files)))
 
     elif smaller_dim is not None:
-        Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+        Parallel(n_jobs=dataset_utils.get_number_of_parallel_jobs(), backend='multiprocessing')(
             delayed(resize_to_smaller_dimension)(
                 photo_files[i],
                 smaller_dim,

@@ -618,7 +618,7 @@ class ENetNaiveUpsampling(ModelBase):
                            downsample=False,
                            dropout_rate=0.1):
 
-        internal = output / internal_scale
+        internal = output // internal_scale
         encoder = inp
 
         """
@@ -794,19 +794,19 @@ class ENetNaiveUpsampling(ModelBase):
 
             other = BatchNormalization(momentum=0.1, name='{}_other_bnorm_1'.format(name_prefix))(other)
 
-            if upsample and reverse_module:
+            if upsample and reverse_module is not False:
                 other = UpSampling2D(size=(2, 2), name='{}_other_usample2d'.format(name_prefix))(other)
 
-        if not upsample or reverse_module:
-            x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
+        if upsample and reverse_module is False:
+            decoder = x
         else:
-            return x
+            x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
 
-        """
-        Merge branches
-        """
-        decoder = add([x, other], name='{}_add'.format(name_prefix))
-        decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
+            """
+            Merge branches
+            """
+            decoder = add([x, other], name='{}_add'.format(name_prefix))
+            decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
 
         return decoder
 
@@ -895,7 +895,7 @@ class ENetMaxUnpooling(ModelBase):
                            downsample=False,
                            dropout_rate=0.1):
 
-        internal = output / internal_scale
+        internal = output // internal_scale
         encoder = inp
 
         """
@@ -1080,20 +1080,20 @@ class ENetMaxUnpooling(ModelBase):
 
             other = BatchNormalization(momentum=0.1, name='{}_other_bnorm_1'.format(name_prefix))(other)
 
-            if upsample:
+            if upsample and reverse_module is not False:
                 mpool = MaxUnpooling2D(name='{}_other_unpool2d'.format(name_prefix))
                 other = mpool([other, reverse_module])
 
         if upsample and reverse_module is False:
-            return x
+            decoder = x
         else:
             x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
 
-        """
-        Merge branches
-        """
-        decoder = add([x, other], name='{}_add'.format(name_prefix))
-        decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
+            """
+            Merge branches
+            """
+            decoder = add([x, other], name='{}_add'.format(name_prefix))
+            decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
 
         return decoder
 

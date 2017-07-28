@@ -813,12 +813,13 @@ class SegmentationTrainer(TrainerBase):
         self.log('Early exit handler complete - ready for exit')
 
     def save_model_weights(self, epoch_index, val_loss, file_extension=''):
-        file_path = self.weights_directory_path.format(epoch=epoch_index, val_loss=val_loss) + file_extension
+        file_path = self.get_config_value('keras_model_checkpoint_file_path')\
+                        .format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
 
         # Make sure the directory exists
         TrainerBase._create_path_if_not_existing(file_path)
 
-        self.log('Saving student model weights to file: {}'.format(file_path))
+        self.log('Saving model weights to file: {}'.format(file_path))
         self.model.save_weights(file_path, overwrite=True)
 
 
@@ -1367,7 +1368,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             self.save_teacher_model_weights(epoch_index=epoch_index, val_loss=val_loss)
 
     def save_student_model_weights(self, epoch_index, val_loss, file_extension='.student'):
-        file_path = self.weights_directory_path.format(epoch=epoch_index, val_loss=val_loss) + file_extension
+        file_path = self.get_config_value('keras_model_checkpoint_file_path')\
+                        .format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
 
         # Make sure the directory exists
         TrainerBase._create_path_if_not_existing(file_path)

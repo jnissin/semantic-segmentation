@@ -20,10 +20,10 @@
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
-    "crop_shape": [512, 512],
+    "crop_shape": [384, 384],
     "resize_shape": null,
 
-    "num_labeled_per_batch": 4,
+    "num_labeled_per_batch": 5,
     "num_unlabeled_per_batch": 20,
     "validation_num_labeled_per_batch": 5,
     "validation_crop_shape": null,
@@ -36,7 +36,7 @@
       "name": "adam",
       "learning_rate": 5e-3,
       "momentum": 0.9,
-      "decay": 2e-5
+      "decay": 2e-4
     },
 
     "use_data_augmentation": true,
