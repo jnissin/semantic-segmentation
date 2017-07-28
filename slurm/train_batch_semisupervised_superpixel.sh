@@ -3,7 +3,7 @@
 #Request 1 Tesla K80 gpu(s) and 4 CPU(s) for 2 day(s)
 #SBATCH --gres=gpu:teslak80:1
 #SBATCH -p gpu
-#SBATCH --mem 32G
+#SBATCH --mem 16G
 #SBATCH -c 4
 #SBATCH -t 02-00:00:00
 #SBATCH -D /scratch/work/jhnissin/semantic-segmentation/
