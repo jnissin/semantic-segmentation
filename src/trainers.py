@@ -679,7 +679,6 @@ class SegmentationTrainer(TrainerBase):
 
         if self.continue_from_last_checkpoint:
             self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
-            self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
 
         if self.use_transfer_weights:
             if self.initial_epoch != 0:
@@ -895,6 +894,11 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
         self.loss_function_name = self.get_config_value('loss_function')
 
+        self.teacher_weights_directory_path = ""
+
+        if self.use_mean_teacher_method:
+            self.teacher_weights_directory_path = os.path.dirname(self.get_config_value('teacher_model_checkpoint_file_path')).format(model_folder=self.model_folder_name)
+
         self.use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
         self.num_color_channels = self.get_config_value('num_color_channels')
         self.random_seed = self.get_config_value('random_seed')
@@ -1046,7 +1050,16 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, ModelType.NORMAL)
             self.teacher_model = self.teacher_model_wrapper.model
             self.teacher_model.summary()
-            self.teacher_model.set_weights(self.model.get_weights())
+
+            if self.continue_from_last_checkpoint:
+                self.log('Loading latest teacher model weights from path: {}'.format(self.teacher_weights_directory_path))
+                initial_teacher_epoch = self.load_latest_weights_for_model(self.teacher_model, self.teacher_weights_directory_path)
+
+                if initial_teacher_epoch == 0:
+                    self.log('Could not find suitable weights, initializing teacher with student model weights')
+                    self.teacher_model.set_weights(self.model.get_weights())
+            else:
+                self.teacher_model.set_weights(self.model.get_weights())
 
             teacher_class_weights = self.class_weights if self.use_class_weights else None
 
