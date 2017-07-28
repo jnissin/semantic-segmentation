@@ -67,7 +67,9 @@ class SegmentationDataSetInformation(object):
                  random_seed,
                  per_channel_mean=[],
                  per_channel_stddev=[],
-                 class_weights=[]):
+                 class_weights=[],
+                 labeled_per_channel_mean=[],
+                 labeled_per_channel_stddev=[]):
         # type: (SegmentationTrainingSetInformation, SegmentationSetInformation, SegmentationSetInformation, int, list[float], list[float], list[float], list[float]) -> ()
 
         self.training_set = training_set
@@ -78,6 +80,9 @@ class SegmentationDataSetInformation(object):
         self.per_channel_mean = per_channel_mean
         self.per_channel_stddev = per_channel_stddev
         self.class_weights = class_weights
+
+        self.labeled_per_channel_mean = labeled_per_channel_mean
+        self.labeled_per_channel_stddev = labeled_per_channel_stddev
 
 
 ##############################################

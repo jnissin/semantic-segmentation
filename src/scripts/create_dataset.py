@@ -86,6 +86,8 @@ def main():
     per_channel_mean = []
     per_channel_stddev = []
     class_weights = []
+    labeled_per_channel_mean = []
+    labeled_per_channel_stddev = []
 
     if calculate_statistics:
         print 'Starting statistics calculation for the training set'
@@ -106,6 +108,18 @@ def main():
         per_channel_stddev = dataset_utils.calculate_per_channel_stddev(if_photos, per_channel_mean, 3, verbose=True).tolist()
         print 'Per-channel stddev calculation for {} files finished in {} seconds'.format(len(if_photos), time.time()-start_time)
 
+        # Separate statistics for labeled only photos
+        print 'Starting labeled only per-channel mean calculation for {} labeled photos with {} jobs'.format(len(training_labeled_photos), n_jobs)
+        start_time = time.time()
+        labeled_per_channel_mean = dataset_utils.calculate_per_channel_mean(training_labeled_photos, 3, verbose=True).tolist()
+        print 'Labeled only per-channel mean calculation for {} files finished in {} seconds'.format(len(training_labeled_photos), time.time()-start_time)
+
+        print 'Starting labeled only per-channel stddev calculation for {} labeled photos with {} jobs'.format(len(training_labeled_photos), n_jobs)
+        start_time = time.time()
+        labeled_per_channel_stddev = dataset_utils.calculate_per_channel_stddev(training_labeled_photos, labeled_per_channel_mean, 3)
+        print 'Labeled only per-channel stddev calculation for {} files finished in {} seconds'.format(len(training_labeled_photos), time.time()-start_time)
+
+        # Median frequency balancing weights
         print 'Starting median frequency balancing weights calculation for {} masks with {} jobs'.format(len(if_masks), n_jobs)
         start_time = time.time()
         class_weights = dataset_utils.calculate_median_frequency_balancing_weights(if_masks, material_class_information=materials).tolist()
@@ -117,7 +131,9 @@ def main():
                                               rseed,
                                               per_channel_mean,
                                               per_channel_stddev,
-                                              class_weights)
+                                              class_weights,
+                                              labeled_per_channel_mean,
+                                              labeled_per_channel_stddev)
 
     json_str = jsonpickle.encode(data_set)
 
