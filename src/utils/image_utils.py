@@ -2,9 +2,8 @@
 
 import numpy as np
 from skimage.segmentation import slic
-from scipy.misc import imresize
 
-from keras.preprocessing.image import flip_axis, apply_transform, transform_matrix_offset_center
+from keras.preprocessing.image import array_to_img, img_to_array, flip_axis, apply_transform, transform_matrix_offset_center
 
 
 def np_apply_random_transform(images,
@@ -176,7 +175,12 @@ def np_scale_image_with_padding(np_img, shape, cval, interp='bilinear'):
         np_img_resized = np_img
     else:
         target_shape = (int(round(sfactor*np_img.shape[0])), int(round(sfactor*np_img.shape[1])))
-        np_img_resized = imresize(arr=np_img, size=target_shape, interp=interp)
+
+        # Do the resizing using PIL because scipy/numpy lacks interpolation
+        pil_img = array_to_img(np_img)
+        func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
+        pil_img = pil_img.resize(size=(target_shape[1], target_shape[0]), resample=func[interp])
+        np_img_resized = img_to_array(pil_img)
 
     # Pad to the final desired shape afterwards
     np_img_resized = np_pad_image_to_shape(np_img_resized, shape=shape, cval=cval)

@@ -3,9 +3,32 @@
 import argparse
 import os
 import numpy as np
+import signal
+import sys
 
-from trainers import SegmentationTrainer, SemisupervisedSegmentationTrainer
+from trainers import SegmentationTrainer, SemisupervisedSegmentationTrainer, TrainerBase
 from utils import image_utils
+
+early_exit_signal_handler_called = False
+
+def get_signal_handler(trainer):
+    # type: (TrainerBase) -> ()
+
+    def signal_handler(signal, frame):
+        global early_exit_signal_handler_called
+
+        if not early_exit_signal_handler_called:
+
+            early_exit_signal_handler_called = True
+
+            if trainer is not None:
+                trainer.handle_early_exit()
+            else:
+                print 'No trainer present, exiting'
+
+            sys.exit(0)
+
+    return signal_handler
 
 
 def ema_smoothing_coefficient_function(step_idx):
@@ -20,7 +43,8 @@ def ema_smoothing_coefficient_function(step_idx):
         :return: EMA smoothing coefficient
     """
 
-    if step_idx < 40000:
+    # Original paper: 40 000
+    if step_idx < 12000:
         a = 0.999
     else:
         a = 0.99
@@ -42,7 +66,8 @@ def consistency_coefficient_function(step_idx):
 
     # type: (int) -> float
     # How many steps for the ramp up period
-    ramp_up_period = 40000.0
+    # Original paper: 40 000
+    ramp_up_period = 12000.0
 
     # x exists [0,1]
     x = float(step_idx)/ramp_up_period
@@ -62,7 +87,7 @@ def unlabeled_cost_coefficient_function(step_idx):
         :return: unlabeled cost coefficient
     """
 
-    return 0.9
+    return 5.0
 
 
 def label_generation_function(np_img):
@@ -116,6 +141,7 @@ def main():
                                       model_folder_name=model_folder_name,
                                       config_file_path=trainer_config_file_path,
                                       debug=debug)
+
         trainer.train()
     elif trainer_type == 'semisupervised-segmentation':
         trainer = SemisupervisedSegmentationTrainer(model_name=model_name,
@@ -126,12 +152,15 @@ def main():
                                                     consistency_cost_coefficient_function=consistency_coefficient_function,
                                                     ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,
                                                     unlabeled_cost_coefficient_function=unlabeled_cost_coefficient_function)
-        trainer.train()
+
+        signal.signal(signal.SIGINT, get_signal_handler(trainer))
     elif trainer_type == 'classification':
         raise NotImplementedError('Classification training has not yet been implemented')
     else:
         raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
 
+    signal.signal(signal.SIGINT, get_signal_handler(trainer))
+    trainer.train()
 
 if __name__ == "__main__":
     main()

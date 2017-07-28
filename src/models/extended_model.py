@@ -7,8 +7,11 @@ try:
 except ImportError:
     import Queue as queue
 
+import warnings
 import numpy as np
 
+from keras.utils import Sequence
+from keras.utils import OrderedEnqueuer
 from keras.engine.training import Model
 from keras.engine.training import GeneratorEnqueuer
 
@@ -28,6 +31,11 @@ class ExtendedModel(Model):
     method.
     """
 
+    fit_generator_stopped = False
+
+    def stop_fit_generator(self):
+        self.fit_generator_stopped = True
+
     @interfaces.legacy_generator_methods_support
     def fit_generator(self, generator,
                       steps_per_epoch,
@@ -37,9 +45,9 @@ class ExtendedModel(Model):
                       validation_data=None,
                       validation_steps=None,
                       class_weight=None,
-                      max_q_size=10,
+                      max_queue_size=10,
                       workers=1,
-                      pickle_safe=False,
+                      use_multiprocessing=False,
                       initial_epoch=0,
                       trainer=None):
         """Fits the model on data yielded batch-by-batch by a Python generator.
@@ -48,8 +56,14 @@ class ExtendedModel(Model):
         For instance, this allows you to do real-time data augmentation
         on images on CPU in parallel to training your model on GPU.
 
+        The use of `keras.utils.Sequence` guarantees the ordering
+        and guarantees the single use of every input per epoch when
+        using `use_multiprocessing=True`.
+
         # Arguments
-            generator: a generator.
+            generator: a generator or an instance of Sequence (keras.utils.Sequence)
+                    object in order to avoid duplicate data
+                    when using multiprocessing.
                 The output of the generator must be either
                 - a tuple (inputs, targets)
                 - a tuple (inputs, targets, sample_weights).
@@ -74,10 +88,10 @@ class ExtendedModel(Model):
                 to yield from `generator` before stopping.
             class_weight: dictionary mapping class indices to a weight
                 for the class.
-            max_q_size: maximum size for the generator queue
+            max_queue_size: maximum size for the generator queue
             workers: maximum number of processes to spin up
                 when using process based threading
-            pickle_safe: if True, use process based threading.
+            use_multiprocessing: if True, use process based threading.
                 Note that because
                 this implementation relies on multiprocessing,
                 you should not pass
@@ -86,7 +100,7 @@ class ExtendedModel(Model):
                 easily to children processes.
             initial_epoch: epoch at which to start training
                 (useful for resuming a previous training run)
-            trainer: reference to a Trainer object
+            trainer: reference to a TrainerBase inherited object
 
         # Returns
             A `History` object.
@@ -123,7 +137,8 @@ class ExtendedModel(Model):
         # python 2 has 'next', 3 has '__next__'
         # avoid any explicit version checks
         val_gen = (hasattr(validation_data, 'next') or
-                   hasattr(validation_data, '__next__'))
+                   hasattr(validation_data, '__next__') or
+                   isinstance(validation_data, Sequence))
         if val_gen and not validation_steps:
             raise ValueError('When using a generator for validation data, '
                              'you must specify a value for '
@@ -162,7 +177,7 @@ class ExtendedModel(Model):
             elif len(validation_data) == 3:
                 val_x, val_y, val_sample_weight = validation_data
             else:
-                raise ValueError('validation_data should be a tuple '
+                raise ValueError('`validation_data` should be a tuple '
                                  '`(val_x, val_y, val_sample_weight)` '
                                  'or `(val_x, val_y)`. Found: ' +
                                  str(validation_data))
@@ -173,11 +188,25 @@ class ExtendedModel(Model):
                 val_data += [0.]
             for cbk in callbacks:
                 cbk.validation_data = val_data
+        is_sequence = isinstance(generator, Sequence)
+        if not is_sequence and use_multiprocessing and workers > 1:
+            warnings.warn(
+                UserWarning('Using a generator with `use_multiprocessing=True`'
+                            ' and multiple workers may duplicate your data.'
+                            ' Please consider using the`keras.utils.Sequence'
+                            ' class.'))
         enqueuer = None
 
         try:
-            enqueuer = GeneratorEnqueuer(generator, pickle_safe=pickle_safe)
-            enqueuer.start(max_q_size=max_q_size, workers=workers)
+            if is_sequence:
+                enqueuer = OrderedEnqueuer(generator,
+                                           use_multiprocessing=use_multiprocessing)
+            else:
+                enqueuer = GeneratorEnqueuer(generator,
+                                             use_multiprocessing=use_multiprocessing,
+                                             wait_time=wait_time)
+            enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            output_generator = enqueuer.get()
 
             callback_model.stop_training = False
             while epoch < epochs:
@@ -185,16 +214,10 @@ class ExtendedModel(Model):
                 steps_done = 0
                 batch_index = 0
                 while steps_done < steps_per_epoch:
-                    generator_output = None
-                    while enqueuer.is_running():
-                        if not enqueuer.queue.empty():
-                            generator_output = enqueuer.queue.get()
-                            break
-                        else:
-                            time.sleep(wait_time)
+                    generator_output = next(output_generator)
 
                     if not hasattr(generator_output, '__len__'):
-                        raise ValueError('output of generator should be '
+                        raise ValueError('Output of generator should be '
                                          'a tuple `(x, y, sample_weight)` '
                                          'or `(x, y)`. Found: ' +
                                          str(generator_output))
@@ -204,7 +227,7 @@ class ExtendedModel(Model):
                     elif len(generator_output) == 3:
                         x, y, sample_weight = generator_output
                     else:
-                        raise ValueError('output of generator should be '
+                        raise ValueError('Output of generator should be '
                                          'a tuple `(x, y, sample_weight)` '
                                          'or `(x, y)`. Found: ' +
                                          str(generator_output))
@@ -222,8 +245,14 @@ class ExtendedModel(Model):
 
                     step_index = steps_done + epoch*steps_per_epoch
 
+                    # Extended functionality: notify trainer
                     if trainer is not None:
                         x, y = trainer.modify_batch_data(step_index, x, y)
+
+                    # Extended functionality: stop if early stopping has been initiated
+                    if self.fit_generator_stopped:
+                        self.fit_generator_stopped = False
+                        return self.history
 
                     outs = self.train_on_batch(x, y,
                                                sample_weight=sample_weight,
@@ -236,6 +265,7 @@ class ExtendedModel(Model):
 
                     callbacks.on_batch_end(batch_index, batch_logs)
 
+                    # Extended functionality: notify trainer
                     if trainer is not None:
                         trainer.on_batch_end(step_index)
 
@@ -247,13 +277,14 @@ class ExtendedModel(Model):
                     # Epoch finished.
                     if steps_done >= steps_per_epoch and do_validation:
                         if val_gen:
+                            # Extended functionality: pass trainer and validation flag
                             val_outs = self.evaluate_generator(
                                 validation_data,
                                 validation_steps,
-                                max_q_size=max_q_size,
+                                max_queue_size=max_queue_size,
                                 workers=workers,
-                                pickle_safe=pickle_safe,
                                 trainer=trainer,
+                                use_multiprocessing=use_multiprocessing,
                                 validation=True)
                         else:
                             # No need for try/except because
@@ -271,6 +302,7 @@ class ExtendedModel(Model):
 
                 callbacks.on_epoch_end(epoch, epoch_logs)
 
+                # Extended functionality: notify trainer
                 if trainer is not None:
                     trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, epoch_logs)
 
@@ -287,7 +319,11 @@ class ExtendedModel(Model):
 
     @interfaces.legacy_generator_methods_support
     def evaluate_generator(self, generator, steps,
-                           max_q_size=10, workers=1, pickle_safe=False, trainer=None, validation=False):
+                           max_queue_size=10,
+                           workers=1,
+                           use_multiprocessing=False,
+                           trainer=None,
+                           validation=False):
         """Evaluates the model on a data generator.
 
         The generator should return the same kind of data
@@ -296,20 +332,24 @@ class ExtendedModel(Model):
         # Arguments
             generator: Generator yielding tuples (inputs, targets)
                 or (inputs, targets, sample_weights)
+                or an instance of Sequence (keras.utils.Sequence)
+                    object in order to avoid duplicate data
+                    when using multiprocessing.
             steps: Total number of steps (batches of samples)
                 to yield from `generator` before stopping.
-            max_q_size: maximum size for the generator queue
+            max_queue_size: maximum size for the generator queue
             workers: maximum number of processes to spin up
                 when using process based threading
-            pickle_safe: if True, use process based threading.
+            use_multiprocessing: if True, use process based threading.
                 Note that because
                 this implementation relies on multiprocessing,
                 you should not pass
                 non picklable arguments to the generator
                 as they can't be passed
                 easily to children processes.
-            trainer: a reference to Trainer to augment batch data if need be
+            trainer: a reference to TrainerBase inherited object to augment batch data if need be
             validation: is this a validation run evaluation
+
         # Returns
             Scalar test loss (if the model has a single output and no metrics)
             or list of scalars (if the model has multiple outputs
@@ -326,23 +366,30 @@ class ExtendedModel(Model):
         wait_time = 0.01
         all_outs = []
         batch_sizes = []
+        is_sequence = isinstance(generator, Sequence)
+        if not is_sequence and use_multiprocessing and workers > 1:
+            warnings.warn(
+                UserWarning('Using a generator with `use_multiprocessing=True`'
+                            ' and multiple workers may duplicate your data.'
+                            ' Please consider using the`keras.utils.Sequence'
+                            ' class.'))
         enqueuer = None
 
         try:
-            enqueuer = GeneratorEnqueuer(generator, pickle_safe=pickle_safe)
-            enqueuer.start(workers=workers, max_q_size=max_q_size)
+            if is_sequence:
+                enqueuer = OrderedEnqueuer(generator,
+                                           use_multiprocessing=use_multiprocessing)
+            else:
+                enqueuer = GeneratorEnqueuer(generator,
+                                             use_multiprocessing=use_multiprocessing,
+                                             wait_time=wait_time)
+            enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            output_generator = enqueuer.get()
 
             while steps_done < steps:
-                generator_output = None
-                while enqueuer.is_running():
-                    if not enqueuer.queue.empty():
-                        generator_output = enqueuer.queue.get()
-                        break
-                    else:
-                        time.sleep(wait_time)
-
+                generator_output = next(output_generator)
                 if not hasattr(generator_output, '__len__'):
-                    raise ValueError('output of generator should be a tuple '
+                    raise ValueError('Output of generator should be a tuple '
                                      '(x, y, sample_weight) '
                                      'or (x, y). Found: ' +
                                      str(generator_output))
@@ -352,7 +399,7 @@ class ExtendedModel(Model):
                 elif len(generator_output) == 3:
                     x, y, sample_weight = generator_output
                 else:
-                    raise ValueError('output of generator should be a tuple '
+                    raise ValueError('Output of generator should be a tuple '
                                      '(x, y, sample_weight) '
                                      'or (x, y). Found: ' +
                                      str(generator_output))
@@ -368,6 +415,9 @@ class ExtendedModel(Model):
                     batch_size = len(list(x.values())[0])
                 else:
                     batch_size = len(x)
+                if batch_size == 0:
+                    raise ValueError('Received an empty batch. '
+                                     'Batches should at least contain one item.')
                 all_outs.append(outs)
 
                 steps_done += 1

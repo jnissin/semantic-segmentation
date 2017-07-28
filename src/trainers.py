@@ -91,6 +91,7 @@ class TrainerBase:
 
         self.model_name = model_name
         self.model_folder_name = model_folder_name
+        self.last_completed_epoch = -1
 
         self.debug = debug
         self.debug_steps_per_epoch = 3
@@ -158,6 +159,7 @@ class TrainerBase:
     @abstractmethod
     def _init_config(self):
         self.log('Reading configuration file')
+        self.save_values_on_early_exit = self.get_config_value('save_values_on_early_exit')
 
     @abstractmethod
     def _init_data(self):
@@ -319,7 +321,7 @@ class TrainerBase:
             class_weights = None
 
         if loss_function_name == 'pixelwise_crossentropy':
-            loss_function = losses.pixelwise_crossentropy(class_weights)
+            loss_function = losses.pixelwise_crossentropy_loss(class_weights)
         elif loss_function_name == 'dummy':
             loss_function = losses.dummy_loss
         else:
@@ -503,6 +505,13 @@ class TrainerBase:
             # TODO: Add additional options to trace the session execution
             self.log('Running in debug mode')
 
+    def handle_early_exit(self):
+        self.log('Handle early exit method called')
+
+        if not self.save_values_on_early_exit:
+            self.log('Save values on early exit is disabled')
+            return
+
     def get_compile_kwargs(self):
         if self.debug:
             return {'options': self.debug_run_options, 'run_metadata': self.debug_run_metadata}
@@ -518,7 +527,22 @@ class TrainerBase:
             self.debug_timeliner.update_timeline(chrome_trace=chrome_trace)
 
     def on_epoch_end(self, epoch_index, step_index, logs):
-        pass
+        self.last_completed_epoch = epoch_index
+
+    def save_optimizer_settings(self, model, file_extension=''):
+        file_path = self.get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name) + file_extension
+
+        with open(file_path, 'w') as log_file:
+            optimizer_config = model.optimizer.get_config()
+            json_str = json.dumps(optimizer_config)
+
+            # Clear the contents of the log file
+            log_file.seek(0)
+            log_file.truncate()
+
+            # Write the JSON and flush
+            log_file.write(json_str)
+            log_file.flush()
 
 
 #############################################
@@ -655,6 +679,7 @@ class SegmentationTrainer(TrainerBase):
 
         if self.continue_from_last_checkpoint:
             self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
+            self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
 
         if self.use_transfer_weights:
             if self.initial_epoch != 0:
@@ -767,6 +792,35 @@ class SegmentationTrainer(TrainerBase):
 
         self.log('The training session ended at local time {}\n'.format(datetime.datetime.now()))
         self.log_file.close()
+
+    def handle_early_exit(self):
+        super(SegmentationTrainer, self).handle_early_exit()
+
+        if not self.save_values_on_early_exit:
+            return
+
+        # Stop training
+        self.log('Stopping model training')
+        self.model.stop_fit_generator()
+
+        # Save student model weights
+        self.log('Saving model weights')
+        self.save_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
+
+        # Save optimizer settings
+        self.log('Saving optimizer settings')
+        self.save_optimizer_settings(model=self.model, file_extension='.early-stop')
+
+        self.log('Early exit handler complete - ready for exit')
+
+    def save_model_weights(self, epoch_index, val_loss, file_extension=''):
+        file_path = self.weights_directory_path.format(epoch=epoch_index, val_loss=val_loss) + file_extension
+
+        # Make sure the directory exists
+        TrainerBase._create_path_if_not_existing(file_path)
+
+        self.log('Saving student model weights to file: {}'.format(file_path))
+        self.model.save_weights(file_path, overwrite=True)
 
 
 #############################################
@@ -997,7 +1051,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             teacher_class_weights = self.class_weights if self.use_class_weights else None
 
             self.teacher_model.compile(optimizer=optimizer,
-                                       loss=losses.pixelwise_crossentropy(teacher_class_weights),
+                                       loss=losses.pixelwise_crossentropy_loss(teacher_class_weights),
                                        metrics=['accuracy',
                                                 metrics.mean_iou(self.num_classes),
                                                 metrics.mean_per_class_accuracy(self.num_classes)],
@@ -1072,6 +1126,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
 
     def train(self):
+        # type: () -> object
         super(SemisupervisedSegmentationTrainer, self).train()
 
         # Labeled data set size determines the epochs
@@ -1112,6 +1167,30 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         self.log('The training session ended at local time {}\n'.format(datetime.datetime.now()))
         self.log_file.close()
+
+    def handle_early_exit(self):
+        super(SemisupervisedSegmentationTrainer, self).handle_early_exit()
+
+        if not self.save_values_on_early_exit:
+            return
+
+        # Stop training
+        self.log('Stopping student model training')
+        self.model.stop_fit_generator()
+
+        # Save student model weights
+        self.log('Saving student model weights')
+        self.save_student_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.student-early-stop')
+
+        # Save teacher model weights
+        self.log('Saving teacher model weights')
+        self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.teacher-early-stop')
+
+        # Save optimizer settings
+        self.log('Saving optimizer settings')
+        self.save_optimizer_settings(model=self.model, file_extension='.student-early-stop')
+
+        self.log('Early exit handler complete - ready for exit')
 
     def modify_batch_data(self, step_index, x, y, validation=False):
         # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
@@ -1251,7 +1330,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         if self.use_mean_teacher_method:
             if self.teacher_model is None:
-                raise ValueError('Teacher model is not set, cannot save weights')
+                raise ValueError('Teacher model is not set, cannot validate/save weights')
 
             # Default to -1.0 validation loss if nothing else is given
             val_loss = -1.0
@@ -1268,7 +1347,25 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                     workers=dataset_utils.get_number_of_parallel_jobs(32))
 
                 val_loss = val_outs[0]
-                self.log('\nEpoch {} mean teacher validation loss {}'.format(epoch_index, val_loss))
+                self.log('\nEpoch {}: Mean teacher validation loss {}'.format(epoch_index, val_loss))
+
+            self.log('\nEpoch {}: EMA coefficient {}, consistency cost coefficient: {}'
+                     .format(epoch_index, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))
+            self.save_teacher_model_weights(epoch_index=epoch_index, val_loss=val_loss)
+
+    def save_student_model_weights(self, epoch_index, val_loss, file_extension='.student'):
+        file_path = self.weights_directory_path.format(epoch=epoch_index, val_loss=val_loss) + file_extension
+
+        # Make sure the directory exists
+        TrainerBase._create_path_if_not_existing(file_path)
+
+        self.log('Saving student model weights to file: {}'.format(file_path))
+        self.model.save_weights(file_path, overwrite=True)
+
+    def save_teacher_model_weights(self, epoch_index, val_loss, file_extension='.teacher'):
+        if self.use_mean_teacher_method:
+            if self.teacher_model is None:
+                raise ValueError('Teacher model is not set, cannot save weights')
 
             # Save the weights
             teacher_model_checkpoint_file_path = self.get_config_value('teacher_model_checkpoint_file_path')
@@ -1277,14 +1374,12 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             # the student model
             if teacher_model_checkpoint_file_path is None:
                 self.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to student directory')
-                teacher_model_checkpoint_file_path = self.get_config_value('keras_model_checkpoint_file_path') + '.teacher'
+                teacher_model_checkpoint_file_path = self.get_config_value('keras_model_checkpoint_file_path') + file_extension
 
             file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss)
 
             # Make sure the directory exists
             TrainerBase._create_path_if_not_existing(file_path)
 
-            self.log('Saving mean teacher model weights to file: {}, EMA coefficient: {}, consistency cost coefficient: {}'
-                     .format(file_path, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))
-
+            self.log('Saving mean teacher model weights to file: {}'.format(file_path))
             self.teacher_model.save_weights(file_path, overwrite=True)
