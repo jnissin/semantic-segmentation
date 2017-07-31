@@ -62,7 +62,7 @@
     "continue_from_last_checkpoint": false,
     "transfer_weights": false,
     "use_class_weights": true,
-    "save_values_on_early_exit": true,
+    "save_values_on_early_exit": false,
 
     "background_class_prediction_weight": 0.2,
     "use_crf_in_prediction": true,

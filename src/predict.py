@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import time
+import argparse
 
 import matplotlib as mpl
 import numpy as np
@@ -28,6 +29,29 @@ CONFIG = None
 ##############################################
 # UTILITIES
 ##############################################
+
+class PredictionImage(object):
+    def __init__(self, image_path, data_set_information):
+        print 'Loading image from: {}'.format(image_path)
+        self.pil_image = load_img(image_path)
+
+        print 'Loaded image of size: {}'.format(self.pil_image.size)
+        self.np_image = img_to_array(self.pil_image)
+
+        print 'Normalizing image data'
+        self.np_image = image_utils.np_normalize_image_channels(self.np_image, data_set_information.per_channel_mean, data_set_information.per_channel_stddev)
+
+        div2_constraint = 4
+
+        self.padded = False
+        self.v_pad_before, self.v_pad_after, self.h_pad_before, self.h_pad_after = 0, 0, 0, 0
+
+        if dataset_utils.count_trailing_zeroes(self.np_image.shape[0]) < div2_constraint or \
+                        dataset_utils.count_trailing_zeroes(self.np_image.shape[1]) < div2_constraint:
+            self.np_image, self.v_pad_before, self.v_pad_after, self.h_pad_before, self.h_pad_after =\
+                pad_image(self.np_image, div2_constraint, data_set_information.per_channel_mean)
+            self.padded = True
+
 
 def read_config_json(path):
     with open(path) as f:
@@ -127,16 +151,33 @@ def show_segmentation_plot(figure_ind,
 # MAIN
 ##############################################
 
-if __name__ == '__main__':
+def main():
 
-    if len(sys.argv) < 3:
-        print 'Invalid number of arguments, usage: ./{} <path_to_config> <path_to_image> <opt: saved_mask_name> <opt: path_to_weights>'.format(
-            sys.argv[0])
-        sys.exit(0)
+    # Construct the argument parser and parse arguments
+    ap = argparse.ArgumentParser(description='Training function for material segmentation.')
+    ap.add_argument('-m', '--model', required=True, type=str, help='Name of the neural network model to use')
+    ap.add_argument('-c', '--config', required=True, type=str, help='Path to trainer configuration JSON file')
+    ap.add_argument('-w', '--weights', required=True, type=str, help="Path to weights directory or weights file")
+    ap.add_argument('-i', '--input', required=True, type=str, help="Path to input image")
+    ap.add_argument('-o', '--output', required=False, type=str, help="Path to output image")
+    ap.add_argument('--crf', required=False, type=int, default=0, help="Number of CRF iterations to use")
+    ap.add_argument('-k', '--topk', required=False, type=int, default=1, help="Number of top K predictions to show")
+    ap.add_argument('--bgweight', required=False, type=float, default=1.0, help="Weight for the background class predictions")
+    args = vars(ap.parse_args())
+
+    model_name = args['model']
+    config_file_path = args['config']
+    input_image_path = args['input']
+    weights_path = args['weights']
+    output_path = args['output']
+    crf_iterations = args['crf']
+    top_k = args['topk']
+    background_class_prediction_weight = args['bgweight']
 
     # Read the configuration file
-    print 'Loading the configuration from file: {}'.format(sys.argv[1])
-    CONFIG = read_config_json(sys.argv[1])
+    global CONFIG
+    print 'Loading the configuration from file: {}'.format(config_file_path)
+    CONFIG = read_config_json(config_file_path)
 
     # Load the material class information
     material_class_information_path = get_config_value('path_to_material_class_file')
@@ -144,69 +185,37 @@ if __name__ == '__main__':
     material_class_information = dataset_utils.load_material_class_information(material_class_information_path)
     print 'Loaded {} material classes'.format(len(material_class_information))
 
+    # Load the data set information
+    data_set_information_path = get_config_value('path_to_data_set_information_file')
+    print 'Loading data set information from file: {}'.format(data_set_information_path)
+    data_set_information = dataset_utils.load_segmentation_data_set_information(data_set_information_path)
+    print 'Data set information loaded'
+
     # Load the model
-    model_name = get_config_value('model')
     num_classes = len(material_class_information)
-    num_channels = get_config_value('num_channels')
-    input_shape = (None, None, num_channels)
+    input_shape = get_config_value('input_shape')
 
-    print 'Loading model {} instance with input shape: {}, num classes: {}'\
-        .format(model_name, input_shape, num_classes)
-
-    model = get_model(model_name, input_shape, num_classes)
+    print 'Loading model {} instance with input shape: {}, num classes: {}'.format(model_name, input_shape, num_classes)
+    model_wrapper = get_model(model_name, input_shape, num_classes)
+    model = model_wrapper.model
 
     # Load either provided weights or try to find the newest weights from the
     # checkpoint path
-    weights_file_path = None
+    if os.path.isdir(weights_path):
+        print 'Searching for most recent weights in: {}'.format(weights_path)
+        weights_path = get_latest_weights_file_path(weights_path)
 
-    if len(sys.argv) > 4:
-        weights_file_path = sys.argv[4]
+    print 'Loading weights from: {}'.format(weights_path)
+    model.load_weights(weights_path)
 
-    if not weights_file_path:
-        weights_directory_path = os.path.dirname(get_config_value('keras_model_checkpoint_file_path'))
-        print 'Searching for most recent weights in: {}'.format(weights_directory_path)
-        weights_file_path = get_latest_weights_file_path(weights_directory_path)
-
-    if not weights_file_path:
-        print 'No existing weights found, exiting'
-        sys.exit(0)
-
-    print 'Loading weights from: {}'.format(weights_file_path)
-    model.load_weights(weights_file_path)
-
-    # Load the image
-    image_path = sys.argv[2]
-
-    print 'Loading image from: {}'.format(image_path)
-    image = load_img(image_path)
-
-    print 'Loaded image of size: {}'.format(image.size)
-    image_array = img_to_array(image)
-
-    print 'Normalizing image data'
-    image_array = image_utils.np_normalize_image_channels(
-        image_array,
-        np.array(get_config_value('per_channel_mean')),
-        np.array(get_config_value('per_channel_stddev')))
-
-    div2_constraint = 4
-    print 'Checking image size constraints with div 2 constraint: {}'.format(div2_constraint)
-
-    v_pad_before, v_pad_after, h_pad_before, h_pad_after = 0, 0, 0, 0
-    padded = False
-
-    if dataset_utils.count_trailing_zeroes(image_array.shape[0]) < div2_constraint or \
-                    dataset_utils.count_trailing_zeroes(image_array.shape[1]) < div2_constraint:
-
-        image_array, v_pad_before, v_pad_after, h_pad_before, h_pad_after \
-            = pad_image(image_array, div2_constraint, get_config_value('per_channel_mean'))
-        padded = True
+    # Load the image file
+    prediction_image = PredictionImage(input_image_path, data_set_information)
 
     # The model is expecting a batch size, even if it's one so append
     # one new dimension to the beginning to mark batch size of one
-    print 'Predicting segmentation for {} size image'.format(image.size)
+    print 'Predicting segmentation for image with shape: {}'.format(prediction_image.np_image.shape)
     start_time = time.time()
-    expanded_mask = model.predict(image_array[np.newaxis, :])
+    expanded_mask = model.predict(prediction_image.np_image[np.newaxis, :])
     end_time = time.time()
     print 'Prediction finished in time: {} s'.format(end_time - start_time)
 
@@ -214,30 +223,26 @@ if __name__ == '__main__':
     # entries from the shape array
     expanded_mask = expanded_mask.squeeze()
 
-    if padded:
+    if prediction_image.padded:
         print 'Cropping predictions back to original image shape'
         expanded_mask = image_utils.np_crop_image(expanded_mask,
-                                    h_pad_before,
-                                    v_pad_before,
-                                    image_array.shape[1] - h_pad_after,
-                                    image_array.shape[0] - v_pad_after)
+                                    prediction_image.h_pad_before,
+                                    prediction_image.v_pad_before,
+                                    prediction_image.np_image.shape[1] - prediction_image.h_pad_after,
+                                    prediction_image.np_image.shape[0] - prediction_image.v_pad_after)
 
         print 'Size after cropping: {}'.format(expanded_mask.shape)
 
     # Weight the background class activations to reduce the salt'n'pepper noise
     # likely caused by the class imbalance in the training data
-    background_class_prediction_weight = get_config_value('background_class_prediction_weight')
-
-    if background_class_prediction_weight is not None:
-        expanded_mask[:, :, 0] = expanded_mask[:, :] * background_class_prediction_weight
+    expanded_mask[:, :, 0] = expanded_mask[:, :, 0] * background_class_prediction_weight
 
     #expanded_mask *= np.array(get_config_value('median_frequency_balancing_weights'))
 
-    # Check whether we are using a CRF
-    if get_config_value('use_crf_in_prediction'):
+    # Run CRF if we are using it for post-processing
+    if crf_iterations > 0:
         # Must use the unnormalized image data
-        original_image_array = img_to_array(image)
-        crf_iterations = get_config_value('crf_iterations')
+        original_image_array = img_to_array(prediction_image.pil_image)
         crf = prediction_utils.get_dcrf(original_image_array, num_classes)
 
         # Turn the output of the last convolutional layer to softmax probabilities
@@ -262,21 +267,25 @@ if __name__ == '__main__':
         expanded_mask = np.reshape(Q, np.flip(expanded_mask.shape, 0), order='A')
         expanded_mask = np.transpose(expanded_mask, (2, 1, 0))
 
-    k = 3
-    flattened_masks = prediction_utils.top_k_flattened_masks(expanded_mask, k, material_class_information, True)
+    flattened_masks = prediction_utils.top_k_flattened_masks(expanded_mask, top_k, material_class_information, True)
 
-    for i in range(0, k):
+    for i in range(0, top_k):
         flattened_mask = flattened_masks[i][0]
         found_materials = flattened_masks[i][1]
         segmented_img = array_to_img(flattened_mask, scale=False)
-        title = 'Top {} segmentation of {}'.format(i+1, image_path.split('/')[-1])
-        show_segmentation_plot(i+1, title, segmented_img, found_materials, image)
+        title = 'Top {} segmentation of {}'.format(i+1, os.path.basename(input_image_path))
+        show_segmentation_plot(i+1, title, segmented_img, found_materials, prediction_image.pil_image)
 
-        if len(sys.argv) > 3:
-            save_file = 'top_{}_{}'.format(i+1, sys.argv[3])
-            print 'Saving top {} predicted segmentation to: {}'.format(i+1, save_file)
-            segmented_img.save(save_file, format='PNG')
+        if output_path is not None:
+            save_file = '{}_top_{}.png'.format(os.path.basename(output_path).split('.')[0], i+1)
+            save_path = os.path.join(os.path.dirname(output_path), save_file)
+            print 'Saving top {} predicted segmentation to: {}'.format(i+1, save_path)
+            segmented_img.save(save_path, format='PNG')
 
     # Keep figures alive until user input from console
     raw_input()
     print 'Done'
+
+
+if __name__ == '__main__':
+    main()

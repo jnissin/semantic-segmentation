@@ -502,8 +502,12 @@ class TrainerBase:
         self.log('Starting training at local time {}\n'.format(datetime.datetime.now()))
 
         if self.debug:
-            # TODO: Add additional options to trace the session execution
             self.log('Running in debug mode')
+
+            graph_def_file_folder = os.path.dirname(self.debug)
+            self.log('Writing Tensorflow GraphDef to: {}'.format(os.path.join(graph_def_file_folder, "graph_def")))
+            K.tf.train.write_graph(K.get_session().graph_def, graph_def_file_folder, "graph_def", as_text=True)
+            self.log('Writing Tensorflow GraphDef complete')
 
     def handle_early_exit(self):
         self.log('Handle early exit method called')
@@ -544,6 +548,14 @@ class TrainerBase:
             log_file.write(json_str)
             log_file.flush()
 
+    def debug_write_graph_def(self):
+        if not self.debug:
+            return
+
+        graph_def_file_folder = os.path.dirname(self.debug)
+        self.log('Writing Tensorflow GraphDef to: {}'.format(os.path.join(graph_def_file_folder, "graph_def")))
+        K.tf.train.write_graph(K.get_session().graph_def, graph_def_file_folder, "graph_def", as_text=True)
+        self.log('Writing Tensorflow GraphDef complete')
 
 #############################################
 # SEGMENTATION TRAINER
@@ -786,7 +798,8 @@ class SegmentationTrainer(TrainerBase):
             verbose=1,
             callbacks=callbacks,
             trainer=self if self.debug else None,
-            workers=num_workers)
+            workers=num_workers,
+            debug=self.debug is not None)
 
         if self.debug:
             self.log('Saving debug data to: {}'.format(self.debug))
@@ -1179,7 +1192,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             verbose=1,
             trainer=self,
             callbacks=callbacks,
-            workers=num_workers)
+            workers=num_workers,
+            debug=self.debug is not None)
 
         if self.debug:
             self.log('Saving debug data to: {}'.format(self.debug))
@@ -1250,7 +1264,16 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 np_consistency_coefficients = np.zeros(shape=[batch_size])
                 x = x + [mean_teacher_predictions, np_consistency_coefficients]
             else:
+                s_time = 0
+
+                if self.debug:
+                    s_time = time.time()
+
                 mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
+
+                if self.debug:
+                    self.log('Mean teacher batch predictions took: {} s'.format(time.time()-s_time))
+
                 consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
                 np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
                 x = x + [mean_teacher_predictions, np_consistency_coefficients]
@@ -1280,7 +1303,16 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 np_unlabeled_cost_coefficients = np.zeros(shape=[batch_size])
                 x = x + [mean_teacher_predictions, np_consistency_coefficients, np_unlabeled_cost_coefficients]
             else:
+                s_time = 0
+
+                if self.debug:
+                    s_time = time.time()
+
                 mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
+
+                if self.debug:
+                    self.log('Mean teacher batch predictions took: {} s'.format(time.time()-s_time))
+
                 consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
                 np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
 
@@ -1323,11 +1355,18 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                                  .format(len(t_weights), len(s_weights)))
 
             num_weights = len(t_weights)
+            s_time = 0
+
+            if self.debug:
+                s_time = time.time()
 
             for i in range(0, num_weights):
                 t_weights[i] = a * t_weights[i] + (1.0 - a) * s_weights[i]
 
             self.teacher_model.set_weights(t_weights)
+
+            if self.debug:
+                self.log('Mean teacher weight update took: {} s'.format(time.time()-s_time))
 
     def on_epoch_end(self, epoch_index, step_index, logs):
         # type: (int, int, dict) -> ()

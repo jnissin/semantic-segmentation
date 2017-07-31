@@ -49,7 +49,8 @@ class ExtendedModel(Model):
                       workers=1,
                       use_multiprocessing=False,
                       initial_epoch=0,
-                      trainer=None):
+                      trainer=None,
+                      debug=False):
         """Fits the model on data yielded batch-by-batch by a Python generator.
 
         The generator is run in parallel to the model, for efficiency.
@@ -101,6 +102,7 @@ class ExtendedModel(Model):
             initial_epoch: epoch at which to start training
                 (useful for resuming a previous training run)
             trainer: reference to a TrainerBase inherited object
+            debug: run in debug mode
 
         # Returns
             A `History` object.
@@ -254,9 +256,17 @@ class ExtendedModel(Model):
                         self.fit_generator_stopped = False
                         return self.history
 
+                    s_time = 0
+
+                    if debug:
+                        s_time = time.time()
+
                     outs = self.train_on_batch(x, y,
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
+
+                    if debug:
+                        print 'Train on batch took: {} s'.format(time.time()-s_time)
 
                     if not isinstance(outs, list):
                         outs = [outs]
@@ -277,6 +287,10 @@ class ExtendedModel(Model):
                     # Epoch finished.
                     if steps_done >= steps_per_epoch and do_validation:
                         if val_gen:
+
+                            if debug:
+                                s_time = time.time()
+
                             # Extended functionality: pass trainer and validation flag
                             val_outs = self.evaluate_generator(
                                 validation_data,
@@ -286,6 +300,9 @@ class ExtendedModel(Model):
                                 trainer=trainer,
                                 use_multiprocessing=use_multiprocessing,
                                 validation=True)
+
+                            if debug:
+                                print 'Validation evaluation took: {}'.format(time.time()-s_time)
                         else:
                             # No need for try/except because
                             # data has already been validated.

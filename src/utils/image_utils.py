@@ -268,6 +268,12 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
     img_array -= 128.0
     img_array /= 128.0
 
+    if per_channel_mean and not isinstance(per_channel_mean, type(np.array)):
+        per_channel_mean = np.array(per_channel_mean)
+
+    if per_channel_stddev and not isinstance(per_channel_stddev, type(np.array)):
+        per_channel_stddev = np.array(per_channel_stddev)
+
     # Subtract the per-channel-mean from the batch to "center" the data.
     if per_channel_mean is not None:
         if not ((per_channel_mean < 1.0 + 1e-7).all() and (per_channel_mean > -1.0 - 1e-7).all()):

@@ -114,7 +114,7 @@ def label_generation_function(np_img):
 
 
 def main():
-    # Construct the argument parser and parge arguments
+    # Construct the argument parser and parse arguments
     ap = argparse.ArgumentParser(description='Training function for material segmentation.')
     ap.add_argument('-t', '--trainer', required=True, type=str, choices=['segmentation', 'semisupervised-segmentation', 'classification'], help='Type of the trainer')
     ap.add_argument('-c', '--config', required=True, type=str, help='Path to trainer configuration JSON file')

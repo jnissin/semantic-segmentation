@@ -76,7 +76,7 @@ def flatten_mask(expanded_mask, material_class_information, verbose=False):
 
 
 def top_k_flattened_masks(expanded_mask, k, material_class_information, verbose=False):
-    # type: (np.array, list[MaterialClassInformation], bool) -> list[(np.array, list[(str, float)])]
+    # type: (np.array, int, list[MaterialClassInformation], bool) -> list[(np.array, list[(str, float)])]
 
     """
     Returns k different predictions describing the top k predictions for each pixel.
