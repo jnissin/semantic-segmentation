@@ -45,6 +45,9 @@
         "augmentation_probability": 0.5,
         "rotation_range": 40.0,
         "zoom_range": 0.5,
+        "width_shift_range": 0.15,
+        "height_shift_range": 0.15,
+        "channel_shift_range": 0.10,
         "horizontal_flip": true,
         "vertical_flip": false
     },
