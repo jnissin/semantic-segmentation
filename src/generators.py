@@ -165,8 +165,6 @@ def get_unlabeled_segmentation_data_pair(photo,
     old_indices = np.unique(np_mask)
     new_indices = np.arange(np.max(old_indices+1))
 
-    print 'Segments: {}'.format(len(old_indices))
-
     for i in range(0, len(old_indices)):
         index_mask = np_mask[:, :] == old_indices[i]
         np_mask[index_mask] = new_indices[i]
@@ -860,12 +858,12 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         num_samples_in_batch = len(X)
 
         # Debug: Write images
-        for i in range(len(X)):
-            from keras.preprocessing.image import array_to_img
-            _debug_photo = array_to_img(X[i])
-            _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
-            _debug_mask = array_to_img(Y[i][:, :, np.newaxis])
-            _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
+        #for i in range(len(X)):
+        #    from keras.preprocessing.image import array_to_img
+        #    _debug_photo = array_to_img(X[i])
+        #    _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
+        #    _debug_mask = array_to_img(Y[i][:, :, np.newaxis])
+        #    _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
         # End of: debug
 
         # Cast the lists to numpy arrays
