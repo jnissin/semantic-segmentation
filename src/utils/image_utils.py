@@ -156,6 +156,9 @@ def np_apply_random_transform(images,
             raise ValueError('Channel shift ranges list is longer than the image list: {} vs {}'.format(len(channel_shift_ranges), len(images)))
 
         for i in range(0, len(channel_shift_ranges)):
+            if channel_shift_ranges[i] is None:
+                continue
+
             # Images are [0,255] color encoded, multiply intensity [0,1] by 255 to get the real shift intensity
             images[i] = random_channel_shift(images[i], intensity=channel_shift_ranges[i]*255.0, channel_axis=img_channel_axis)
 
