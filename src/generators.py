@@ -84,7 +84,8 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
                                                              use_data_augmentation=use_data_augmentation,
                                                              data_augmentation_params=data_augmentation_params,
                                                              img_data_format=img_data_format,
-                                                             div2_constraint=div2_constraint)
+                                                             div2_constraint=div2_constraint,
+                                                             retry_crops=True)
 
     # Expand the mask image to the one-hot encoded shape: H x W x NUM_CLASSES
     if mask_type == 'one_hot':
@@ -97,82 +98,80 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
     return np_photo, np_mask
 
 
-def process_photo(photo,
-                  num_color_channels,
-                  crop_shape,
-                  resize_shape,
-                  photo_cval,
-                  use_data_augmentation=False,
-                  data_augmentation_params=None,
-                  img_data_format='channels_last',
-                  div2_constraint=4):
-    # type: (ImageFile, int, tuple[int], tuple[int], np.array, np.array, bool, str, int) -> np.array
+def get_unlabeled_segmentation_data_pair(photo,
+                                         label_generation_function,
+                                         num_color_channels,
+                                         crop_shape,
+                                         resize_shape,
+                                         photo_cval,
+                                         mask_cval,
+                                         use_data_augmentation=False,
+                                         data_augmentation_params=None,
+                                         img_data_format='channels_last',
+                                         div2_constraint=4):
+    # type: (ImageFile, Callable[np.array], int, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
 
     """
-    Applies cropping and data augmentation to a single photo.
+    Returns a photo mask pair for semi-supervised/unsupervised segmentation training.
+    Will apply data augmentation and cropping as instructed in the parameters.
+
+    The photos are not normalized to range [-1,1] within the function.
 
     # Arguments
-        :param photo: the photo as ImageFile
-        :param num_color_channels: number of color channels in the image
-        :param crop_shape: size of the crop, or None if no cropping should be applied
-        :param resize_shape: size of the resize, or None if no resizing should be applied
+        :param photo: an ImageFile of the photo
+        :param label_generation_function: a function that takes a numpy array as a parameter and generates labels
+        :param num_color_channels: number of channels in the photos; 1, 3 or 4
+        :param crop_shape: size of the crop or None if no cropping should be applied
+        :param resize_shape: size of the desired rezied images, None if no resizing should be applied
         :param photo_cval: fill color value for photos [0,255]
+        :param mask_cval: fill color value for masks [0,255]
         :param use_data_augmentation: should data augmentation be used
         :param data_augmentation_params: parameters for data augmentation
         :param img_data_format: format of the image data 'channels_first' or 'channels_last'
         :param div2_constraint: divisibility constraint
     # Returns
-        :return: the augmented photo as a numpy array
+        :return: a tuple of numpy arrays (image, mask)
     """
 
-    np_photo = img_to_array(photo.get_image(color_channels=num_color_channels))
+    # Load the photo as PIL image
+    photo = photo.get_image(color_channels=num_color_channels)
+    np_photo = img_to_array(photo)
 
-    # Check whether we need to resize the photo to a constant size
-    if resize_shape is not None:
-        np_photo = image_utils.np_scale_image_with_padding(np_photo, shape=resize_shape, cval=photo_cval, interp='bilinear')
+    # Generate mask for the photo - note: the labels are generated before cropping
+    # and augmentation to capture global structure within the image
+    np_mask = label_generation_function(np_photo)
 
-    # Check whether any of the image dimensions is smaller than the crop,
-    # if so pad with the assigned fill colors
-    if crop_shape is not None and (np_photo.shape[0] < crop_shape[0] or np_photo.shape[1] < crop_shape[1]):
-        # Image dimensions must be at minimum the same as the crop dimension
-        # on each axis. The photo needs to be filled with the photo_cval color and masks
-        # with the mask cval color
-        min_img_shape = (max(crop_shape[0], np_photo.shape[0]), max(crop_shape[1], np_photo.shape[1]))
-        np_photo = image_utils.np_pad_image_to_shape(np_photo, min_img_shape, photo_cval)
+    # Expand the last dimension of the mask to make it compatible with augmentation functions
+    np_mask = np_mask[:, :, np.newaxis]
 
-    # If we are using data augmentation apply the random transformation
-    if use_data_augmentation and np.random.random() <= data_augmentation_params.augmentation_probability:
-        np_photo, = image_utils.np_apply_random_transform(images=[np_photo],
-                                                          cvals=[photo_cval],
-                                                          fill_mode=data_augmentation_params.fill_mode,
-                                                          img_data_format=img_data_format,
-                                                          rotation_range=data_augmentation_params.rotation_range,
-                                                          zoom_range=data_augmentation_params.zoom_range,
-                                                          horizontal_flip=data_augmentation_params.horizontal_flip,
-                                                          vertical_flip=data_augmentation_params.vertical_flip)
+    # Apply crops and augmentation
+    np_photo, np_mask = process_segmentation_photo_mask_pair(np_photo=np_photo,
+                                                             np_mask=np_mask,
+                                                             crop_shape=crop_shape,
+                                                             resize_shape=resize_shape,
+                                                             photo_cval=photo_cval,
+                                                             mask_cval=mask_cval,
+                                                             use_data_augmentation=use_data_augmentation,
+                                                             data_augmentation_params=data_augmentation_params,
+                                                             img_data_format=img_data_format,
+                                                             div2_constraint=div2_constraint,
+                                                             retry_crops=False)
 
-    # If a crop size is given: take a random crop of both the image and the mask
-    if crop_shape is not None:
-        if dataset_utils.count_trailing_zeroes(crop_shape[0]) < div2_constraint or \
-                        dataset_utils.count_trailing_zeroes(crop_shape[1]) < div2_constraint:
-            raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(div2_constraint))
+    # Squeeze the unnecessary last dimension out
+    np_mask = np.squeeze(np_mask)
 
-        x1y1, x2y2 = image_utils.np_get_random_crop_area(np_photo, crop_shape[1], crop_shape[0])
-        np_photo = image_utils.np_crop_image(np_photo, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
-    else:
-        # If a crop size is not given, make sure the image dimensions satisfy
-        # the div2_constraint i.e. are n times divisible by 2 to work within
-        # the network. If the dimensions are not ok pad the images.
-        img_height_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[0])
-        img_width_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[1])
+    # Map the mask values back to a continuous range [0, N_SUPERPIXELS]. The values
+    # might be non-continuous due to cropping and augmentation
+    old_indices = np.unique(np_mask)
+    new_indices = np.arange(np.max(old_indices+1))
 
-        if img_height_div2 < div2_constraint or img_width_div2 < div2_constraint:
+    print 'Segments: {}'.format(len(old_indices))
 
-            # The photo needs to be filled with the photo_cval color
-            padded_shape = dataset_utils.get_required_image_dimensions(np_photo.shape, div2_constraint)
-            np_photo = image_utils.np_pad_image_to_shape(np_photo, padded_shape, photo_cval)
+    for i in range(0, len(old_indices)):
+        index_mask = np_mask[:, :] == old_indices[i]
+        np_mask[index_mask] = new_indices[i]
 
-    return np_photo
+    return np_photo, np_mask
 
 
 def process_segmentation_photo_mask_pair(np_photo,
@@ -184,8 +183,9 @@ def process_segmentation_photo_mask_pair(np_photo,
                                          use_data_augmentation=False,
                                          data_augmentation_params=None,
                                          img_data_format='channels_last',
-                                         div2_constraint=4):
-    # type: (np.array, np.array, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int) -> (np.array, np.array)
+                                         div2_constraint=4,
+                                         retry_crops=True):
+    # type: (np.array, np.array, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int, bool) -> (np.array, np.array)
 
     """
     Applies crop and data augmentation to two numpy arrays representing the photo and
@@ -203,6 +203,7 @@ def process_segmentation_photo_mask_pair(np_photo,
         :param data_augmentation_params: parameters for data augmentation
         :param img_data_format: format of the image data 'channels_first' or 'channels_last'
         :param div2_constraint: divisibility constraint
+        :param retry_crops: retries crops if the whole crop is 0 (BG)
     # Returns
         :return: a tuple of numpy arrays (image, mask)
     """
@@ -236,6 +237,9 @@ def process_segmentation_photo_mask_pair(np_photo,
                                                                   img_data_format=img_data_format,
                                                                   rotation_range=data_augmentation_params.rotation_range,
                                                                   zoom_range=data_augmentation_params.zoom_range,
+                                                                  width_shift_range=data_augmentation_params.width_shift_range,
+                                                                  height_shift_range=data_augmentation_params.height_shift_range,
+                                                                  channel_shift_ranges=[data_augmentation_params.channel_shift_range],
                                                                   horizontal_flip=data_augmentation_params.horizontal_flip,
                                                                   vertical_flip=data_augmentation_params.vertical_flip)
 
@@ -255,7 +259,7 @@ def process_segmentation_photo_mask_pair(np_photo,
 
             # If the mask crop is only background (all R channel is zero) - try another crop
             # until attempts are exhausted
-            if np.max(mask_crop[:, :, 0]) == 0 and attempts-1 != 0:
+            if np.max(mask_crop[:, :, 0]) == 0 and attempts-1 != 0 and retry_crops:
                 attempts -= 1
                 continue
 
@@ -292,6 +296,9 @@ class DataAugmentationParameters:
                  augmentation_probability=0.5,
                  rotation_range=0.,
                  zoom_range=0.,
+                 width_shift_range=0.0,
+                 height_shift_range=0.0,
+                 channel_shift_range=None,
                  horizontal_flip=False,
                  vertical_flip=False,
                  fill_mode='constant'):
@@ -300,6 +307,9 @@ class DataAugmentationParameters:
             :param augmentation_probability: probability with which to apply random augmentations
             :param rotation_range: range of random rotations
             :param zoom_range: range of random zooms
+            :param width_shift_range: fraction of total width [0, 1]
+            :param height_shift_range: fraction of total height [0, 1]
+            :param channel_shift_range: channel shift range as a float, enables shifting channels between [-val, val]
             :param horizontal_flip: should horizontal flips be applied
             :param vertical_flip: should vertical flips be applied
             :param fill_mode: how should we fill overgrown areas
@@ -310,6 +320,9 @@ class DataAugmentationParameters:
         self.augmentation_probability = augmentation_probability
         self.rotation_range = rotation_range
         self.zoom_range = zoom_range
+        self.width_shift_range = width_shift_range
+        self.height_shift_range = height_shift_range
+        self.channel_shift_range = channel_shift_range
         self.horizontal_flip = horizontal_flip
         self.vertical_flip = vertical_flip
         self.fill_mode = fill_mode
@@ -416,10 +429,10 @@ class DataSetIterator(object):
         return self.index_array[current_index: current_index + current_batch_size], current_index, current_batch_size
 
 
-
 #######################################
 # DATA GENERATOR
 #######################################
+
 
 class DataGenerator(object):
 
@@ -758,7 +771,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         labeled_batch_files = self.labeled_data_set.get_indices(index_array)
 
-        # In parallel: Process the labeled files for this batch
+        # Process the labeled files for this batch
         labeled_data = [get_labeled_segmentation_data_pair(
                 photo_mask_pair=photo_mask_pair,
                 num_color_channels=self.num_color_channels,
@@ -794,21 +807,21 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         unlabeled_batch_files = self.unlabeled_data_set.get_indices(index_array)
 
-        # In parallel: Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        X_unlabeled = [process_photo(
+        # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
+        unlabeled_data = [get_unlabeled_segmentation_data_pair(
             photo=photo,
+            label_generation_function=self.label_generation_function,
             num_color_channels=self.num_color_channels,
             crop_shape=self.crop_shape,
             resize_shape=self.resize_shape,
             photo_cval=self.photo_cval,
+            mask_cval=[0],
             use_data_augmentation=self.use_data_augmentation,
             data_augmentation_params=self.data_augmentation_params,
             img_data_format=self.img_data_format,
             div2_constraint=4) for photo in unlabeled_batch_files]
 
-        # In parallel: Generate segmentation masks for the unlabeled photos
-        # Note: cropping and augmentation already applied, but channels not normalized
-        Y_unlabeled = [self.label_generation_function(np_photo) for np_photo in X_unlabeled]
+        X_unlabeled, Y_unlabeled = zip(*unlabeled_data)
 
         return list(X_unlabeled), list(Y_unlabeled)
 
@@ -833,10 +846,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         with self.lock:
             labeled_index_array, labeled_current_index, labeled_current_batch_size = self.labeled_data_iterator.get_next_batch()
-
-            unlabeled_index_array = None
-            unlabeled_current_index = None
-            unlabeled_current_batch_size = None
+            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size = None, None, None
 
             if self.has_unlabeled_data():
                 unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size = self.unlabeled_data_iterator.get_next_batch()
@@ -848,6 +858,15 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         num_unlabeled_samples_in_batch = len(X_unlabeled)
         num_samples_in_batch = len(X)
+
+        # Debug: Write images
+        for i in range(len(X)):
+            from keras.preprocessing.image import array_to_img
+            _debug_photo = array_to_img(X[i])
+            _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
+            _debug_mask = array_to_img(Y[i][:, :, np.newaxis])
+            _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
+        # End of: debug
 
         # Cast the lists to numpy arrays
         X, Y = np.array(X), np.array(Y)

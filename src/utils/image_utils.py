@@ -1,9 +1,15 @@
 # coding=utf-8
 
 import numpy as np
-from skimage.segmentation import slic
+import copy
 
-from keras.preprocessing.image import array_to_img, img_to_array, flip_axis, apply_transform, transform_matrix_offset_center
+from skimage.segmentation import slic, felzenszwalb, quickshift, watershed
+from skimage.color import rgb2gray
+from skimage.filters import sobel
+
+from keras.preprocessing.image import array_to_img, img_to_array, flip_axis, apply_transform, transform_matrix_offset_center, random_channel_shift
+
+import dataset_utils
 
 
 def np_apply_random_transform(images,
@@ -12,9 +18,12 @@ def np_apply_random_transform(images,
                               img_data_format='channels_last',
                               rotation_range=None,
                               zoom_range=None,
+                              width_shift_range=0.0,
+                              height_shift_range=0.0,
+                              channel_shift_ranges=None,
                               horizontal_flip=False,
                               vertical_flip=False):
-    # type: (list[np.array], list[np.array], str, str, (float,float), (float,float), bool, bool) -> list[np.array]
+    # type: (list[np.array], list[np.array], str, str, (float,float), (float,float), float, float, list[np.array], bool, bool) -> list[np.array]
 
     """
     Randomly augments, in the same way, a list of numpy images.
@@ -26,11 +35,17 @@ def np_apply_random_transform(images,
         :param img_data_format: format of the image data (channels_last or channels_first)
         :param rotation_range: range of the rotations in degrees
         :param zoom_range: zoom range > 1 zoom in, < 1 zoom out
+        :param width_shift_range: fraction of total width [0, 1]
+        :param height_shift_range: fraction of total height [0, 1]
+        :param channel_shift_ranges: a list of channel shift ranges for each image, must be shorter or same length as images list
         :param horizontal_flip: should horizontal flips be applied
         :param vertical_flip: should vertical flips be applied
     # Returns
         :return: Inputs (x, y) with the same random transform applied.
     """
+
+    if images is None or len(images) == 0:
+        return images
 
     # Figure out the correct axes according to image data format
     if img_data_format == 'channels_first':
@@ -53,11 +68,32 @@ def np_apply_random_transform(images,
             raise ValueError('Unmatching fill value dimensions for image element {}: {} vs {}'
                              .format(i, len(cvals[i]), images[i].shape[img_channel_axis]))
 
+    # Make sure the images have the same dimensions HxW
+    img_width = images[0].shape[img_col_axis]
+    img_height = images[0].shape[img_row_axis]
+
+    for i in range(1, len(images)):
+        if img_height != images[i].shape[img_row_axis] or img_width != images[i].shape[img_col_axis]:
+            raise ValueError('Unmatching image dimensions - cannot apply same transformations: {} vs {}'
+                             .format(images[0].shape, images[i].shape))
+
     # Rotation
     if rotation_range:
         theta = np.pi / 180.0 * np.random.uniform(-rotation_range, rotation_range)
     else:
         theta = 0.0
+
+    # Height shift
+    if height_shift_range is not None and height_shift_range > 0.0:
+        tx = np.random.uniform(-height_shift_range, height_shift_range) * images[0].shape[img_row_axis]
+    else:
+        tx = 0
+
+    # Width shift
+    if width_shift_range is not None and width_shift_range > 0.0:
+        ty = np.random.uniform(-width_shift_range, width_shift_range) * images[0].shape[img_col_axis]
+    else:
+        ty = 0
 
     # Zoom
     if zoom_range is None or (zoom_range[0] == 1 and zoom_range[1] == 1):
@@ -65,14 +101,21 @@ def np_apply_random_transform(images,
     else:
         zx, zy = np.random.uniform(zoom_range[0], zoom_range[1], 2)
 
-    # Apply rotation to the transformation matrix
     transform_matrix = None
 
+    # Apply rotation to the transformation matrix
     if theta != 0:
         rotation_matrix = np.array([[np.cos(theta), -np.sin(theta), 0],
                                     [np.sin(theta), np.cos(theta), 0],
                                     [0, 0, 1]])
         transform_matrix = rotation_matrix
+
+    # Apply translation to the transformation matrix
+    if tx != 0 or ty != 0:
+        shift_matrix = np.array([[1, 0, tx],
+                                 [0, 1, ty],
+                                 [0, 0, 1]])
+        transform_matrix = shift_matrix if transform_matrix is None else np.dot(transform_matrix, shift_matrix)
 
     # Apply zoom to the transformation matrix
     if zx != 1 or zy != 1:
@@ -90,9 +133,8 @@ def np_apply_random_transform(images,
 
         for i in range(0, len(images)):
             h, w = images[i].shape[img_row_axis], images[i].shape[img_col_axis]
-            transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
-            images[i] = apply_transform(images[i], transform_matrix, img_channel_axis,
-                                        fill_mode=fill_mode, cval=temp_cval)
+            final_transform_matrix = transform_matrix_offset_center(transform_matrix, h, w)
+            images[i] = apply_transform(images[i], final_transform_matrix, img_channel_axis, fill_mode=fill_mode, cval=temp_cval)
             mask = images[i][:, :, 0] == temp_cval
             images[i][mask] = cvals[i]
 
@@ -108,7 +150,16 @@ def np_apply_random_transform(images,
             for i in range(0, len(images)):
                 images[i] = flip_axis(images[i], img_row_axis)
 
-    # Check that we don't have any nan values
+    # Random channel shifts
+    if channel_shift_ranges is not None:
+        if len(channel_shift_ranges) > len(images):
+            raise ValueError('Channel shift ranges list is longer than the image list: {} vs {}'.format(len(channel_shift_ranges), len(images)))
+
+        for i in range(0, len(channel_shift_ranges)):
+            # Images are [0,255] color encoded, multiply intensity [0,1] by 255 to get the real shift intensity
+            images[i] = random_channel_shift(images[i], intensity=channel_shift_ranges[i]*255.0, channel_axis=img_channel_axis)
+
+    # Check that we don't have any NaN values
     for i in range(0, len(images)):
         if np.any(np.invert(np.isfinite(images[i]))):
             raise ValueError('NaN/inifinite values found after applying random transform')
@@ -117,8 +168,7 @@ def np_apply_random_transform(images,
 
 
 def np_crop_image(np_img, x1, y1, x2, y2):
-    # type: (np.array, int, int, int, int) -> np
-    # .array
+    # type: (np.array, int, int, int, int) -> np.array
 
     """
     Crops an image represented as a Numpy array. The function expects the numpy array
@@ -248,7 +298,7 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
     return np_img
 
 
-def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None, clamp_to_range=False):
+def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None, clamp_to_range=False, inplace=False):
     """
     Normalizes the color channels from the given image to zero-centered
     range [-1, 1] from the original [0, 255] range. If the per channels
@@ -262,43 +312,45 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
         :param per_channel_mean: per-channel mean of the dataset in range [-1, 1]
         :param per_channel_stddev: per-channel standard deviation in range [-1, 1]
         :param clamp_to_range: should the values be clamped to range [-1, 1]
+        :param inplace: should we modify the passed value or create a copy
     # Returns
         :returns: the normalized image with channels in  range [-1, 1]
     """
-    img_array -= 128.0
-    img_array /= 128.0
-
-    if per_channel_mean and not isinstance(per_channel_mean, type(np.array)):
-        per_channel_mean = np.array(per_channel_mean)
-
-    if per_channel_stddev and not isinstance(per_channel_stddev, type(np.array)):
-        per_channel_stddev = np.array(per_channel_stddev)
+    if inplace:
+        normalized_img_array = img_array
+    else:
+        normalized_img_array = copy.deepcopy(img_array)
 
     # Subtract the per-channel-mean from the batch to "center" the data.
     if per_channel_mean is not None:
-        if not ((per_channel_mean < 1.0 + 1e-7).all() and (per_channel_mean > -1.0 - 1e-7).all()):
+        _per_channel_mean = np.array(per_channel_mean)
+        if not ((_per_channel_mean < 1.0 + 1e-7).all() and (_per_channel_mean > -1.0 - 1e-7).all()):
             raise ValueError('Per-channel mean is not within range [-1, 1]')
-        img_array -= per_channel_mean
+        normalized_img_array -= dataset_utils.np_from_normalized_to_255(_per_channel_mean)
 
     # Additionally, you ideally would like to divide by the sttdev of
     # that feature or pixel as well if you want to normalize each feature
     # value to a z-score.
     if per_channel_stddev is not None:
-        if not ((per_channel_stddev < 1.0 + 1e-7).all() and (per_channel_stddev > -1.0 - 1e-7).all()):
+        _per_channel_stddev = np.array(per_channel_stddev)
+        if not ((_per_channel_stddev < 1.0 + 1e-7).all() and (_per_channel_stddev > -1.0 - 1e-7).all()):
             raise ValueError('Per-channel stddev is not within range [-1, 1]')
-        img_array /= (per_channel_stddev + 1e-7)
+        normalized_img_array /= dataset_utils.np_from_normalized_to_255(_per_channel_stddev)
+
+    normalized_img_array -= 128.0
+    normalized_img_array /= 128.0
 
     if clamp_to_range:
-        np.clip(img_array, -1.0, 1.0, out=img_array)
+        np.clip(normalized_img_array, -1.0, 1.0, out=normalized_img_array)
 
     # Sanity check for the image values, we shouldn't have any NaN or inf values
-    if np.any(np.isnan(img_array)):
+    if np.any(np.isnan(normalized_img_array)):
         raise ValueError('NaN values found in image after normalization')
 
-    if np.any(np.isinf(img_array)):
+    if np.any(np.isinf(normalized_img_array)):
         raise ValueError('Inf values found in image after normalization')
 
-    return img_array
+    return normalized_img_array
 
 
 def np_get_random_crop_area(np_image, crop_width, crop_height):
@@ -327,7 +379,7 @@ def np_get_random_crop_area(np_image, crop_width, crop_height):
     return (x1, y1), (x2, y2)
 
 
-def np_get_superpixel_segmentation(np_img, n_segments, sigma=5, compactness=10.0, max_iter=10):
+def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_iter=20):
     # type: (np.array, int, int, float) -> np.array
 
     """
@@ -348,4 +400,26 @@ def np_get_superpixel_segmentation(np_img, n_segments, sigma=5, compactness=10.0
     # Apply SLIC and extract (approximately) the supplied number
     # of segments
     segments = slic(np_img, n_segments=n_segments, sigma=sigma, compactness=compactness, max_iter=max_iter)
+    return segments
+
+
+def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True):
+    # type: (np.array, float, float, int, bool) -> np.array
+
+    segments = felzenszwalb(image=np_img, scale=scale, sigma=sigma, min_size=min_size, multichannel=multichannel)
+    return segments
+
+
+def np_get_watershed_segmentation(np_img, markers, compactness=0.001):
+    # type: (np.array, int, float) -> np.array
+
+    gradient = sobel(rgb2gray(np_img))
+    segments = watershed(gradient, markers=markers, compactness=compactness)
+    return segments
+
+
+def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5):
+    # type: (np.array, float, float, float, float) -> np.array
+
+    segments = quickshift(np_img, kernel_size=kernel_size, max_dist=max_dist, sigma=sigma, ratio=ratio)
     return segments

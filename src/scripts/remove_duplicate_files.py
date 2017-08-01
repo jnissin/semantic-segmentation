@@ -42,12 +42,12 @@ def main():
     folder_b_path = args['folderb']
     incsub = args['incsub']
 
-    print 'Reading files in folder A'
-    folder_a_files = get_files(folder_a_path)
+    print 'Reading files from folder A'
+    folder_a_files = get_files(folder_a_path, include_sub_dirs=incsub)
     print 'Found {} files in folder A'.format(len(folder_a_files))
 
-    print 'Reading files in folder B'
-    folder_b_files = get_files(folder_b_path)
+    print 'Reading files from folder B'
+    folder_b_files = get_files(folder_b_path, include_sub_dirs=incsub)
     print 'Found {} files in folder B'.format(len(folder_b_files))
 
     # Create two sets and take the intersection to find the duplicate files
@@ -55,12 +55,13 @@ def main():
     folder_b_file_names = set([os.path.basename(p) for p in folder_b_files])
     duplicate_file_names = folder_a_file_names.intersection(folder_b_file_names)
 
-    response = raw_input('Found {} duplicate file names. Ready to remove, continue (Y/N)? '.format(len(duplicate_file_names)))
+    response = raw_input('Found {} duplicate file names. Ready to remove from folder A, continue (Y/N)? '.format(len(duplicate_file_names)))
 
     if str(response).lower() == 'y':
         for f in duplicate_file_names:
-            os.remove(os.path.join(folder_a_path, f))
-            print 'Removed duplicate file: {}'.format(f)
+            file_path = os.path.join(folder_a_path, f)
+            print 'Removing: {}'.format(file_path)
+            os.remove(file_path)
 
     print 'Done'
 

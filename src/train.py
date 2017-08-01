@@ -109,7 +109,8 @@ def label_generation_function(np_img):
         :return: superpixel segmentation
     """
     normalized_img = image_utils.np_normalize_image_channels(np_img, clamp_to_range=True)
-    val = image_utils.np_get_superpixel_segmentation(normalized_img, 200)
+    #val = image_utils.np_get_slic_segmentation(normalized_img, 250, sigma=0, compactness=2.0, max_iter=20)
+    val = image_utils.np_get_felzenswalb_segmentation(normalized_img, scale=550, sigma=1.5, min_size=20)
     return val
 
 

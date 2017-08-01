@@ -138,6 +138,9 @@ class TrainerBase:
             augmentation_probability = augmentation_config.get('augmentation_probability')
             rotation_range = augmentation_config.get('rotation_range')
             zoom_range = augmentation_config.get('zoom_range')
+            width_shift_range = augmentation_config.get('width_shift_range')
+            height_shift_range = augmentation_config.get('height_shift_range')
+            channel_shift_range = augmentation_config.get('channel_shift_range')
             horizontal_flip = augmentation_config.get('horizontal_flip')
             vertical_flip = augmentation_config.get('vertical_flip')
 
@@ -145,6 +148,9 @@ class TrainerBase:
                 augmentation_probability=augmentation_probability,
                 rotation_range=rotation_range,
                 zoom_range=zoom_range,
+                width_shift_range=width_shift_range,
+                height_shift_range=height_shift_range,
+                channel_shift_range=channel_shift_range,
                 horizontal_flip=horizontal_flip,
                 vertical_flip=vertical_flip)
 
