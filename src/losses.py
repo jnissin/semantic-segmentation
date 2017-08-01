@@ -188,23 +188,30 @@ def _tf_calculate_image_entropy_fast(i, img_y_true_unlabeled, img_y_pred_unlabel
         :return: loop index, y true unlabeled, num classes, increased batch entropy
     """
 
+    f_dtype = K.tf.half
+
     # Superpixel segment indices are continuous and start from index 0, so the
     # number of superpixels is the maximum index + 1 present in the 'true' image
     num_superpixels = K.tf.reduce_max(img_y_true_unlabeled)+1
 
     # Expand the super pixels to one hot encoded format (NSxHxW)
-    superpixel_masks = K.tf.one_hot(img_y_true_unlabeled, depth=num_superpixels, on_value=1.0, off_value=0.0, axis=0, dtype=K.tf.float32)
+    superpixel_masks = K.tf.one_hot(indices=img_y_true_unlabeled,
+                                    depth=num_superpixels,
+                                    on_value=K.tf.constant(1, dtype=f_dtype),
+                                    off_value=K.tf.constant(0, dtype=f_dtype),
+                                    axis=0,
+                                    dtype=f_dtype)
 
     # Calculate the number of pixels in each superpixel (NSx(1))
-    num_pixels = K.tf.reduce_sum(superpixel_masks, axis=(1, 2))
+    num_pixels = K.tf.cast(K.tf.reduce_sum(superpixel_masks, axis=(1, 2)), dtype=K.tf.float32)
 
     # Create a masks for everything that doesn't belong in the superpixel
-    rest = K.tf.cast(K.tf.cast(K.tf.less(superpixel_masks, 1.0), dtype=K.tf.int32) * num_classes, dtype=K.tf.float32)
+    rest = K.tf.cast(K.tf.less(superpixel_masks, 1), dtype=f_dtype) * K.tf.cast(num_classes, dtype=f_dtype)
 
     # Copy the predictions to the superpixel 'stencils' and encode everything else
     # as num_classes index and replace all values representing the background in the
     # superpixel masks with the highest index i.e. num classes (NSxHxW)
-    superpixel_masks = K.tf.multiply(K.tf.cast(img_y_pred_unlabeled, dtype=K.tf.float32), superpixel_masks)
+    superpixel_masks = K.tf.multiply(K.tf.cast(img_y_pred_unlabeled, dtype=f_dtype), superpixel_masks)
     superpixel_masks = superpixel_masks + rest
 
     # Reshape the superpixel tensor from NSxHxW to NSxN_PIXELS
@@ -213,10 +220,14 @@ def _tf_calculate_image_entropy_fast(i, img_y_true_unlabeled, img_y_pred_unlabel
     # Count the occurrences of different class predictions within the superpixels and
     # get rid of the last index, which repsents the image area outside the superpixel.
     # The new shape will be NSxNC
-    class_occurrences = K.tf.map_fn(lambda x: K.tf.unsorted_segment_sum(K.tf.ones_like(x, dtype=K.tf.int32), x, num_classes+1),
-                                    K.tf.cast(superpixel_masks, dtype=K.tf.int32))
+    class_occurrences = K.tf.map_fn(lambda x: K.tf.unsorted_segment_sum(K.tf.ones_like(x, dtype=K.tf.int32), K.tf.cast(x, dtype=K.tf.int32), num_classes+1),
+                                    superpixel_masks,
+                                    dtype=K.tf.int32)
+
     class_occurrences = class_occurrences[:, :-1]
     class_occurrences = K.tf.cast(class_occurrences, dtype=K.tf.float32)
+
+    # Switch to NCxNS
     class_occurrences = K.tf.transpose(class_occurrences, (1, 0))
 
     # Calculate the entropy for the superpixels
