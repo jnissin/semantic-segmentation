@@ -109,55 +109,50 @@ def _tf_softmax(y_pred, epsilon=None):
 def _tf_calculate_superpixel_entropy(j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy):
     # j is the superpixel label - select only the area of the unlabeled_true
     # image where the values match the superpixel index
+    f_dtype = K.tf.uint16
 
     # A tensor of HxW
     superpixel = K.tf.cast(K.tf.equal(img_y_true_unlabeled, j), K.tf.int32)
     num_pixels = K.tf.cast(K.tf.reduce_sum(superpixel), dtype=K.tf.float32)
-    rest = K.tf.cast(K.tf.not_equal(img_y_true_unlabeled, j), K.tf.int32)
 
     # Copy the predictions with the superpixel 'stencil' and encode everything else
     # as num_classes index
-    superpixel = K.tf.multiply(img_y_pred_unlabeled, superpixel)
-    rest = K.tf.multiply(rest, num_classes)
-    superpixel = K.tf.add(superpixel, rest)
+    superpixel = K.tf.add(K.tf.multiply(img_y_pred_unlabeled, superpixel),
+                          K.tf.multiply(K.tf.cast(K.tf.not_equal(img_y_true_unlabeled, j), K.tf.int32), num_classes))
 
-    # Count the occurrences of different class predictions within the superpixel and
+    # Count the frequencies of different class predictions within the superpixel and
     # get rid of the last index, which represents the image area outside the superpixel
     superpixel = K.tf.reshape(superpixel, [-1])
-    class_occurrences = K.tf.cast(K.tf.unsorted_segment_sum(K.tf.ones_like(superpixel), superpixel, num_classes+1), dtype=K.tf.float32)
-    class_occurrences = class_occurrences[:-1]
+    class_frequencies = K.tf.unsorted_segment_sum(data=K.tf.ones_like(superpixel, dtype=f_dtype), segment_ids=superpixel, num_segments=num_classes+1)
+    class_frequencies = K.tf.cast(class_frequencies[:-1], dtype=K.tf.float32)
 
     # Calculate the entropy of this superpixel
-    superpixel_entropy = K.tf.div(class_occurrences, num_pixels)
+    superpixel_entropy = K.tf.div(class_frequencies, num_pixels)
 
     # Log2 can easily have NaNs and infs when class frequencies are zero, filter them out
-    log2_entropy = _tf_log2(superpixel_entropy)
-    log2_entropy = _tf_filter_infinite(log2_entropy, 0)
+    log2_entropy = _tf_filter_infinite(_tf_log2(superpixel_entropy), 0)
 
     # Super pixel entropy can get quite small when multiplying, filter NaNs and replace
     # NaN values with epsilon
     superpixel_entropy = K.tf.multiply(superpixel_entropy, log2_entropy)
     superpixel_entropy = _tf_filter_infinite(superpixel_entropy, _EPSILON)
     #superpixel_entropy = K.tf.Print(superpixel_entropy, [j, num_pixels, class_occurrences, superpixel_entropy, log2_entropy], message="spixel: ", summarize=24)
-    superpixel_entropy = -1 * K.tf.reduce_sum(superpixel_entropy)
+    superpixel_entropy = K.tf.multiply(-1.0, K.tf.reduce_sum(superpixel_entropy))
 
     # Add to the image entropy accumulator and increase the loop variable
-    image_entropy += superpixel_entropy
-    j += 1
+    image_entropy = K.tf.add(image_entropy, superpixel_entropy)
+    j = K.tf.add(j, 1)
 
     return j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy
 
 
-def _tf_calculate_image_entropy(i, y_true_unlabeled, y_pred_unlabeled, num_classes, batch_entropy):
+def _tf_calculate_image_entropy(i, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, batch_entropy):
 
     # Superpixel segment indices are continuous and start from index 0
-    num_superpixels = K.tf.reduce_max(y_true_unlabeled[i])+1
+    num_superpixels = K.tf.reduce_max(img_y_true_unlabeled)+1
     for_each_superpixel_cond = lambda j, p1, p2, p3, p4: K.tf.less(j, num_superpixels)
     j = K.tf.constant(0, dtype=K.tf.int32)
     image_entropy = K.tf.constant(0, dtype=K.tf.float32)
-
-    img_y_true_unlabeled = y_true_unlabeled[i]
-    img_y_pred_unlabeled = y_pred_unlabeled[i]
 
     #img_y_pred_unlabeled = K.tf.Print(img_y_pred_unlabeled, [i, img_y_pred_unlabeled], message="img y pred: ", summarize=100)
     #img_y_true_unlabeled = K.tf.Print(img_y_true_unlabeled, [i, img_y_true_unlabeled], message="img y true: ", summarize=100)
@@ -168,10 +163,10 @@ def _tf_calculate_image_entropy(i, y_true_unlabeled, y_pred_unlabeled, num_class
                         loop_vars=[j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy])
 
     # Add the image entropy to the batch entropy and increase the loop variable
-    batch_entropy += image_entropy
-    i += 1
+    batch_entropy = K.tf.add(batch_entropy, image_entropy)
+    i = K.tf.add(i, 1)
 
-    return i, y_true_unlabeled, y_pred_unlabeled, num_classes, batch_entropy
+    return i, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, batch_entropy
 
 
 def _tf_calculate_image_entropy_fast(i, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, batch_entropy):
@@ -269,7 +264,7 @@ def _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, num_unlabe
 
         i, _, _, _, batch_entropy =\
             K.tf.while_loop(cond=for_each_unlabeled_image_cond,
-                            body=_tf_calculate_image_entropy_fast,
+                            body=_tf_calculate_image_entropy,
                             loop_vars=[i, _y_true_unlabeled[i], _y_pred_unlabeled[i], _num_classes, batch_entropy])
 
         # Take the mean over the batch images
@@ -677,10 +672,11 @@ def mean_teacher_superpixel_lambda_loss(class_weights=None):
         """
         unlabeled_classification_cost = _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, int_num_unlabeled, int_num_classes)
         unlabeled_classification_cost = unlabeled_cost_coefficient[0] * unlabeled_classification_cost
-        #unlabeled_classification_cost = K.tf.Print(unlabeled_classification_cost, [unlabeled_classification_cost], message="spixel loss: ", summarize=24)
+        #unlabeled_classification_cost = K.tf.Print(unlabeled_classification_cost, [unlabeled_classification_cost], message="unlabeled loss: ", summarize=24)
 
         # Total cost
         total_costs = classification_costs + consistency_cost + unlabeled_classification_cost
+        #total_costs = K.tf.Print(total_costs, [total_costs], message="total costs: ", summarize=24)
         return total_costs
 
     return loss
