@@ -23,7 +23,7 @@
     "crop_shape": [384, 384],
     "resize_shape": null,
 
-    "num_labeled_per_batch": 5,
+    "num_labeled_per_batch": 3,
     "num_unlabeled_per_batch": 0,
     "validation_num_labeled_per_batch": 5,
     "validation_crop_shape": null,
