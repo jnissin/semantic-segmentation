@@ -156,6 +156,8 @@ class TrainerBase:
 
             self.log('Data augmentation params: augmentation probability: {}, rotation range: {}, zoom range: {}, horizontal flip: {}, vertical flip: {}'
                      .format(augmentation_probability, rotation_range, zoom_range, horizontal_flip, vertical_flip))
+        else:
+            self.data_augmentation_parameters = None
 
         self._init_config()
         self._init_data()
