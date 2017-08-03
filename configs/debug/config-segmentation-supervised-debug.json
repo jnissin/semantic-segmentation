@@ -39,7 +39,7 @@
       "decay": 2e-5
     },
 
-    "use_data_augmentation": true,
+    "use_data_augmentation": false,
 
     "data_augmentation_params": {
         "augmentation_probability": 0.5,
