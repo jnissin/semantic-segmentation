@@ -1,8 +1,8 @@
 #!/bin/bash
 
 #Request 1 Tesla K80 gpu(s) and 4 CPU(s) for 2 day(s)
-#SBATCH --gres=gpushort:teslak80:1
-#SBATCH -p gpu
+#SBATCH --gres=gpu:teslak80:1
+#SBATCH -p gpushort
 #SBATCH --mem 16G
 #SBATCH -c 4
 #SBATCH -t 04:00:00
