@@ -150,8 +150,6 @@ def main():
                                       model_folder_name=model_folder_name,
                                       config_file_path=trainer_config_file_path,
                                       debug=debug)
-
-        trainer.train()
     elif trainer_type == 'semisupervised-segmentation':
         trainer = SemisupervisedSegmentationTrainer(model_name=model_name,
                                                     model_folder_name=model_folder_name,
@@ -161,8 +159,6 @@ def main():
                                                     consistency_cost_coefficient_function=consistency_coefficient_function,
                                                     ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,
                                                     unlabeled_cost_coefficient_function=unlabeled_cost_coefficient_function)
-
-        signal.signal(signal.SIGINT, get_signal_handler(trainer))
     elif trainer_type == 'classification':
         raise NotImplementedError('Classification training has not yet been implemented')
     else:

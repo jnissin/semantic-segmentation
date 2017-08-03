@@ -106,6 +106,57 @@ def _tf_softmax(y_pred, epsilon=None):
     return softmax
 
 
+def _tf_sobel(img):
+    """
+    Applies a Sobel filter to the parameter image. Image must be of rank 2 (HxW).
+
+    # Arguments
+        :param img: Image tensor
+    # Returns
+        :return: Gx, Gy
+    """
+
+    sobel_x = K.tf.constant([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], K.tf.float32)
+    sobel_x_filter = K.tf.reshape(sobel_x, [3, 3, 1, 1])
+    sobel_y_filter = K.tf.transpose(sobel_x_filter, [1, 0, 2, 3])
+
+    # Shape = 1 x height x width x 1.
+    image_resized = K.tf.cast(K.tf.expand_dims(K.tf.expand_dims(img, 0), 3), K.tf.float32)
+
+    filtered_x = K.tf.nn.conv2d(image_resized, sobel_x_filter, strides=[1, 1, 1, 1], padding='SAME')
+    filtered_x = K.tf.squeeze(filtered_x)
+    filtered_y = K.tf.nn.conv2d(image_resized, sobel_y_filter, strides=[1, 1, 1, 1], padding='SAME')
+    filtered_y = K.tf.squeeze(filtered_y)
+
+    return filtered_x, filtered_y
+
+
+def _tf_calculate_superpixel_entropy_with_gradients(j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy):
+    # A tensor of HxW
+    f_dtype = K.tf.float32
+
+    superpixel_mask = K.tf.cast(K.tf.equal(img_y_true_unlabeled, j), dtype=f_dtype)
+    #num_pixels = K.tf.count_nonzero(superpixel_mask, dtype=K.tf.float32)
+
+    # Create the superpixel prediction mask
+    superpixel_predictions = K.tf.multiply(superpixel_mask, K.tf.cast(img_y_pred_unlabeled, dtype=f_dtype))
+
+    # Calculate the 2D, X and Y, gradient
+    gx, gy = _tf_sobel(superpixel_predictions)
+    gx = K.tf.multiply(superpixel_mask, K.tf.cast(gx, dtype=f_dtype))
+    gy = K.tf.multiply(superpixel_mask, K.tf.cast(gy, dtype=f_dtype))
+    g_mag_squared = K.tf.add(K.tf.square(gx), K.tf.square(gy))
+    g_mag_squared = K.tf.reduce_sum(K.tf.sqrt(g_mag_squared))
+    #g_mag_squared = K.tf.Print(g_mag_squared, [g_mag_squared], message='g_mag: ', summarize=24)
+
+    # Add to the image entropy accumulator and increase the loop variable
+    image_entropy = K.tf.add(image_entropy, g_mag_squared)
+    image_entropy.set_shape(K.tf.TensorShape([]))
+    j = K.tf.add(j, 1)
+
+    return j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy
+
+
 def _tf_calculate_superpixel_entropy(j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy):
     # j is the superpixel label - select only the area of the unlabeled_true
     # image where the values match the superpixel index

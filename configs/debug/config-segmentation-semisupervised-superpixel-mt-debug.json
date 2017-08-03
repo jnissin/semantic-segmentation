@@ -23,8 +23,8 @@
     "crop_shape": [384, 384],
     "resize_shape": null,
 
-    "num_labeled_per_batch": 3,
-    "num_unlabeled_per_batch": 3,
+    "num_labeled_per_batch": 1,
+    "num_unlabeled_per_batch": 1,
     "validation_num_labeled_per_batch": 5,
     "validation_crop_shape": null,
     "validation_resize_shape": [512, 512],
@@ -53,7 +53,7 @@
     },
 
     "reduce_lr_on_plateau": {
-      "factor": 0.5,
+      "factor": 0.1,
       "verbose": 1,
       "patience": 3,
       "epsilon": 0.0001,
