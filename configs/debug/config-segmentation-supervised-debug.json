@@ -53,11 +53,11 @@
     },
 
     "reduce_lr_on_plateau": {
-      "factor": 0.1,
+      "factor": 0.5,
       "verbose": 1,
       "patience": 3,
       "epsilon": 0.0001,
-      "cooldown": 0,
+      "cooldown": 5,
       "min_lr": 0,
       "monitor": "loss"
     },
