@@ -58,7 +58,8 @@
       "patience": 3,
       "epsilon": 0.0001,
       "cooldown": 0,
-      "min_lr": 0
+      "min_lr": 0,
+      "monitor": "loss"
     },
 
     "image_data_format": "channels_last",

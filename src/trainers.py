@@ -299,9 +299,10 @@ class TrainerBase:
             epsilon = reduce_lr_on_plateau.get('epsilon') or 0.0001
             cooldown = reduce_lr_on_plateau.get('cooldown') or 0
             verbose = reduce_lr_on_plateau.get('verbose') or 0
+            monitor = reduce_lr_on_plateau.get('monitor') or 'val_loss'
 
             reduce_lr = ReduceLROnPlateau(
-                monitor='val_loss',
+                monitor=monitor,
                 factor=factor,
                 patience=patience,
                 min_lr=min_lr,
