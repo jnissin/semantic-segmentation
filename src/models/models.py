@@ -1140,18 +1140,18 @@ class YOLONetModel(ModelBase):
         """
         conv1, pool1 = YOLONetModel.get_encoder_block('encoder_block1', 2, 64, inputs)
         conv2, pool2 = YOLONetModel.get_encoder_block('encoder_block2', 2, 96, pool1)
-        conv3, pool3 = YOLONetModel.get_encoder_block('encoder_block3', 3, 144, pool2)
-        conv4, pool4 = YOLONetModel.get_encoder_block('encoder_block4', 3, 216, pool3)
-        conv5, pool5 = YOLONetModel.get_encoder_block('encoder_block5', 3, 324, pool4)
-        conv6, pool6 = YOLONetModel.get_encoder_block('encoder_block6', 3, 486, pool5)
+        conv3, pool3 = YOLONetModel.get_encoder_block('encoder_block3', 2, 144, pool2)
+        conv4, pool4 = YOLONetModel.get_encoder_block('encoder_block4', 2, 216, pool3)
+        conv5, pool5 = YOLONetModel.get_encoder_block('encoder_block5', 2, 324, pool4)
+        conv6, pool6 = YOLONetModel.get_encoder_block('encoder_block6', 2, 486, pool5)
 
         """
         Decoder path
         """
-        conv7 = YOLONetModel.get_decoder_block('decoder_block1', 3, 486, pool6, conv6, transposed=True)
-        conv8 = YOLONetModel.get_decoder_block('decoder_block2', 3, 324, conv7, conv5)
-        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 3, 216, conv8, conv4, transposed=True)
-        conv10 = YOLONetModel.get_decoder_block('decoder_block4', 3, 144, conv9, conv3)
+        conv7 = YOLONetModel.get_decoder_block('decoder_block1', 2, 486, pool6, conv6, transposed=True)
+        conv8 = YOLONetModel.get_decoder_block('decoder_block2', 2, 324, conv7, conv5)
+        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 2, 216, conv8, conv4, transposed=True)
+        conv10 = YOLONetModel.get_decoder_block('decoder_block4', 2, 144, conv9, conv3)
         conv11 = YOLONetModel.get_decoder_block('decoder_block5', 2, 96, conv10, conv2, transposed=True)
         conv12 = YOLONetModel.get_decoder_block('decoder_block6', 2, 64, conv11, conv1)
 
