@@ -531,12 +531,12 @@ class SegNetBasicModel(ModelBase):
         conv2, pool2 = UNetModel.get_encoder_block('encoder_block2', 2, 128, pool1)
         conv3, pool3 = UNetModel.get_encoder_block('encoder_block3', 3, 256, pool2)
         conv4, pool4 = UNetModel.get_encoder_block('encoder_block4', 3, 512, pool3)
-        # conv5, pool5 = get_encoder_block('encoder_block5', 3, 1024, conv4)
+        #conv5, pool5 = UNetModel.get_encoder_block('encoder_block5', 3, 1024, conv4)
 
         """
         Decoder path
         """
-        # conv6 = get_decoder_block('decoder_block1', 3, 1024, conv5, conv5)
+        #conv6 = UNetModel.get_decoder_block('decoder_block1', 3, 1024, conv5, conv5)
         conv5 = UNetModel.get_decoder_block('decoder_block2', 3, 512, pool4, conv4)
         conv6 = UNetModel.get_decoder_block('decoder_block3', 3, 256, conv5, conv3)
         conv7 = UNetModel.get_decoder_block('decoder_block4', 2, 128, conv6, conv2)
@@ -1150,15 +1150,15 @@ class YOLONetModel(ModelBase):
         """
         conv7 = YOLONetModel.get_decoder_block('decoder_block1', 3, 486, pool6, conv6, transposed=True)
         conv8 = YOLONetModel.get_decoder_block('decoder_block2', 3, 324, conv7, conv5)
-        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 3, 216, conv8, conv4)
-        conv10 = YOLONetModel.get_decoder_block('decoder_block4', 2, 144, conv9, conv3, transposed=True)
-        conv11 = YOLONetModel.get_decoder_block('decoder_block5', 2, 96, conv10, conv2)
+        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 3, 216, conv8, conv4, transposed=True)
+        conv10 = YOLONetModel.get_decoder_block('decoder_block4', 3, 144, conv9, conv3)
+        conv11 = YOLONetModel.get_decoder_block('decoder_block5', 2, 96, conv10, conv2, transposed=True)
         conv12 = YOLONetModel.get_decoder_block('decoder_block6', 2, 64, conv11, conv1)
 
         """
         FC
         """
-        conv13 = Conv2D(self.num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv12)
+        conv13 = Conv2D(self.num_classes, (1, 1), name='fc1', padding='same', kernel_initializer='he_normal', bias_initializer='zeros')(conv12)
 
         return [conv13]
 
@@ -1178,22 +1178,21 @@ class YOLONetModel(ModelBase):
             relu_alpha=0.1,
             dropout_rate=0.2,
             transposed=False):
-        conv = ZeroPadding2D(
-            (1, 1),
-            name='{}_padding'.format(name))(input_layer)
-
-        conv = None
 
         if transposed:
             conv = Conv2DTranspose(
                 filters=num_filters,
                 kernel_size=kernel_size,
-                padding=padding,
+                padding='same',
                 kernel_initializer=conv2d_kernel_initializer,
                 bias_initializer=conv2d_bias_initializer,
                 name=name,
-                use_bias=use_bias)(conv)
+                use_bias=use_bias)(input_layer)
         else:
+            conv = ZeroPadding2D(
+                (1, 1),
+                name='{}_padding'.format(name))(input_layer)
+
             conv = Conv2D(
                 filters=num_filters,
                 kernel_size=kernel_size,

@@ -237,8 +237,6 @@ def main():
     # likely caused by the class imbalance in the training data
     expanded_mask[:, :, 0] = expanded_mask[:, :, 0] * background_class_prediction_weight
 
-    #expanded_mask *= np.array(get_config_value('median_frequency_balancing_weights'))
-
     # Run CRF if we are using it for post-processing
     if crf_iterations > 0:
         # Must use the unnormalized image data
