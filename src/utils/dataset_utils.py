@@ -512,7 +512,7 @@ def get_material_samples(mask_files, material_class_information, background_clas
     # Parallelize the calculation for different files
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=4, backend='multiprocessing')(
+    data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_get_material_samples)(
             mask_file, r_color_to_material_id, background_class, min_sample_size) for mask_file in mask_files)
 
