@@ -25,6 +25,7 @@ def main():
     ap.add_argument("-r", "--rseed", required=True, type=int, help="Random seed")
     ap.add_argument("-s", "--split", required=True, type=str, help="Dataset split")
     ap.add_argument("--stats", required=False, type=bool, default=False, help="Calculate statistics for the new training set")
+    ap.add_argument("--msamples", required=False, type=bool, default=False, help="Calculate material sample data for labeled data")
     ap.add_argument("-o", "--output", required=True, help="Path to the output JSON file")
     args = vars(ap.parse_args())
 
@@ -34,6 +35,7 @@ def main():
     materials_path = args["categories"]
     rseed = args["rseed"]
     calculate_statistics = args["stats"]
+    calculate_material_samples = args["msamples"]
     split = [float(v.strip()) for v in args["split"].split(',')]
     output_path = args["output"]
 
@@ -63,6 +65,8 @@ def main():
 
     training_labeled_photos = [f[0] for f in training]
     training_labeled_masks = [f[1] for f in training]
+    validation_labeled_masks = [f[1] for f in validation]
+    test_labeled_masks = [f[1] for f in test]
     training_unlabeled_photos = []
 
     if unlabeled_path:
@@ -79,9 +83,37 @@ def main():
     test_labeled_photos_file_names = [f[0].file_name for f in test]
     test_labeled_masks_file_names = [f[1].file_name for f in test]
 
-    training_set = SegmentationTrainingSetInformation(training_labeled_photos_file_names, training_labeled_masks_file_names, training_unlabeled_photos_file_names)
-    validation_set = SegmentationSetInformation(validation_labeled_photos_file_names, validation_labeled_masks_file_names)
-    test_set = SegmentationSetInformation(test_labeled_photos_file_names, test_labeled_masks_file_names)
+    training_material_samples, validation_material_samples, test_material_samples = None, None, None
+
+    if calculate_material_samples:
+        print 'Calculating material samples for training set'
+        s_time = time.time()
+        training_material_samples = dataset_utils.get_material_samples(mask_files=training_labeled_masks, material_class_information=materials)
+        print 'Training material samples calculation finished in: {}s'.format(time.time()-s_time)
+
+        print 'Calculating material samples for validation set'
+        s_time = time.time()
+        validation_material_samples = dataset_utils.get_material_samples(mask_files=validation_labeled_masks, material_class_information=materials)
+        print 'Validation material samples calculation finished in: {}s'.format(time.time()-s_time)
+
+        print 'Calculating material samples for test set'
+        s_time = time.time()
+        test_material_samples = dataset_utils.get_material_samples(mask_files=test_labeled_masks, material_class_information=materials)
+        print 'Test material samples calculation finished in: {}s'.format(time.time()-s_time)
+
+
+    training_set = SegmentationTrainingSetInformation(training_labeled_photos_file_names,
+                                                      training_labeled_masks_file_names,
+                                                      training_unlabeled_photos_file_names,
+                                                      training_material_samples)
+
+    validation_set = SegmentationSetInformation(validation_labeled_photos_file_names,
+                                                validation_labeled_masks_file_names,
+                                                validation_material_samples)
+
+    test_set = SegmentationSetInformation(test_labeled_photos_file_names,
+                                          test_labeled_masks_file_names,
+                                          test_material_samples)
 
     per_channel_mean = []
     per_channel_stddev = []

@@ -5,6 +5,8 @@ import random
 import multiprocessing
 import math
 import jsonpickle
+import itertools
+from collections import deque
 
 import numpy as np
 
@@ -21,8 +23,41 @@ from ..data_set import ImageFile
 ##############################################
 
 
+class MaterialSample(object):
+
+    def __init__(self,
+                 file_name,
+                 material_id,
+                 material_r_color,
+                 pixel_info_list):
+        # type: (str, int, int, list[tuple[int]]) -> None
+
+        self.file_name = file_name
+        self.material_id = int(material_id)
+        self.material_r_color = int(material_r_color)
+        self.num_material_pixels = len(pixel_info_list)
+
+        # Note: pixel info list values are tuples of (pixel value, y coor, x coord)
+        y_min = min(pixel_info_list, key=lambda t: t[1])[1]
+        x_min = min(pixel_info_list, key=lambda t: t[2])[2]
+        y_max = max(pixel_info_list, key=lambda t: t[1])[1]
+        x_max = max(pixel_info_list, key=lambda t: t[2])[2]
+
+        self.yx_min = (y_min, x_min)
+        self.yx_max = (y_max, x_max)
+
+        self.bbox_center = ((self.yx_min[0] + self.yx_max[0]) / 2, (self.yx_min[1] + self.yx_max[1]) / 2)
+        self.bbox_size = (self.yx_max[0] - self.yx_min[0]) * (self.yx_max[1] - self.yx_min[1])
+
+
 class MaterialClassInformation(object):
-    def __init__(self, material_id, substance_ids, substance_names, r_color_values, color):
+
+    def __init__(self,
+                 material_id,
+                 substance_ids,
+                 substance_names,
+                 r_color_values,
+                 color):
         self.id = material_id
 
         self.substance_ids = substance_ids
@@ -34,10 +69,12 @@ class MaterialClassInformation(object):
 
 
 class SegmentationSetInformation(object):
+
     def __init__(self,
                  labeled_photos,
-                 labeled_masks):
-        # type: (list[str], list[str]) -> ()
+                 labeled_masks,
+                 material_samples=None):
+        # type: (list[str], list[str], list[list[MaterialSample]]) -> None
 
         if len(labeled_photos) != len(labeled_masks):
             raise ValueError('Unmatching photo and mask lengths in the data set: {} vs {}'
@@ -46,16 +83,19 @@ class SegmentationSetInformation(object):
         self.labeled_photos = labeled_photos
         self.labeled_masks = labeled_masks
         self.labeled_size = len(labeled_photos)
+        self.material_samples = material_samples
 
 
 class SegmentationTrainingSetInformation(SegmentationSetInformation):
+
     def __init__(self,
                  labeled_photos,
                  labeled_masks,
-                 unlabeled_photos=[]):
-        # type: (list[str], list[str], list[str]) -> ()
+                 unlabeled_photos=[],
+                 material_samples=None):
+        # type: (list[str], list[str], list[str], list[list[MaterialSample]]) -> ()
 
-        super(SegmentationTrainingSetInformation, self).__init__(labeled_photos, labeled_masks)
+        super(SegmentationTrainingSetInformation, self).__init__(labeled_photos, labeled_masks, material_samples)
         self.unlabeled_photos = unlabeled_photos
         self.unlabeled_size = len(unlabeled_photos)
 
@@ -71,7 +111,7 @@ class SegmentationDataSetInformation(object):
                  class_weights=[],
                  labeled_per_channel_mean=[],
                  labeled_per_channel_stddev=[]):
-        # type: (SegmentationTrainingSetInformation, SegmentationSetInformation, SegmentationSetInformation, int, list[float], list[float], list[float], list[float]) -> ()
+        # type: (SegmentationTrainingSetInformation, SegmentationSetInformation, SegmentationSetInformation, int, list[float], list[float], list[float], list[float]) -> None
 
         self.training_set = training_set
         self.validation_set = validation_set
@@ -443,6 +483,124 @@ def _calculate_mask_class_frequencies(image_file, material_class_information):
     img_pixels = (class_pixels > 0.0) * num_pixels
 
     return class_pixels, img_pixels
+
+
+def get_material_samples(mask_files, material_class_information, background_class=0, min_sample_size=5):
+    """
+    Given a set of mask files calculates the MaterialSamples in those mask files.
+    Will return a list where each index contains a list of material samples for the
+    respective material class. The list for background class will always be empty.
+
+    # Arguments
+        :param mask_files: a list of segmentation mask files as ImageFiles
+        :param material_class_information:
+        :param background_class: index of the background class, default 0
+        :param min_sample_size: minimum pixels per MaterialSample to avoid degenerate
+        sets due to artefacts in the mask images
+    # Returns
+        :return: A list of material sample lists (24xN_SAMPLES_IN_CLASS)
+    """
+    # type: (list[ImageFile]) -> list[list[MaterialSample]]
+
+    # Create a look up table for material red color -> material id
+    r_color_to_material_id = dict()
+
+    for mci in material_class_information:
+        for r_color in mci.r_color_values:
+            r_color_to_material_id[r_color] = mci.id
+
+    # Parallelize the calculation for different files
+    n_jobs = get_number_of_parallel_jobs()
+
+    data = Parallel(n_jobs=4, backend='multiprocessing')(
+        delayed(_get_material_samples)(
+            mask_file, r_color_to_material_id, background_class, min_sample_size) for mask_file in mask_files)
+
+    data = list(itertools.chain.from_iterable(data))
+    print 'Found {} material samples'.format(len(data))
+
+    # Order the material samples according to their material index (id)
+    material_samples = [list() for _ in range(len(material_class_information))]
+
+    for ms in data:
+        material_samples[ms.material_id].append(ms)
+
+    return material_samples
+
+
+def _from_2d_to_1d_index(y, x, width):
+    return y * width + x
+
+
+def _get_material_samples(mask_file, r_color_to_material_id, background_class=0, min_sample_size=5):
+    # type: (ImageFile, dict, int, int) -> list[MaterialSample]
+
+    pil_mask_img = mask_file.get_image()
+    np_mask_img = img_to_array(pil_mask_img).astype(np.uint8)
+
+    r_channel = np_mask_img[:, :, 0]
+    height = r_channel.shape[0]
+    width = r_channel.shape[1]
+    pixel_set_references = [None] * (height * width)
+    unique_pixel_sets = []
+    queue = deque()
+
+    for y in range(0, height):
+        for x in range(0, width):
+
+            # If this is a background pixel or already labeled - continue
+            if r_channel[y][x] == background_class or pixel_set_references[_from_2d_to_1d_index(y, x, width)] is not None:
+                continue
+
+            # If this pixel is a foreground pixel and it is not already labeled
+            # add it as the first element in a queue
+            queue.append((r_channel[y][x], y, x))
+
+            # print 'New set start: {},{}'.format(y, x)
+            cur_px_set = list()
+            unique_pixel_sets.append(cur_px_set)
+
+            while queue:
+                # Unwrap the pixel information and get a reference to the current set
+                px_info = queue.pop()
+                px_val, px_y, px_x = px_info
+
+                cur_px_set.append(px_info)
+
+                # Store the set reference to this pixel
+                pixel_set_references[_from_2d_to_1d_index(px_y, px_x, width)] = cur_px_set
+
+                # 8-connectivity neighbour check:
+                # If a neighbour is a foreground pixel and is not already labelled,
+                # give it the current label and add it to the queue.
+                # Loop through the 8-neighbours
+                for i in range(-1, 2):
+                    for j in range(-1, 2):
+                        if i == 0 and j == 0:
+                            continue
+
+                        ny = px_y + i
+                        nx = px_x + j
+                        n_val = r_channel[ny][nx] if (ny >= 0 and ny < height and nx >= 0 and nx < width) else background_class
+
+                        if px_val == n_val and pixel_set_references[_from_2d_to_1d_index(ny, nx, width)] is None:
+                            queue.append((n_val, ny, nx))
+                            pixel_set_references[_from_2d_to_1d_index(ny, nx, width)] = cur_px_set
+
+    # Filter sets smaller than min_set_size
+    unique_pixel_sets = [s for s in unique_pixel_sets if len(s) >= min_sample_size]
+
+    print 'Found {} unique pixel sets for file {}'.format(len(unique_pixel_sets), mask_file.file_name)
+
+    # Build the material samples from the unique pixel sets
+    material_samples = []
+
+    for s in unique_pixel_sets:
+        material_r_color = s[0][0]
+        material_id = r_color_to_material_id[material_r_color]
+        material_samples.append(MaterialSample(mask_file.file_name, material_id, material_r_color, s))
+
+    return material_samples
 
 
 def expand_mask(np_mask_img, material_class_information, verbose=False):
