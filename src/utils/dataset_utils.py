@@ -29,13 +29,17 @@ class MaterialSample(object):
                  file_name,
                  material_id,
                  material_r_color,
+                 image_width,
+                 image_height,
                  pixel_info_list):
-        # type: (str, int, int, list[tuple[int]]) -> None
+        # type: (str, int, int, int, int, list[tuple[int]]) -> None
 
         self.file_name = file_name
         self.material_id = int(material_id)
         self.material_r_color = int(material_r_color)
         self.num_material_pixels = len(pixel_info_list)
+        self.image_width = int(image_width)
+        self.image_height = int(image_height)
 
         # Note: pixel info list values are tuples of (pixel value, y coor, x coord)
         y_min = min(pixel_info_list, key=lambda t: t[1])[1]
@@ -50,20 +54,36 @@ class MaterialSample(object):
         self.bbox_size = (self.yx_max[0] - self.yx_min[0]) * (self.yx_max[1] - self.yx_min[1])
 
     @property
-    def bbox_top_left_corner(self):
+    def bbox_top_left_corner_abs(self):
         return self.yx_min
 
     @property
-    def bbox_top_right_corner(self):
+    def bbox_top_right_corner_abs(self):
         return (self.yx_min[0], self.yx_max[1])
 
     @property
-    def bbox_bottom_right_corner(self):
+    def bbox_bottom_right_corner_abs(self):
         return self.yx_max
 
     @property
-    def bbox_bottom_left_corner(self):
+    def bbox_bottom_left_corner_abs(self):
         return (self.yx_max[0], self.yx_min[1])
+
+    @property
+    def bbox_top_left_corner_rel(self):
+        return (float(self.yx_min[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width))
+
+    @property
+    def bbox_top_right_corner_rel(self):
+        return (float(self.yx_min[0])/float(self.image_height), float(self.yx_max[1])/float(self.image_width))
+
+    @property
+    def bbox_bottom_right_corner_rel(self):
+        return (float(self.yx_max[0])/float(self.image_height), float(self.yx_max[1])/float(self.image_width))
+
+    @property
+    def bbox_bottom_left_corner_rel(self):
+        return (float(self.yx_max[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width))
 
 
 class MaterialClassInformation(object):
@@ -614,7 +634,12 @@ def _get_material_samples(mask_file, r_color_to_material_id, background_class=0,
     for s in unique_pixel_sets:
         material_r_color = s[0][0]
         material_id = r_color_to_material_id[material_r_color]
-        material_samples.append(MaterialSample(mask_file.file_name, material_id, material_r_color, s))
+        material_samples.append(MaterialSample(file_name=mask_file.file_name,
+                                               material_id=material_id,
+                                               material_r_color=material_r_color,
+                                               image_width=np_mask_img.shape[1],
+                                               image_height=np_mask_img.shape[0],
+                                               pixel_info_list=s))
 
     return material_samples
 

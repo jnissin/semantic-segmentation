@@ -605,6 +605,7 @@ class SegmentationTrainer(TrainerBase):
         self.path_to_labeled_photos = self.get_config_value('path_to_labeled_photos')
         self.path_to_labeled_masks = self.get_config_value('path_to_labeled_masks')
         self.use_class_weights = self.get_config_value('use_class_weights')
+        self.use_material_samples = self.get_config_value('use_material_samples')
 
         self.input_shape = self.get_config_value('input_shape')
         self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
@@ -746,6 +747,7 @@ class SegmentationTrainer(TrainerBase):
             use_per_channel_stddev_normalization=True,
             per_channel_stddev=self.data_set_information.labeled_per_channel_stddev,
             use_data_augmentation=self.use_data_augmentation,
+            use_material_samples=self.use_material_samples,
             data_augmentation_params=self.data_augmentation_parameters,
             shuffle_data_after_epoch=True)
 
@@ -767,6 +769,7 @@ class SegmentationTrainer(TrainerBase):
             use_per_channel_stddev_normalization=True,
             per_channel_stddev=training_data_generator_params.per_channel_stddev,
             use_data_augmentation=False,
+            use_material_samples=False,
             data_augmentation_params=None,
             shuffle_data_after_epoch=True)
 
@@ -775,6 +778,7 @@ class SegmentationTrainer(TrainerBase):
             num_labeled_per_batch=self.validation_batch_size,
             params=validation_data_generator_params)
 
+        self.log('Using material samples: {}'.format(self.training_data_generator.use_material_samples))
         self.log('Using per-channel mean: {}'.format(self.training_data_generator.per_channel_mean))
         self.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
 
@@ -913,6 +917,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.path_to_labeled_masks = self.get_config_value('path_to_labeled_masks')
         self.path_to_unlabeled_photos = self.get_config_value('path_to_unlabeled_photos')
         self.use_class_weights = self.get_config_value('use_class_weights')
+        self.use_material_samples = self.get_config_value('use_material_samples')
 
         self.use_mean_teacher_method = bool(self.get_config_value('use_mean_teacher_method'))
         self.input_shape = self.get_config_value('input_shape')
@@ -1121,6 +1126,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             use_per_channel_stddev_normalization=True,
             per_channel_stddev=self.data_set_information.labeled_per_channel_stddev if self.num_unlabeled_per_batch > 0 else self.data_set_information.labeled_per_channel_stddev,
             use_data_augmentation=self.use_data_augmentation,
+            use_material_samples=self.use_material_samples,
             data_augmentation_params=self.data_augmentation_parameters,
             shuffle_data_after_epoch=True)
 
@@ -1145,6 +1151,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             use_per_channel_stddev_normalization=True,
             per_channel_stddev=training_data_generator_params.per_channel_stddev,
             use_data_augmentation=False,
+            use_material_samples=False,
             data_augmentation_params=None,
             shuffle_data_after_epoch=True)
 
@@ -1167,11 +1174,12 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             num_labeled_per_batch=self.validation_num_labeled_per_batch,
             params=validation_data_generator_params)
 
+        self.log('Using material samples: {}'.format(self.training_data_generator.use_material_samples))
         self.log('Using per-channel mean: {}'.format(self.training_data_generator.per_channel_mean))
         self.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
 
     def train(self):
-        # type: () -> object
+        # type: () -> None
         super(SemisupervisedSegmentationTrainer, self).train()
 
         # Labeled data set size determines the epochs

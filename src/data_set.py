@@ -26,7 +26,7 @@ class ImageFileType(Enum):
 class ImageFile(object):
 
     def __init__(self, file_path=None, tar_file=None, tar_info=None, tar_read_lock=None):
-        # type: (str, TarFile, TarInfo) -> ()
+        # type: (str, TarFile, TarInfo) -> None
 
         """
         Creates an ImageFile instance either from the file path or from the tar
@@ -147,13 +147,15 @@ class ImageFile(object):
 class ImageSet(object):
 
     def __init__(self, name, path_to_archive, file_list=None, mode='r'):
-        # type: (str, str, list[str], str) -> ()
+        # type: (str, str, list[str], str) -> None
 
         self.name = name
         self.path_to_archive = path_to_archive
-        self._file_list=file_list
+        self._file_list = file_list
         self.mode = mode
         self._image_files = []
+        self._file_name_to_image_file = dict()
+        self._file_name_to_image_file_no_ext = dict()
         self._tar_file = None
         self._tar_read_lock = threading.Lock()
 
@@ -168,12 +170,23 @@ class ImageSet(object):
 
             for tar_info in tar_file_members:
                 if tar_info.isfile() and not os.path.basename(tar_info.name).startswith('.'):
-                    self._image_files.append(ImageFile(tar_file=self._tar_file, tar_info=tar_info, tar_read_lock=self._tar_read_lock))
+                    img_file = ImageFile(tar_file=self._tar_file, tar_info=tar_info, tar_read_lock=self._tar_read_lock)
+                    self._image_files.append(img_file)
+                    file_name = os.path.basename(tar_info.name)
+                    file_name_no_ext = os.path.splitext(file_name)[0]
+                    self._file_name_to_image_file[file_name] = img_file
+                    self._file_name_to_image_file_no_ext[file_name_no_ext] = img_file
         elif os.path.isdir(path_to_archive):
             image_paths = ImageSet.list_pictures(path_to_archive)
 
             for image_path in image_paths:
-                self._image_files.append(ImageFile(file_path=image_path))
+                if os.path.isfile(image_path) and not os.path.basename(image_path).startswith('.'):
+                    img_file = ImageFile(file_path=image_path)
+                    self._image_files.append(img_file)
+                    file_name = os.path.basename(image_path)
+                    file_name_no_ext = os.path.splitext(file_name)[0]
+                    self._file_name_to_image_file[file_name] = img_file
+                    self._file_name_to_image_file_no_ext[file_name_no_ext] = img_file
         else:
             raise ValueError('The given archive path is not recognized as a tar file or a directory: {}'.format(path_to_archive))
 
@@ -214,6 +227,14 @@ class ImageSet(object):
     def sort(self):
         self._image_files.sort()
 
+    def get_image_file_by_file_name(self, file_name):
+        ret = self._file_name_to_image_file.get(file_name)
+
+        if ret is None:
+            file_name_no_ext = os.path.splitext(file_name)[0]
+            ret = self._file_name_to_image_file_no_ext.get(file_name_no_ext)
+
+        return ret
 
 ##############################################
 # IMAGE DATA SET
@@ -258,7 +279,7 @@ class DataSet(object):
 class LabeledImageDataSet(DataSet):
 
     def __init__(self, name, path_to_photo_archive, path_to_mask_archive, photo_file_list=None, mask_file_list=None, material_samples=None):
-        # type: (str, str, str, list[str], list[str]) -> ()
+        # type: (str, str, str, list[str], list[str]) -> None
 
         """
         Creates a labeled image dataset from the two parameter archives.
@@ -304,6 +325,10 @@ class LabeledImageDataSet(DataSet):
         return self._mask_image_set
 
     @property
+    def material_samples(self):
+        return self._material_samples
+
+    @property
     def size(self):
         return self._photo_image_set.size
 
@@ -342,6 +367,43 @@ class LabeledImageDataSet(DataSet):
         masks = [self._mask_image_set.image_files[i] for i in index_array]
         return zip(photos, masks)
 
+    def get_files(self, file_names):
+        photos = []
+        masks = []
+
+        for file_name in file_names:
+            photo = self._photo_image_set.get_image_file_by_file_name(file_name)
+
+            if photo is None:
+                raise ValueError('Could not find photo file from ImageSet with file name: {}'.format(file_name))
+
+            mask = self._mask_image_set.get_image_file_by_file_name(file_name)
+
+            if mask is None:
+                raise ValueError('Could not find mask file from ImageSet with file name: {}'.format(file_name))
+
+            photos.append(photo)
+            masks.append(mask)
+
+        return zip(photos, masks)
+
+    def get_files_and_material_samples(self, index_array):
+        material_samples = self.get_material_samples(index_array)
+        file_names = [ms.file_name for ms in material_samples]
+        photo_mask_pairs = self.get_files(file_names)
+
+        return photo_mask_pairs, material_samples
+
+    def get_material_samples(self, index_array):
+        ret = []
+
+        for i in range(len(index_array)):
+            material_category_index = index_array[i][0]
+            material_sample_index = index_array[i][1]
+            ret.append(self.material_samples[material_category_index][material_sample_index])
+
+        return ret
+
     def get_range(self, start, end):
         photos = self._photo_image_set.image_files[start:end]
         masks = self._mask_image_set.image_files[start:end]
@@ -354,7 +416,7 @@ class LabeledImageDataSet(DataSet):
 
 class UnlabeledImageDataSet(DataSet):
     def __init__(self, name, path_to_photo_archive, photo_file_list=None):
-        # type: (str, str) -> ()
+        # type: (str, str, list[str]) -> None
 
         """
         Creates an unlabeled image dataset from the given archive. The archive can

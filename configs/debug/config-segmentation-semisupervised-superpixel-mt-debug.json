@@ -40,6 +40,7 @@
     },
 
     "use_data_augmentation": false,
+    "use_material_samples": true,
 
     "data_augmentation_params": {
         "augmentation_probability": 0.5,

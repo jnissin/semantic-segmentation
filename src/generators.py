@@ -3,13 +3,14 @@
 import random
 import numpy as np
 import threading
+import warnings
 
 from keras.preprocessing.image import img_to_array
 from PIL import Image
 
 from utils import dataset_utils
 from utils import image_utils
-from utils.dataset_utils import MaterialClassInformation
+from utils.dataset_utils import MaterialClassInformation, MaterialSample
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile
 
 from abc import ABCMeta, abstractmethod
@@ -22,6 +23,7 @@ from typing import Callable
 #######################################
 
 def get_labeled_segmentation_data_pair(photo_mask_pair,
+                                       material_sample,
                                        num_color_channels,
                                        crop_shape,
                                        resize_shape,
@@ -33,7 +35,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
                                        img_data_format='channels_last',
                                        div2_constraint=4,
                                        mask_type='one_hot'):
-    # type: (tuple[ImageFile], int, tuple[int], tuple[int], list[MaterialClassInformation], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
+    # type: (tuple[ImageFile], MaterialSample, int, tuple[int], tuple[int], list[MaterialClassInformation], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
 
     """
     Returns a photo mask pair for supervised segmentation training. Will apply data augmentation
@@ -43,6 +45,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
 
     # Arguments
         :param photo_mask_pair: a pair of ImageFiles (photo, mask)
+        :param material_sample: material sample information for the files
         :param num_color_channels: number of channels in the photos; 1, 3 or 4
         :param crop_shape: size of the crop or None if no cropping should be applied
         :param resize_shape: size of the desired rezied images, None if no resizing should be applied
@@ -77,6 +80,7 @@ def get_labeled_segmentation_data_pair(photo_mask_pair,
     # Apply crops and augmentation
     np_photo, np_mask = process_segmentation_photo_mask_pair(np_photo=np_photo,
                                                              np_mask=np_mask,
+                                                             material_sample=material_sample,
                                                              crop_shape=crop_shape,
                                                              resize_shape=resize_shape,
                                                              photo_cval=photo_cval,
@@ -174,6 +178,7 @@ def get_unlabeled_segmentation_data_pair(photo,
 
 def process_segmentation_photo_mask_pair(np_photo,
                                          np_mask,
+                                         material_sample,
                                          crop_shape,
                                          resize_shape,
                                          photo_cval,
@@ -183,7 +188,7 @@ def process_segmentation_photo_mask_pair(np_photo,
                                          img_data_format='channels_last',
                                          div2_constraint=4,
                                          retry_crops=True):
-    # type: (np.array, np.array, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int, bool) -> (np.array, np.array)
+    # type: (np.array, np.array, MaterialSample, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int, bool) -> (np.array, np.array)
 
     """
     Applies crop and data augmentation to two numpy arrays representing the photo and
@@ -192,7 +197,8 @@ def process_segmentation_photo_mask_pair(np_photo,
 
     # Arguments
         :param np_photo: the photo as a numpy array
-        :param np_mask: the mask as a numpy array must have same spatial dimensions (HxW) as np_photo
+        :param np_mask: the mask as a numpy array must have same spatial dimensions (HxW) as np_photo,
+        :param material_sample: the material sample
         :param crop_shape: size of the crop or, None if no cropping should be applied
         :param resize_shape: size of the resized images, None if no resizing should be applied
         :param photo_cval: fill color value for photos [0,255]
@@ -208,6 +214,9 @@ def process_segmentation_photo_mask_pair(np_photo,
 
     if np_photo.shape[:2] != np_mask.shape[:2]:
         raise ValueError('Non-matching photo and mask shapes: {} != {}'.format(np_photo.shape, np_mask.shape))
+
+    if material_sample is not None and crop_shape is None:
+        raise ValueError('Cannot use material samples without cropping')
 
     # Check whether we need to resize the photo and the mask to a constant size
     if resize_shape is not None:
@@ -355,7 +364,8 @@ class DataGeneratorParameters(object):
                  mask_cval=None,
                  use_data_augmentation=False,
                  data_augmentation_params=None,
-                 shuffle_data_after_epoch=True):
+                 shuffle_data_after_epoch=True,
+                 use_material_samples=False):
 
         self.material_class_information = material_class_information
         self.num_color_channels = num_color_channels
@@ -371,18 +381,23 @@ class DataGeneratorParameters(object):
         self.use_data_augmentation = use_data_augmentation
         self.data_augmentation_params = data_augmentation_params
         self.shuffle_data_after_epoch = shuffle_data_after_epoch
+        self.use_material_samples = use_material_samples
 
 
 #######################################
 # ITERATOR
 #######################################
 
-class DataSetIterator(object):
+# TODO: Create an abstract class for DataSetIterator
+
+class FileDataSetIterator(object):
     """
     A class for iterating over a data set in batches.
     """
 
     def __init__(self, n, batch_size, shuffle, seed):
+        # type: (int, int, bool, int) -> None
+
         """
         # Arguments
             :param n: Integer, total number of samples in the dataset to loop over.
@@ -405,6 +420,7 @@ class DataSetIterator(object):
         self.batch_index = 0
 
     def get_next_batch(self):
+        # type: () -> (np.array[int], int, int)
 
         if self.seed is not None:
             np.random.seed(self.seed + self.total_batches_seen)
@@ -427,6 +443,107 @@ class DataSetIterator(object):
         return self.index_array[current_index: current_index + current_batch_size], current_index, current_batch_size
 
 
+class MaterialSampleDataSetIterator(object):
+    """
+    A class for iterating randomly through MaterialSamples for a data set in batches.
+    """
+
+    def __init__(self, material_samples, batch_size, shuffle, seed):
+        # type: (list[list[MaterialSample]], int, bool, int, bool) -> None
+
+        # Build index lists for the different material samples
+        self.material_samples = []
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.seed = seed
+        self.batch_index = 0
+        self.total_batches_seen = 0
+        self.n = 0  # Number of samples in total
+
+        # Calculate uniform probabilities for all classes that have non zero samples
+        self.class_probabilities = [0.0] * len(material_samples)
+        self.num_non_zero_classes = 0
+
+        for material_category in material_samples:
+            if len(material_category) > 0:
+                self.num_non_zero_classes += 1
+
+        for i in range(len(material_samples)):
+            if len(material_samples[i]) > 0:
+                self.class_probabilities[i] = 1.0/self.num_non_zero_classes
+            else:
+                # Zero is assumed as the background class and should/can have zero instances
+                if i != 0:
+                    warnings.warn('Material class {} has 0 material samples'.format(i), RuntimeWarning)
+
+                self.class_probabilities[i] = 0.0
+
+        for material_category in material_samples:
+            if not shuffle:
+                self.material_samples.append(np.arange(len(material_category)))
+            else:
+                self.material_samples.append(np.random.permutation(len(material_category)))
+
+            self.n += len(material_category)
+
+        # Keep track of the current sample in each material category
+        self.num_material_classes = len(material_samples)
+        self.current_samples = [0] * self.num_material_classes
+
+    def reset(self):
+        self.batch_index = 0
+
+    def get_next_batch(self):
+        # type: () -> (list[tuple[int]], int, int)
+
+        """
+        Gives the next batch as tuple of indices to the material samples 2D array.
+        The tuples are in the form (sample_category_idx, sample_idx).
+
+        # Arguments
+            Nothing
+        # Returns
+            :return: a batch of material samples as tuples of indices into 2D material sample array
+        """
+
+        if self.seed is not None:
+            np.random.seed(self.seed + self.total_batches_seen)
+
+        # Class 0 is assumed to be background so classes will be [1,num_classes-1]
+        sample_classes = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self.class_probabilities)
+
+        ret = []
+
+        for sample_category_idx in sample_classes:
+            internal_sample_idx = self.current_samples[sample_category_idx]
+            sample_idx = self.material_samples[sample_category_idx][internal_sample_idx]
+            ret.append((sample_category_idx, sample_idx))
+
+            # Keep track of the used samples in each category
+            self.current_samples[sample_category_idx] += 1
+
+            # If all of the samples in the category have been used, zero out the
+            # index for the category and shuffle the category list if shuffle is enabled
+            if self.current_samples[sample_category_idx] >= len(self.material_samples[sample_category_idx]):
+                self.current_samples[sample_category_idx] = 0
+
+                if self.shuffle:
+                    self.material_samples[sample_category_idx] = np.random.permutation(len(self.material_samples[sample_category_idx]))
+                else:
+                    self.material_samples[sample_category_idx] = np.arange(len(self.material_samples[sample_category_idx]))
+
+        # Keep track of how many times we have gone "through all the samples"
+        current_index = (self.batch_index * self.batch_size) % self.n
+
+        if self.n > current_index + self.batch_size:
+            self.batch_index += 1
+        else:
+            self.batch_index = 0
+
+        self.total_batches_seen += 1
+
+        return ret, current_index, self.batch_size
+
 #######################################
 # DATA GENERATOR
 #######################################
@@ -442,7 +559,7 @@ class DataGenerator(object):
     __metaclass__ = ABCMeta
 
     def __init__(self, params):
-        # type: (DataGeneratorParameters) -> ()
+        # type: (DataGeneratorParameters) -> None
 
         self.lock = threading.Lock()
 
@@ -461,6 +578,7 @@ class DataGenerator(object):
         self.use_data_augmentation = params.use_data_augmentation
         self.data_augmentation_params = params.data_augmentation_params
         self.shuffle_data_after_epoch = params.shuffle_data_after_epoch
+        self.use_material_samples = params.use_material_samples
 
         # Other member variables
         self.img_data_format = K.image_data_format()
@@ -557,7 +675,7 @@ class SegmentationDataGenerator(DataGenerator):
     """
 
     def __init__(self, labeled_data_set, num_labeled_per_batch, params):
-        # type: (LabeledImageDataSet, int, DataGeneratorParameters) -> ()
+        # type: (LabeledImageDataSet, int, DataGeneratorParameters) -> None
 
         """
         # Arguments
@@ -571,11 +689,22 @@ class SegmentationDataGenerator(DataGenerator):
 
         super(SegmentationDataGenerator, self).__init__(params)
 
-        self.labeled_data_iterator = DataSetIterator(
-            n=self.labeled_data_set.size,
-            batch_size=num_labeled_per_batch,
-            shuffle=self.shuffle_data_after_epoch,
-            seed=self.random_seed)
+        if self.use_material_samples:
+
+            if self.labeled_data_set.material_samples is None or len(self.labeled_data_set.material_samples) == 0:
+                raise ValueError('Use material samples is true, but labeled data set does not contain material samples')
+
+            self.labeled_data_iterator = MaterialSampleDataSetIterator(
+                material_samples=self.labeled_data_set.material_samples,
+                batch_size=num_labeled_per_batch,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed)
+        else:
+            self.labeled_data_iterator = FileDataSetIterator(
+                n=self.labeled_data_set.size,
+                batch_size=num_labeled_per_batch,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed)
 
     def get_all_photos(self):
         # type: () -> list[ImageFile]
@@ -608,7 +737,7 @@ class SegmentationDataGenerator(DataGenerator):
         return masks
 
     def next(self):
-        # type: (int, tuple[int]) -> (np.array, np.array)
+        # type: () -> (np.array, np.array)
 
         """
         Yields batches of data endlessly.
@@ -622,11 +751,15 @@ class SegmentationDataGenerator(DataGenerator):
         with self.lock:
             labeled_index_array, labeled_current_index, labeled_current_batch_size = self.labeled_data_iterator.get_next_batch()
 
-        batch_files = self.labeled_data_set.get_indices(labeled_index_array)
+        if self.use_material_samples:
+            batch_files, material_samples = self.labeled_data_set.get_files_and_material_samples(labeled_index_array)
+        else:
+            batch_files, material_samples = self.labeled_data_set.get_indices(labeled_index_array), None
 
         # Parallel processing of the files in this batch
         data = [get_labeled_segmentation_data_pair(
-                photo_mask_pair=photo_mask_pair,
+                photo_mask_pair=batch_files[i],
+                material_sample=material_samples[i] if material_samples is not None else None,
                 num_color_channels=self.num_color_channels,
                 crop_shape=self.crop_shape,
                 resize_shape=self.resize_shape,
@@ -637,7 +770,7 @@ class SegmentationDataGenerator(DataGenerator):
                 data_augmentation_params=self.data_augmentation_params,
                 img_data_format=self.img_data_format,
                 div2_constraint=4,
-                mask_type='one_hot') for photo_mask_pair in batch_files]
+                mask_type='one_hot') for i in range(len(batch_files))]
 
         # Note: all the examples in the batch have to have the same dimensions
         X, Y = zip(*data)
@@ -686,16 +819,26 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         super(SemisupervisedSegmentationDataGenerator, self).__init__(params)
 
-        self.labeled_data_iterator = DataSetIterator(
-            n=self.labeled_data_set.size,
-            batch_size=num_labeled_per_batch,
-            shuffle=self.shuffle_data_after_epoch,
-            seed=self.random_seed)
+        if self.use_material_samples:
+            if self.labeled_data_set.material_samples is None or len(self.labeled_data_set.material_samples) == 0:
+                raise ValueError('Use material samples is true, but labeled data set does not contain material samples')
+
+            self.labeled_data_iterator = MaterialSampleDataSetIterator(
+                material_samples=self.labeled_data_set.material_samples,
+                batch_size=num_unlabeled_per_batch,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed)
+        else:
+            self.labeled_data_iterator = FileDataSetIterator(
+                n=self.labeled_data_set.size,
+                batch_size=num_labeled_per_batch,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed)
 
         self.unlabeled_data_iterator = None
 
         if unlabeled_data_set is not None and unlabeled_data_set.size > 0:
-            self.unlabeled_data_iterator = DataSetIterator(
+            self.unlabeled_data_iterator = FileDataSetIterator(
                 n=self.unlabeled_data_set.size,
                 batch_size=num_unlabeled_per_batch,
                 shuffle=self.shuffle_data_after_epoch,
@@ -767,11 +910,15 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             :return: labeled data as two lists: (X, Y)
         """
 
-        labeled_batch_files = self.labeled_data_set.get_indices(index_array)
+        if self.use_material_samples:
+            labeled_batch_files, material_samples = self.labeled_data_set.get_files_and_material_samples(index_array)
+        else:
+            labeled_batch_files, material_samples = self.labeled_data_set.get_indices(index_array), None
 
         # Process the labeled files for this batch
         labeled_data = [get_labeled_segmentation_data_pair(
-                photo_mask_pair=photo_mask_pair,
+                photo_mask_pair=labeled_batch_files[i],
+                material_sample=material_samples[i] if material_samples is not None else None,
                 num_color_channels=self.num_color_channels,
                 crop_shape=self.crop_shape,
                 resize_shape=self.resize_shape,
@@ -782,7 +929,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 data_augmentation_params=self.data_augmentation_params,
                 img_data_format=self.img_data_format,
                 div2_constraint=4,
-                mask_type='index') for photo_mask_pair in labeled_batch_files]
+                mask_type='index') for i in range(len(labeled_batch_files))]
 
         # Unzip the photo mask pairs
         X, Y = zip(*labeled_data)
