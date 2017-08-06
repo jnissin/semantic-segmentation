@@ -666,7 +666,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                  num_unlabeled_per_batch,
                  params,
                  label_generation_function=None):
-        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, Callable[[np.array[np.float32]], np.array]) -> ()
+        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, Callable[[np.array[np.float32]], np.array]) -> None
 
         """
         # Arguments

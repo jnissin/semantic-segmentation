@@ -3,7 +3,6 @@
 import argparse
 import time
 import random
-import multiprocessing
 import numpy as np
 from PIL import ImageFile
 import jsonpickle
@@ -124,8 +123,7 @@ def main():
     if calculate_statistics:
         print 'Starting statistics calculation for the training set'
 
-        num_cores = multiprocessing.cpu_count()
-        n_jobs = min(32, num_cores)
+        n_jobs = dataset_utils.get_number_of_parallel_jobs()
 
         if_photos = training_labeled_photos + training_unlabeled_photos
         if_masks = training_labeled_masks

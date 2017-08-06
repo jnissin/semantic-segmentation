@@ -257,7 +257,7 @@ class DataSet(object):
 
 class LabeledImageDataSet(DataSet):
 
-    def __init__(self, name, path_to_photo_archive, path_to_mask_archive, photo_file_list=None, mask_file_list=None):
+    def __init__(self, name, path_to_photo_archive, path_to_mask_archive, photo_file_list=None, mask_file_list=None, material_samples=None):
         # type: (str, str, str, list[str], list[str]) -> ()
 
         """
@@ -270,6 +270,7 @@ class LabeledImageDataSet(DataSet):
             :param path_to_mask_archive: path to the masks (folder or tar.gz)
             :param photo_file_list: list of photo files to use from the photo archive, all used if None
             :param mask_file_list: list of mask files to use from the mask archive, all used if None
+            :param material_samples: a list of calculated material samples for the data set, defaults to None
         # Returns
             Nothing
         """
@@ -277,6 +278,15 @@ class LabeledImageDataSet(DataSet):
 
         self._photo_image_set = ImageSet(self.name + '_photos', path_to_photo_archive, photo_file_list)
         self._mask_image_set = ImageSet(self.name + '_masks', path_to_mask_archive, mask_file_list)
+        self._material_samples = material_samples
+
+        # TODO: Remove debug
+        #if material_samples is not None and len(material_samples) > 0:
+        #    print 'Material samples for {} material categories'.format(len(material_samples))
+        #
+        #    for i in range(len(material_samples)):
+        #        print 'Category {} has {} samples'.format(i, len(material_samples[i]))
+        # End of debug
 
         # Make sure the photos and masks are organized in the same way
         self._photo_image_set.sort()

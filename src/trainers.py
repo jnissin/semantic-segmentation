@@ -652,7 +652,8 @@ class SegmentationTrainer(TrainerBase):
                                                 path_to_photo_archive=self.path_to_labeled_photos,
                                                 path_to_mask_archive=self.path_to_labeled_masks,
                                                 photo_file_list=self.data_set_information.training_set.labeled_photos,
-                                                mask_file_list=self.data_set_information.training_set.labeled_masks)
+                                                mask_file_list=self.data_set_information.training_set.labeled_masks,
+                                                material_samples=self.data_set_information.training_set.material_samples)
         self.log('Training set construction took: {} s, size: {}'.format(time.time()-stime, self.training_set.size))
 
         if self.training_set.size == 0:
@@ -665,7 +666,8 @@ class SegmentationTrainer(TrainerBase):
                                                   self.path_to_labeled_photos,
                                                   self.path_to_labeled_masks,
                                                   photo_file_list=self.data_set_information.validation_set.labeled_photos,
-                                                  mask_file_list=self.data_set_information.validation_set.labeled_masks)
+                                                  mask_file_list=self.data_set_information.validation_set.labeled_masks,
+                                                  material_samples=self.data_set_information.validation_set.material_samples)
         self.log('Labeled validation set construction took: {} s, size: {}'.format(time.time()-stime, self.validation_set.size))
 
         # Labeled test set
@@ -675,7 +677,8 @@ class SegmentationTrainer(TrainerBase):
                                             self.path_to_labeled_photos,
                                             self.path_to_labeled_masks,
                                             photo_file_list=self.data_set_information.test_set.labeled_photos,
-                                            mask_file_list=self.data_set_information.test_set.labeled_masks)
+                                            mask_file_list=self.data_set_information.test_set.labeled_masks,
+                                            material_samples=self.data_set_information.test_set.material_samples)
         self.log('Labeled test set construction took: {} s, size: {}'.format(time.time()-stime, self.test_set.size))
 
         self.log('Total data set size: {}'.format(self.training_set.size + self.validation_set.size + self.test_set.size))
@@ -964,7 +967,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                                                         path_to_photo_archive=self.path_to_labeled_photos,
                                                         path_to_mask_archive=self.path_to_labeled_masks,
                                                         photo_file_list=self.data_set_information.training_set.labeled_photos,
-                                                        mask_file_list=self.data_set_information.training_set.labeled_masks)
+                                                        mask_file_list=self.data_set_information.training_set.labeled_masks,
+                                                        material_samples=self.data_set_information.training_set.material_samples)
         self.log('Labeled training set construction took: {} s, size: {}'.format(time.time()-stime, self.training_set_labeled.size))
 
         if self.training_set_labeled.size == 0:
@@ -985,7 +989,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                                                   self.path_to_labeled_photos,
                                                   self.path_to_labeled_masks,
                                                   photo_file_list=self.data_set_information.validation_set.labeled_photos,
-                                                  mask_file_list=self.data_set_information.validation_set.labeled_masks)
+                                                  mask_file_list=self.data_set_information.validation_set.labeled_masks,
+                                                  material_samples=self.data_set_information.validation_set.material_samples)
         self.log('Labeled validation set construction took: {} s, size: {}'.format(time.time()-stime, self.validation_set.size))
 
         # Labeled test set
@@ -995,7 +1000,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                                             self.path_to_labeled_photos,
                                             self.path_to_labeled_masks,
                                             photo_file_list=self.data_set_information.test_set.labeled_photos,
-                                            mask_file_list=self.data_set_information.test_set.labeled_masks)
+                                            mask_file_list=self.data_set_information.test_set.labeled_masks,
+                                            material_samples=self.data_set_information.test_set.material_samples)
         self.log('Labeled test set construction took: {} s, size: {}'.format(time.time()-stime, self.test_set.size))
 
         self.log('Total data set size: {}'

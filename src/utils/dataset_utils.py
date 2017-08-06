@@ -49,6 +49,22 @@ class MaterialSample(object):
         self.bbox_center = ((self.yx_min[0] + self.yx_max[0]) / 2, (self.yx_min[1] + self.yx_max[1]) / 2)
         self.bbox_size = (self.yx_max[0] - self.yx_min[0]) * (self.yx_max[1] - self.yx_min[1])
 
+    @property
+    def bbox_top_left_corner(self):
+        return self.yx_min
+
+    @property
+    def bbox_top_right_corner(self):
+        return (self.yx_min[0], self.yx_max[1])
+
+    @property
+    def bbox_bottom_right_corner(self):
+        return self.yx_max
+
+    @property
+    def bbox_bottom_left_corner(self):
+        return (self.yx_max[0], self.yx_min[1])
+
 
 class MaterialClassInformation(object):
 
@@ -517,7 +533,7 @@ def get_material_samples(mask_files, material_class_information, background_clas
             mask_file, r_color_to_material_id, background_class, min_sample_size) for mask_file in mask_files)
 
     data = list(itertools.chain.from_iterable(data))
-    print 'Found {} material samples'.format(len(data))
+    #print 'Found {} material samples'.format(len(data))
 
     # Order the material samples according to their material index (id)
     material_samples = [list() for _ in range(len(material_class_information))]
@@ -590,7 +606,7 @@ def _get_material_samples(mask_file, r_color_to_material_id, background_class=0,
     # Filter sets smaller than min_set_size
     unique_pixel_sets = [s for s in unique_pixel_sets if len(s) >= min_sample_size]
 
-    print 'Found {} unique pixel sets for file {}'.format(len(unique_pixel_sets), mask_file.file_name)
+    #print 'Found {} unique pixel sets for file {}'.format(len(unique_pixel_sets), mask_file.file_name)
 
     # Build the material samples from the unique pixel sets
     material_samples = []
