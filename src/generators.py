@@ -151,6 +151,7 @@ def get_unlabeled_segmentation_data_pair(photo,
     # Apply crops and augmentation
     np_photo, np_mask = process_segmentation_photo_mask_pair(np_photo=np_photo,
                                                              np_mask=np_mask,
+                                                             material_sample=None,
                                                              crop_shape=crop_shape,
                                                              resize_shape=resize_shape,
                                                              photo_cval=photo_cval,
@@ -174,6 +175,86 @@ def get_unlabeled_segmentation_data_pair(photo,
         np_mask[index_mask] = new_indices[i]
 
     return np_photo, np_mask
+
+
+def encode_bbox_to_mask(np_mask, material_sample):
+    tlc = material_sample.bbox_top_left_corner_abs
+    trc = material_sample.bbox_top_right_corner_abs
+    brc = material_sample.bbox_bottom_right_corner_abs
+    blc = material_sample.bbox_bottom_left_corner_abs
+
+    tlc_enc_val = 255
+    trc_enc_val = 254
+    brc_enc_val = 253
+    blc_enc_val = 252
+
+    np_mask_layer = None
+
+    if len(np_mask.shape) == 3:
+        np_mask_layer = np_mask[:, :, 0]
+    else:
+        np_mask_layer = np_mask
+
+    orig_vals = dict()
+    orig_vals[tlc_enc_val] = np_mask_layer[tlc[0], tlc[1]]
+    orig_vals[trc_enc_val] = np_mask_layer[trc[0], trc[1]]
+    orig_vals[brc_enc_val] = np_mask_layer[brc[0], brc[1]]
+    orig_vals[blc_enc_val] = np_mask_layer[blc[0], blc[1]]
+
+    np_mask_layer[tlc[0], tlc[1]] = tlc_enc_val
+    np_mask_layer[trc[0], trc[1]] = trc_enc_val
+    np_mask_layer[brc[0], brc[1]] = brc_enc_val
+    np_mask_layer[blc[0], blc[1]] = blc_enc_val
+
+    return np_mask, orig_vals
+
+
+def decode_bbox_from_mask(np_mask, orig_vals):
+
+    corner_enc_vals = [255, 254, 253, 252]
+    np_mask_layer = None
+
+    if len(np_mask.shape) == 3:
+        np_mask_layer = np_mask[:, :, 0]
+    else:
+        np_mask_layer = np_mask
+
+    corners = np.argwhere(np.isin(np_mask_layer, corner_enc_vals))
+
+    # Set the original values back
+    if orig_vals is not None:
+        for i in range(len(corners)):
+            np_mask_layer[corners[i][0], corners[i][1]] = orig_vals[np_mask_layer[corners[i][0], corners[i][1]]]
+
+
+    # If we could not recover enough corners, return the restored mask and a None
+    # as the bounding box
+    num_recovered_corners = len(corners)
+
+    if num_recovered_corners < 2:
+        return np_mask, None
+
+    # It is possible that the interpolation has produced additional
+    # corner color values. Take the minimum and maximum if the difference
+    # in the coordinates is 2 pixels
+    y_coords, x_coords = zip(*corners)
+    y_min = min(y_coords)
+    y_max = max(y_coords)
+    x_min = min(x_coords)
+    x_max = max(x_coords)
+
+    y_diff = y_max-y_min
+    x_diff = x_max-x_min
+
+    if y_diff < 2 or x_diff < 2:
+        return np_mask, None
+
+    tlc = (y_min, x_min)
+    trc = (y_min, x_max)
+    brc = (y_max, x_max)
+    blc = (y_max, x_min)
+
+    return np_mask, (tlc, trc, brc, blc)
 
 
 def process_segmentation_photo_mask_pair(np_photo,
@@ -237,7 +318,17 @@ def process_segmentation_photo_mask_pair(np_photo,
     # to both the image and mask now. We apply the transformation to the
     # whole image to decrease the number of 'dead' pixels due to transformations
     # within the possible crop.
+    bbox = None
+
     if use_data_augmentation and np.random.random() <= data_augmentation_params.augmentation_probability:
+
+        orig_vals, np_orig_photo, np_orig_mask = None, None, None
+
+        if material_sample is not None:
+            np_orig_photo = np.array(np_photo, copy=True)
+            np_orig_mask = np.array(np_mask, copy=True)
+            np_mask, orig_vals = encode_bbox_to_mask(np_mask, material_sample)
+
         np_photo, np_mask = image_utils.np_apply_random_transform(images=[np_photo, np_mask],
                                                                   cvals=[photo_cval, mask_cval],
                                                                   fill_mode=data_augmentation_params.fill_mode,
@@ -250,29 +341,84 @@ def process_segmentation_photo_mask_pair(np_photo,
                                                                   horizontal_flip=data_augmentation_params.horizontal_flip,
                                                                   vertical_flip=data_augmentation_params.vertical_flip)
 
+        if material_sample is not None:
+            np_mask, bbox = decode_bbox_from_mask(np_mask, orig_vals)
+
+            # If we could not decode from the augmented photo, skip the augmentation and
+            # default to the original bbox from the material sample
+            if bbox is None:
+                bbox = (material_sample.bbox_top_left_corner_abs, material_sample.bbox_top_right_corner_abs, material_sample.bbox_bottom_right_corner_abs, material_sample.bbox_bottom_left_corner_abs)
+                np_photo = np_orig_photo
+                np_mask = np_orig_mask
+
     # If a crop size is given: take a random crop of both the image and the mask
     if crop_shape is not None:
         if dataset_utils.count_trailing_zeroes(crop_shape[0]) < div2_constraint or \
                         dataset_utils.count_trailing_zeroes(crop_shape[1]) < div2_constraint:
             raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(div2_constraint))
 
-        # Re-attempt crops if the crops end up getting only background
-        # i.e. black pixels
-        attempts = 5
+        # If we don't have a bounding box as a hint for cropping - take random crops
+        if bbox is None:
+            # Re-attempt crops if the crops end up getting only background
+            # i.e. black pixels
+            attempts = 5
 
-        while attempts > 0:
-            x1y1, x2y2 = image_utils.np_get_random_crop_area(np_mask, crop_shape[1], crop_shape[0])
-            mask_crop = image_utils.np_crop_image(np_mask, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
+            while attempts > 0:
+                x1y1, x2y2 = image_utils.np_get_random_crop_area(np_mask, crop_shape[1], crop_shape[0])
+                mask_crop = image_utils.np_crop_image(np_mask, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
 
-            # If the mask crop is only background (all R channel is zero) - try another crop
-            # until attempts are exhausted
-            if np.max(mask_crop[:, :, 0]) == 0 and attempts-1 != 0 and retry_crops:
-                attempts -= 1
-                continue
+                # If the mask crop is only background (all R channel is zero) - try another crop
+                # until attempts are exhausted
+                if np.max(mask_crop[:, :, 0]) == 0 and attempts-1 != 0 and retry_crops:
+                    attempts -= 1
+                    continue
 
-            np_mask = mask_crop
-            np_photo = image_utils.np_crop_image(np_photo, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
-            break
+                np_mask = mask_crop
+                np_photo = image_utils.np_crop_image(np_photo, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
+                break
+        # Use the bounding box information to take a targeted crop
+        else:
+            tlc, trc, brc, blc = bbox
+            crop_height = crop_shape[0]
+            crop_width = crop_shape[1]
+            bbox_ymin = tlc[0]
+            bbox_ymax = blc[0]
+            bbox_xmin = tlc[1]
+            bbox_xmax = trc[1]
+            bbox_height = bbox_ymax-bbox_ymin
+            bbox_width = bbox_xmax-bbox_xmin
+            #bbox_center = ((bbox_ymin + bbox_ymax) / 2, (bbox_xmin + bbox_xmax) / 2)
+            height_diff = abs(bbox_height - crop_height)
+            width_diff = abs(bbox_width - crop_width)
+
+            # If the crop can fit the whole material sample within it
+            if bbox_height < crop_height and bbox_width < crop_width:
+                crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff, bbox_ymin+1))
+                crop_ymax = crop_ymin + crop_height
+                crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff, bbox_xmin+1))
+                crop_xmax = crop_xmin + crop_width
+
+            # If the crop area is smaller than the material sample area
+            else:
+                crop_ymin = bbox_ymin + np.random.randint(0, height_diff)
+                crop_ymax = crop_ymin + crop_height
+                crop_xmin = bbox_xmin + np.random.randint(0, width_diff)
+                crop_xmax = crop_xmin + crop_width
+
+            # Sanity check for y values
+            if crop_ymax > np_mask.shape[0]:
+                diff = crop_ymax - np_mask.shape[0]
+                crop_ymin = crop_ymin - diff
+                crop_ymax = crop_ymax - diff
+
+            # Sanity check for x values
+            if crop_xmax > np_mask.shape[1]:
+                diff = crop_xmax - np_mask.shape[1]
+                crop_xmin = crop_xmin - diff
+                crop_xmax = crop_xmax - diff
+
+            np_mask = image_utils.np_crop_image(np_mask, crop_xmin, crop_ymin, crop_xmax, crop_ymax)
+            np_photo = image_utils.np_crop_image(np_photo, crop_xmin, crop_ymin, crop_xmax, crop_ymax)
 
     # If a crop size is not given, make sure the image dimensions satisfy
     # the div2_constraint i.e. are n times divisible by 2 to work within

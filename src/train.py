@@ -89,7 +89,7 @@ def unlabeled_cost_coefficient_function(step_idx):
         :return: unlabeled cost coefficient
     """
 
-    return 7.0
+    return 0.5
 
 
 def label_generation_function(np_img):
