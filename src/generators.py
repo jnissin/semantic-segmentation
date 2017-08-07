@@ -398,11 +398,11 @@ def process_segmentation_photo_mask_pair(np_photo,
                 crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff, bbox_xmin+1))
                 crop_xmax = crop_xmin + crop_width
 
-            # If the crop area is smaller than the material sample area
+            # If the crop can't fit the whole material sample within it
             else:
-                crop_ymin = bbox_ymin + np.random.randint(0, height_diff)
+                crop_ymin = bbox_ymin + np.random.randint(0, height_diff+1)
                 crop_ymax = crop_ymin + crop_height
-                crop_xmin = bbox_xmin + np.random.randint(0, width_diff)
+                crop_xmin = bbox_xmin + np.random.randint(0, width_diff+1)
                 crop_xmax = crop_xmin + crop_width
 
             # Sanity check for y values
