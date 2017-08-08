@@ -108,7 +108,7 @@ def _tf_softmax(y_pred, epsilon=None):
 
 def _tf_sobel(img):
     """
-    Applies a Sobel filter to the parameter image. Image must be of rank 2 (HxW).
+    Applies a Sobel filter to the parameter image.
 
     # Arguments
         :param img: Image tensor
@@ -120,12 +120,14 @@ def _tf_sobel(img):
     sobel_x_filter = K.tf.reshape(sobel_x, [3, 3, 1, 1])
     sobel_y_filter = K.tf.transpose(sobel_x_filter, [1, 0, 2, 3])
 
-    # Shape = 1 x height x width x 1.
-    image_resized = K.tf.cast(K.tf.expand_dims(K.tf.expand_dims(img, 0), 3), K.tf.float32)
+    # If the image is of form: HxW -> reshape to 1xHxWx1
+    img_reshaped = K.tf.cond(img.rank == 2, lambda: K.tf.cast(K.tf.expand_dims(K.tf.expand_dims(img, 0), 3), K.tf.float32), img)
+    # If the image is of form: HxWx1 -> reshape to 1xHxWx1
+    img_reshaped = K.tf.cond(img.rank == 3, lambda: K.tf.cast(K.tf.expand_dims(img, 0), K.tf.float32), img_reshaped)
 
-    filtered_x = K.tf.nn.conv2d(image_resized, sobel_x_filter, strides=[1, 1, 1, 1], padding='SAME')
+    filtered_x = K.tf.nn.conv2d(img_reshaped, sobel_x_filter, strides=[1, 1, 1, 1], padding='SAME')
     filtered_x = K.tf.squeeze(filtered_x)
-    filtered_y = K.tf.nn.conv2d(image_resized, sobel_y_filter, strides=[1, 1, 1, 1], padding='SAME')
+    filtered_y = K.tf.nn.conv2d(img_reshaped, sobel_y_filter, strides=[1, 1, 1, 1], padding='SAME')
     filtered_y = K.tf.squeeze(filtered_y)
 
     return filtered_x, filtered_y

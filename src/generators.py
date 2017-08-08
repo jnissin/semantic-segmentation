@@ -546,7 +546,7 @@ class DataSetIterator(object):
 
     def __init__(self, n, batch_size, shuffle, seed):
         self.n = n
-        self.batch_size = batch_size
+        self.batch_size = min(batch_size, n)    # The batch size could in theory be bigger than the data set size
         self.shuffle = shuffle
         self.seed = seed
         self.batch_index = 0

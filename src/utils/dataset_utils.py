@@ -495,7 +495,9 @@ def calculate_median_frequency_balancing_weights(image_files, material_class_inf
         if class_pixels[i] != 0 and img_pixels[i] != 0:
             class_frequencies[i] = class_pixels[i] / img_pixels[i]
 
-    median_frequency = np.median(class_frequencies)
+    # Only take into account non zero class frequencies
+    non_zero_class_frequencies = [freq for freq in class_frequencies if freq != 0]
+    median_frequency = np.median(non_zero_class_frequencies)
 
     # Avoid NaNs/infs by looping
     median_frequency_weights = np.zeros_like(class_frequencies, dtype=np.float32)
