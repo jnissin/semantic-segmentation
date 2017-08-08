@@ -641,7 +641,7 @@ def _get_material_samples(mask_file, r_color_to_material_id, background_class=0,
     # Filter sets smaller than min_set_size
     unique_pixel_sets = [s for s in unique_pixel_sets if len(s) >= min_sample_size]
 
-    #print 'Found {} unique pixel sets for file {}'.format(len(unique_pixel_sets), mask_file.file_name)
+    print 'Found {} unique pixel sets for file {}'.format(len(unique_pixel_sets), mask_file.file_name)
 
     # Build the material samples from the unique pixel sets
     material_samples = []
