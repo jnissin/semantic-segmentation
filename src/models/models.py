@@ -1148,11 +1148,11 @@ class YOLONetModel(ModelBase):
         """
         Decoder path
         """
-        conv7 = YOLONetModel.get_decoder_block('decoder_block1', 2, 486, pool6, conv6, transposed=True)
+        conv7 = YOLONetModel.get_decoder_block('decoder_block1', 2, 486, pool6, conv6)
         conv8 = YOLONetModel.get_decoder_block('decoder_block2', 2, 324, conv7, conv5)
-        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 2, 216, conv8, conv4, transposed=True)
+        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 2, 216, conv8, conv4)
         conv10 = YOLONetModel.get_decoder_block('decoder_block4', 2, 144, conv9, conv3)
-        conv11 = YOLONetModel.get_decoder_block('decoder_block5', 2, 96, conv10, conv2, transposed=True)
+        conv11 = YOLONetModel.get_decoder_block('decoder_block5', 2, 96, conv10, conv2)
         conv12 = YOLONetModel.get_decoder_block('decoder_block6', 2, 64, conv11, conv1)
 
         """
