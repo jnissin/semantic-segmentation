@@ -7,6 +7,7 @@ import numpy as np
 from PIL import ImageFile
 import jsonpickle
 
+from .. import settings
 from ..utils import dataset_utils
 from ..utils.dataset_utils import SegmentationSetInformation, SegmentationTrainingSetInformation, SegmentationDataSetInformation
 
@@ -27,6 +28,7 @@ def main():
     ap.add_argument("--stats", required=False, type=bool, default=False, help="Calculate statistics for the new training set")
     ap.add_argument("--msamples", required=False, type=bool, default=False, help="Calculate material sample data for labeled data")
     ap.add_argument("-o", "--output", required=True, help="Path to the output JSON file")
+    ap.add_argument("--maxjobs", required=False, type=int, help="Specify maximum number of parallel jobs")
     args = vars(ap.parse_args())
 
     photos_path = args["photos"]
@@ -38,6 +40,7 @@ def main():
     calculate_material_samples = args["msamples"]
     split = [float(v.strip()) for v in args["split"].split(',')]
     ignored_classes = [int(v.strip()) for v in args["iclasses"].split(',')] if args["iclasses"] else None
+    max_jobs = args["maxjobs"]
     output_path = args["output"]
 
     # Without this some truncated images can throw errors
@@ -46,6 +49,10 @@ def main():
     print 'Using random seed: {}'.format(rseed)
     random.seed(rseed)
     np.random.seed(rseed)
+
+    if max_jobs:
+        print 'Setting maximum number of parallel jobs to: {}'.format(max_jobs)
+        settings.MAX_NUMBER_OF_JOBS = max_jobs
 
     print 'Loading material information from file: {}'.format(materials_path)
     materials = dataset_utils.load_material_class_information(materials_path)
