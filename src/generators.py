@@ -537,7 +537,7 @@ class DataGeneratorParameters(object):
 
 class IterationMode(Enum):
     UNIFORM = 0,  # Sample each material class uniformly wrt. number of samples within epoch
-    REGULAR = 1   # Iterate through all the unique samples once within epoch
+    UNIQUE = 1   # Iterate through all the unique samples once within epoch
 
 
 class DataSetIterator(object):
@@ -679,8 +679,8 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         super(MaterialSampleDataSetIterator, self).get_next_batch()
 
-        if self.iter_mode == IterationMode.REGULAR:
-            return self._get_next_batch_regular()
+        if self.iter_mode == IterationMode.UNIQUE:
+            return self._get_next_batch_unique()
         elif self.iter_mode == IterationMode.UNIFORM:
             return self._get_next_batch_uniform()
 
@@ -723,7 +723,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         return ret, current_index, current_batch_size
 
-    def _get_next_batch_regular(self):
+    def _get_next_batch_unique(self):
         if self.batch_index == 0 and self.shuffle:
             np.random.shuffle(self._material_samples_flattened)
 
@@ -742,8 +742,8 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
     @property
     def num_steps_per_epoch(self):
-        if self.iter_mode == IterationMode.REGULAR:
-            return dataset_utils.get_number_of_batches(self.n, self.batch_size)
+        if self.iter_mode == IterationMode.UNIQUE:
+            return dataset_utils.get_number_of_batches(self._num_unique_material_samples, self.batch_size)
         elif self.iter_mode == IterationMode.UNIFORM:
             # If all classes are sampled uniformly, we have been through all the samples in the data
             # on average after we have gone through all the samples in the biggest class
