@@ -301,14 +301,6 @@ class LabeledImageDataSet(DataSet):
         self._mask_image_set = ImageSet(self.name + '_masks', path_to_mask_archive, mask_file_list)
         self._material_samples = material_samples
 
-        # TODO: Remove debug
-        #if material_samples is not None and len(material_samples) > 0:
-        #    print 'Material samples for {} material categories'.format(len(material_samples))
-        #
-        #    for i in range(len(material_samples)):
-        #        print 'Category {} has {} samples'.format(i, len(material_samples[i]))
-        # End of debug
-
         # Make sure the photos and masks are organized in the same way
         self._photo_image_set.sort()
         self._mask_image_set.sort()

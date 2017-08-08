@@ -786,8 +786,8 @@ class SegmentationTrainer(TrainerBase):
         super(SegmentationTrainer, self).train()
 
         # Labeled data set size determines the epochs
-        training_steps_per_epoch = dataset_utils.get_number_of_batches(self.training_set.size, self.batch_size)
-        validation_steps_per_epoch = dataset_utils.get_number_of_batches(self.validation_set.size, self.validation_batch_size)
+        training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
+        validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
         num_workers = dataset_utils.get_number_of_parallel_jobs()
 
         self.log('Num epochs: {}, initial epoch: {}, batch size: {}, crop shape: {}, training steps per epoch: {}, '
@@ -1184,8 +1184,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         # Labeled data set size determines the epochs
         total_batch_size = self.num_labeled_per_batch + self.num_unlabeled_per_batch
-        training_steps_per_epoch = dataset_utils.get_number_of_batches(self.training_set_labeled.size, self.num_labeled_per_batch)
-        validation_steps_per_epoch = dataset_utils.get_number_of_batches(self.validation_set.size, self.validation_num_labeled_per_batch)
+        training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
+        validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
         num_workers = dataset_utils.get_number_of_parallel_jobs()
 
         self.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'

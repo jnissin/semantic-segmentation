@@ -4,6 +4,7 @@ import random
 import numpy as np
 import threading
 import warnings
+from enum import Enum
 
 from keras.preprocessing.image import img_to_array
 from PIL import Image
@@ -13,7 +14,7 @@ from utils import image_utils
 from utils.dataset_utils import MaterialClassInformation, MaterialSample
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile
 
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta, abstractmethod, abstractproperty
 import keras.backend as K
 from typing import Callable
 
@@ -534,9 +535,38 @@ class DataGeneratorParameters(object):
 # ITERATOR
 #######################################
 
-# TODO: Create an abstract class for DataSetIterator
+class IterationMode(Enum):
+    UNIFORM = 0,  # Sample each material class uniformly w.r.t. number of samples
+    REGULAR = 1   # Iterate through all the unique samples - no random sampling
 
-class FileDataSetIterator(object):
+
+class DataSetIterator(object):
+
+    __metaclass__ = ABCMeta
+
+    def __init__(self, n, batch_size, shuffle, seed):
+        self.n = n
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.seed = seed
+        self.batch_index = 0
+        self.total_batches_seen = 0
+
+    def reset(self):
+        self.batch_index = 0
+        self.total_batches_seen = 0
+
+    @abstractmethod
+    def get_next_batch(self):
+        if self.seed is not None:
+            np.random.seed(self.seed + self.total_batches_seen)
+
+    @abstractproperty
+    def num_steps_per_epoch(self):
+        pass
+
+
+class FileDataSetIterator(DataSetIterator):
     """
     A class for iterating over a data set in batches.
     """
@@ -553,23 +583,13 @@ class FileDataSetIterator(object):
         # Returns
             Nothing
         """
-
-        self.n = n
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.seed = seed
-        self.batch_index = 0
-        self.total_batches_seen = 0
-        self.index_array = np.arange(n)
-
-    def reset(self):
-        self.batch_index = 0
+        super(FileDataSetIterator, self).__init__(n=n, batch_size=batch_size, shuffle=shuffle, seed=seed)
+        self.index_array = np.arange(self.n)
 
     def get_next_batch(self):
         # type: () -> (np.array[int], int, int)
 
-        if self.seed is not None:
-            np.random.seed(self.seed + self.total_batches_seen)
+        super(FileDataSetIterator, self).get_next_batch()
 
         if self.batch_index == 0:
             self.index_array = np.arange(self.n)
@@ -584,60 +604,62 @@ class FileDataSetIterator(object):
         else:
             current_batch_size = self.n - current_index
             self.batch_index = 0
+
         self.total_batches_seen += 1
 
         return self.index_array[current_index: current_index + current_batch_size], current_index, current_batch_size
 
+    @property
+    def num_steps_per_epoch(self):
+        return dataset_utils.get_number_of_batches(self.n, self.batch_size)
 
-class MaterialSampleDataSetIterator(object):
+
+class MaterialSampleDataSetIterator(DataSetIterator):
     """
     A class for iterating randomly through MaterialSamples for a data set in batches.
     """
 
-    def __init__(self, material_samples, batch_size, shuffle, seed):
+    def __init__(self, material_samples, batch_size, shuffle, seed, iter_mode=IterationMode.UNIFORM):
         # type: (list[list[MaterialSample]], int, bool, int, bool) -> None
 
+        self._num_unique_material_samples = sum(len(material_category) for material_category in material_samples)
+        super(MaterialSampleDataSetIterator, self).__init__(n=self._num_unique_material_samples, batch_size=batch_size, shuffle=shuffle, seed=seed)
+
+        self.iter_mode = iter_mode
+
+        if iter_mode == IterationMode.REGULAR:
+            raise NotImplementedError('Regular iteration mode has not been implemented yet')
+
         # Build index lists for the different material samples
-        self.material_samples = []
-        self.batch_size = batch_size
-        self.shuffle = shuffle
-        self.seed = seed
-        self.batch_index = 0
-        self.total_batches_seen = 0
-        self.n = 0  # Number of samples in total
+        self._material_samples = []
 
         # Calculate uniform probabilities for all classes that have non zero samples
-        self.class_probabilities = [0.0] * len(material_samples)
-        self.num_non_zero_classes = 0
-
-        for material_category in material_samples:
-            if len(material_category) > 0:
-                self.num_non_zero_classes += 1
+        self._class_probabilities = [0.0] * len(material_samples)
+        self._num_non_zero_classes = sum(1 for material_category in material_samples if len(material_category) > 0)
+        self._num_samples_in_biggest_material_category = max(len(material_category) for material_category in material_samples)
+        self._num_samples_in_smallest_material_category = min(len(material_category) for material_category in material_samples)
 
         for i in range(len(material_samples)):
-            if len(material_samples[i]) > 0:
-                self.class_probabilities[i] = 1.0/self.num_non_zero_classes
+            num_samples_in_category = len(material_samples[i])
+
+            if num_samples_in_category > 0:
+                self._class_probabilities[i] = 1.0 / self._num_non_zero_classes
             else:
                 # Zero is assumed as the background class and should/can have zero instances
                 if i != 0:
                     warnings.warn('Material class {} has 0 material samples'.format(i), RuntimeWarning)
 
-                self.class_probabilities[i] = 0.0
+                self._class_probabilities[i] = 0.0
 
         for material_category in material_samples:
             if not shuffle:
-                self.material_samples.append(np.arange(len(material_category)))
+                self._material_samples.append(np.arange(len(material_category)))
             else:
-                self.material_samples.append(np.random.permutation(len(material_category)))
-
-            self.n += len(material_category)
+                self._material_samples.append(np.random.permutation(len(material_category)))
 
         # Keep track of the current sample in each material category
         self.num_material_classes = len(material_samples)
-        self.current_samples = [0] * self.num_material_classes
-
-    def reset(self):
-        self.batch_index = 0
+        self._current_samples = [0] * self.num_material_classes
 
     def get_next_batch(self):
         # type: () -> (list[tuple[int]], int, int)
@@ -652,36 +674,34 @@ class MaterialSampleDataSetIterator(object):
             :return: a batch of material samples as tuples of indices into 2D material sample array
         """
 
-        if self.seed is not None:
-            np.random.seed(self.seed + self.total_batches_seen)
+        super(MaterialSampleDataSetIterator, self).get_next_batch()
 
         # Class 0 is assumed to be background so classes will be [1,num_classes-1]
-        sample_classes = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self.class_probabilities)
-
+        sample_classes = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self._class_probabilities)
         ret = []
 
         for sample_category_idx in sample_classes:
-            internal_sample_idx = self.current_samples[sample_category_idx]
-            sample_idx = self.material_samples[sample_category_idx][internal_sample_idx]
+            internal_sample_idx = self._current_samples[sample_category_idx]
+            sample_idx = self._material_samples[sample_category_idx][internal_sample_idx]
             ret.append((sample_category_idx, sample_idx))
 
             # Keep track of the used samples in each category
-            self.current_samples[sample_category_idx] += 1
+            self._current_samples[sample_category_idx] += 1
 
             # If all of the samples in the category have been used, zero out the
             # index for the category and shuffle the category list if shuffle is enabled
-            if self.current_samples[sample_category_idx] >= len(self.material_samples[sample_category_idx]):
-                self.current_samples[sample_category_idx] = 0
+            if self._current_samples[sample_category_idx] >= len(self._material_samples[sample_category_idx]):
+                self._current_samples[sample_category_idx] = 0
 
                 if self.shuffle:
-                    self.material_samples[sample_category_idx] = np.random.permutation(len(self.material_samples[sample_category_idx]))
+                    self._material_samples[sample_category_idx] = np.random.permutation(len(self._material_samples[sample_category_idx]))
                 else:
-                    self.material_samples[sample_category_idx] = np.arange(len(self.material_samples[sample_category_idx]))
+                    self._material_samples[sample_category_idx] = np.arange(len(self._material_samples[sample_category_idx]))
 
         # Keep track of how many times we have gone "through all the samples"
-        current_index = (self.batch_index * self.batch_size) % self.n
+        current_index = (self.batch_index * self.batch_size) % self.num_steps_per_epoch
 
-        if self.n > current_index + self.batch_size:
+        if self.num_steps_per_epoch > current_index + self.batch_size:
             self.batch_index += 1
         else:
             self.batch_index = 0
@@ -689,6 +709,17 @@ class MaterialSampleDataSetIterator(object):
         self.total_batches_seen += 1
 
         return ret, current_index, self.batch_size
+
+    @property
+    def num_steps_per_epoch(self):
+        if self.iter_mode == IterationMode.REGULAR:
+            return dataset_utils.get_number_of_batches(self.n, self.batch_size)
+        elif self.iter_mode == IterationMode.UNIFORM:
+            # If all classes are sampled uniformly, we have been through all the samples in the data
+            # on average after we have gone through all the samples in the biggest class
+            return dataset_utils.get_number_of_batches(self._num_samples_in_biggest_material_category * self._num_non_zero_classes, self.batch_size)
+
+        raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
 
 #######################################
 # DATA GENERATOR
@@ -806,6 +837,20 @@ class DataGenerator(object):
             None
         # Returns
             None
+        """
+        raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
+
+    @abstractproperty
+    def num_steps_per_epoch(self):
+        # type: () -> int
+
+        """
+        This method returns the number of batches in epoch.
+
+        # Arguments
+            None
+        # Returns
+            :return: Number of batches (steps) per epoch
         """
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
@@ -930,6 +975,18 @@ class SegmentationDataGenerator(DataGenerator):
 
         return X, Y
 
+    @property
+    def num_steps_per_epoch(self):
+        """
+        Returns the number of batches (steps) per epoch.
+
+        # Arguments
+            None
+        # Returns
+            :return: Number of steps per epoch
+        """
+        return self.labeled_data_iterator.num_steps_per_epoch
+
 
 ################################################
 # SEMI SUPERVISED SEGMENTATION DATA GENERATOR
@@ -974,6 +1031,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                 batch_size=num_unlabeled_per_batch,
                 shuffle=self.shuffle_data_after_epoch,
                 seed=self.random_seed)
+
         else:
             self.labeled_data_iterator = FileDataSetIterator(
                 n=self.labeled_data_set.size,
@@ -1180,6 +1238,18 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             print 'Unmatching input first dimensions: {}, {}, {}'.format(X.shape[0], Y.shape[0],  num_unlabeled.shape[0])
 
         return batch_data, dummy_output
+
+    @property
+    def num_steps_per_epoch(self):
+        """
+        Returns the number of batches (steps) per epoch.
+
+        # Arguments
+            None
+        # Returns
+            :return: Number of steps per epoch
+        """
+        return self.labeled_data_iterator.num_steps_per_epoch
 
     @staticmethod
     def default_label_generator_for_unlabeled_photos(np_image):
