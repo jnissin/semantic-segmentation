@@ -536,8 +536,8 @@ class DataGeneratorParameters(object):
 #######################################
 
 class IterationMode(Enum):
-    UNIFORM = 0,  # Sample each material class uniformly w.r.t. number of samples
-    REGULAR = 1   # Iterate through all the unique samples - no random sampling
+    UNIFORM = 0,  # Sample each material class uniformly wrt. number of samples within epoch
+    REGULAR = 1   # Iterate through all the unique samples once within epoch
 
 
 class DataSetIterator(object):
@@ -625,19 +625,28 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         self._num_unique_material_samples = sum(len(material_category) for material_category in material_samples)
         super(MaterialSampleDataSetIterator, self).__init__(n=self._num_unique_material_samples, batch_size=batch_size, shuffle=shuffle, seed=seed)
 
-        self.iter_mode = iter_mode
-
-        if iter_mode == IterationMode.REGULAR:
-            raise NotImplementedError('Regular iteration mode has not been implemented yet')
-
-        # Build index lists for the different material samples
-        self._material_samples = []
-
         # Calculate uniform probabilities for all classes that have non zero samples
+        self.iter_mode = iter_mode
         self._class_probabilities = [0.0] * len(material_samples)
         self._num_non_zero_classes = sum(1 for material_category in material_samples if len(material_category) > 0)
         self._num_samples_in_biggest_material_category = max(len(material_category) for material_category in material_samples)
         self._num_samples_in_smallest_material_category = min(len(material_category) for material_category in material_samples)
+
+        # Build index lists for the different material samples
+        self._material_samples = []
+
+        for material_category in material_samples:
+            if not shuffle:
+                self._material_samples.append(np.arange(len(material_category)))
+            else:
+                self._material_samples.append(np.random.permutation(len(material_category)))
+
+        # Build a flattened list of all the material samples (for regular iteration)
+        self._material_samples_flattened = []
+
+        for i in range(len(self._material_samples)):
+            for j in range(len(self._material_samples[i])):
+                self._material_samples_flattened.append((i, j))
 
         for i in range(len(material_samples)):
             num_samples_in_category = len(material_samples[i])
@@ -650,12 +659,6 @@ class MaterialSampleDataSetIterator(DataSetIterator):
                     warnings.warn('Material class {} has 0 material samples'.format(i), RuntimeWarning)
 
                 self._class_probabilities[i] = 0.0
-
-        for material_category in material_samples:
-            if not shuffle:
-                self._material_samples.append(np.arange(len(material_category)))
-            else:
-                self._material_samples.append(np.random.permutation(len(material_category)))
 
         # Keep track of the current sample in each material category
         self.num_material_classes = len(material_samples)
@@ -676,6 +679,14 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         super(MaterialSampleDataSetIterator, self).get_next_batch()
 
+        if self.iter_mode == IterationMode.REGULAR:
+            return self._get_next_batch_regular()
+        elif self.iter_mode == IterationMode.UNIFORM:
+            return self._get_next_batch_uniform()
+
+        raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
+
+    def _get_next_batch_uniform(self):
         # Class 0 is assumed to be background so classes will be [1,num_classes-1]
         sample_classes = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self._class_probabilities)
         ret = []
@@ -699,16 +710,35 @@ class MaterialSampleDataSetIterator(DataSetIterator):
                     self._material_samples[sample_category_idx] = np.arange(len(self._material_samples[sample_category_idx]))
 
         # Keep track of how many times we have gone "through all the samples"
-        current_index = (self.batch_index * self.batch_size) % self.num_steps_per_epoch
+        n_samples = self._num_samples_in_biggest_material_category*self._num_non_zero_classes
+        current_index = (self.batch_index * self.batch_size) % n_samples
+        current_batch_size = len(ret)
 
-        if self.num_steps_per_epoch > current_index + self.batch_size:
+        if n_samples > current_index + self.batch_size:
             self.batch_index += 1
         else:
             self.batch_index = 0
 
         self.total_batches_seen += 1
 
-        return ret, current_index, self.batch_size
+        return ret, current_index, current_batch_size
+
+    def _get_next_batch_regular(self):
+        if self.batch_index == 0 and self.shuffle:
+            np.random.shuffle(self._material_samples_flattened)
+
+        current_index = (self.batch_index * self.batch_size) % self.n
+
+        if self.n > current_index + self.batch_size:
+            current_batch_size = self.batch_size
+            self.batch_index += 1
+        else:
+            current_batch_size = self.n - current_index
+            self.batch_index = 0
+
+        self.total_batches_seen += 1
+
+        return self._material_samples_flattened[current_index: current_index + current_batch_size], current_index, current_batch_size
 
     @property
     def num_steps_per_epoch(self):
