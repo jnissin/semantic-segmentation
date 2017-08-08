@@ -22,7 +22,8 @@ def main():
     ap.add_argument("-u", "--unlabeled", required=False, type=str, help="Path to possible unlabeled data")
     ap.add_argument("-c", "--categories", required=True, type=str, help="Path to materials CSV file")
     ap.add_argument("-r", "--rseed", required=True, type=int, help="Random seed")
-    ap.add_argument("-s", "--split", required=True, type=str, help="Dataset split")
+    ap.add_argument("-s", "--split", required=True, type=str, help="Dataset split e.g. '0.8,0.05,0.15'")
+    ap.add_argument("--iclasses", required=False, type=str, help="List of ignored classes e.g. '0,1' when calculating weights (zero weights assigned)")
     ap.add_argument("--stats", required=False, type=bool, default=False, help="Calculate statistics for the new training set")
     ap.add_argument("--msamples", required=False, type=bool, default=False, help="Calculate material sample data for labeled data")
     ap.add_argument("-o", "--output", required=True, help="Path to the output JSON file")
@@ -36,6 +37,7 @@ def main():
     calculate_statistics = args["stats"]
     calculate_material_samples = args["msamples"]
     split = [float(v.strip()) for v in args["split"].split(',')]
+    ignored_classes = [int(v.strip()) for v in args["iclasses"].split(',')] if args["iclasses"] else None
     output_path = args["output"]
 
     # Without this some truncated images can throw errors
@@ -150,9 +152,9 @@ def main():
         print 'Labeled only per-channel stddev calculation for {} files finished in {} seconds'.format(len(training_labeled_photos), time.time()-start_time)
 
         # Median frequency balancing weights
-        print 'Starting median frequency balancing weights calculation for {} masks with {} jobs'.format(len(if_masks), n_jobs)
+        print 'Starting median frequency balancing weights calculation for {} masks with {} jobs. Ignoring calsses: {}'.format(len(if_masks), n_jobs, ignored_classes)
         start_time = time.time()
-        class_weights = dataset_utils.calculate_median_frequency_balancing_weights(if_masks, material_class_information=materials).tolist()
+        class_weights = dataset_utils.calculate_median_frequency_balancing_weights(if_masks, material_class_information=materials, ignored_classes=ignored_classes).tolist()
         print 'Median frequency balancing weight calculation for {} files finished in {} seconds'.format(len(if_masks), time.time()-start_time)
 
     data_set = SegmentationDataSetInformation(training_set,

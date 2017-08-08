@@ -459,8 +459,8 @@ def _calculate_per_channel_stddev(image_file, per_channel_mean, num_channels, ve
     return var_tot
 
 
-def calculate_median_frequency_balancing_weights(image_files, material_class_information):
-    # type: (list[ImageFile], list[MaterialClassInformation]) -> np.array[np.float32]
+def calculate_median_frequency_balancing_weights(image_files, material_class_information, ignored_classes=None):
+    # type: (list[ImageFile], list[MaterialClassInformation], list[int]) -> np.array[np.float32]
 
     """
     Calculates the median frequency balancing weights for provided
@@ -469,9 +469,17 @@ def calculate_median_frequency_balancing_weights(image_files, material_class_inf
     # Arguments
         :param image_files: list of ImageFiles of the mask files
         :param material_class_information: material class information of the dataset
+        :param ignored_classes: a list of ignored class indices. Will assign zero as class weights to these classes and ignore when defining median.
     # Returns
         :return: a Numpy array with N_CLASSES values each describing the weight for that specific class
     """
+
+    # Validate ignored classes before starting
+    if ignored_classes is not None:
+        num_classes = len(material_class_information)
+        for class_idx in ignored_classes:
+            if class_idx >= num_classes or class_idx < 0:
+                raise ValueError('Invalid ignore class index: {} for {} classes'.format(val, num_classes))
 
     n_jobs = get_number_of_parallel_jobs()
 
@@ -494,6 +502,11 @@ def calculate_median_frequency_balancing_weights(image_files, material_class_inf
     for i in range(class_frequencies.shape[0]):
         if class_pixels[i] != 0 and img_pixels[i] != 0:
             class_frequencies[i] = class_pixels[i] / img_pixels[i]
+
+    # Zero out ignored classes
+    if ignored_classes is not None:
+        for class_idx in ignored_classes:
+            class_frequencies[class_idx] = 0
 
     # Only take into account non zero class frequencies
     non_zero_class_frequencies = [freq for freq in class_frequencies if freq != 0]
@@ -550,7 +563,7 @@ def get_material_samples(mask_files, material_class_information, background_clas
     # Parallelize the calculation for different files
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
+    data = Parallel(n_jobs=n_jobs, backend='threading')(
         delayed(_get_material_samples)(
             mask_file, r_color_to_material_id, background_class, min_sample_size) for mask_file in mask_files)
 
