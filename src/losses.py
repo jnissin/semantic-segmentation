@@ -476,20 +476,20 @@ def mean_teacher_lambda_loss(class_weights=None):
 
         classification_costs = None
 
-        if class_weights is not None:
-            # Weighted pixelwise cross-entropy
-            # The labels are index encoded - expand to one hot encoding for weighted_pixelwise_crossentropy calculation
-            y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
-            y_true_labeled = K.tf.one_hot(y_true_labeled, y_pred.shape[-1])
-            classification_costs = _weighted_pixelwise_crossentropy_loss(class_weights)(y_true_labeled, y_pred_labeled)
-        else:
-            # Pixelwise cross-entropy
-            y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
-            xent = K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred_labeled, labels=y_true_labeled)
-            # Returns cross-entropy loss for each pixel, i.e. B_SIZExHxW
-            # calculate the sum of pixel cross-entropies for each image and take the mean of images in the batch
-            xent = K.tf.reduce_sum(xent, axis=(1, 2))
-            classification_costs = K.tf.reduce_mean(xent)
+        #if class_weights is not None:
+        #    # Weighted pixelwise cross-entropy
+        #    # The labels are index encoded - expand to one hot encoding for weighted_pixelwise_crossentropy calculation
+        #    y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
+        #    y_true_labeled = K.tf.one_hot(y_true_labeled, y_pred.shape[-1])
+        #    classification_costs = _weighted_pixelwise_crossentropy_loss(class_weights)(y_true_labeled, y_pred_labeled)
+        #else:
+        # Pixelwise cross-entropy
+        y_true_labeled = K.tf.cast(y_true_labeled, K.tf.int32)
+        xent = K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred_labeled, labels=y_true_labeled)
+        # Returns cross-entropy loss for each pixel, i.e. B_SIZExHxW
+        # calculate the sum of pixel cross-entropies for each image and take the mean of images in the batch
+        xent = K.tf.reduce_sum(xent, axis=(1, 2))
+        classification_costs = K.tf.reduce_mean(xent)
 
         """
         Consistency costs - for labeled and unlabeled
