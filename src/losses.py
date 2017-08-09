@@ -283,7 +283,7 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     l2_softmax_dist = K.tf.reduce_sum(l2_softmax_dist, axis=(1, 2))
 
     # Take the mean of the loss per image
-    return consistency_coefficient * K.tf.reduce_mean(l2_softmax_dist)
+    return K.tf.multiply(consistency_coefficient, K.tf.reduce_mean(l2_softmax_dist))
 
 
 ##############################################
@@ -470,10 +470,12 @@ def mean_teacher_lambda_loss(args):
 
     # Stop gradient while parsing the necessary values
     num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
-    y_pred_labeled = K.tf.stop_gradient(K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: y_pred[:-num_unlabeled], lambda: y_pred))
-    y_true_labeled = K.tf.stop_gradient(K.tf.cast(K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: y_true[:-num_unlabeled], lambda: y_true), dtype=K.tf.int32))
-    weights_labeled = K.tf.stop_gradient(K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: weights[:-num_unlabeled], lambda: weights))
+    num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
+    weights_labeled = K.tf.stop_gradient(weights[0:num_labeled])
     cons_coefficient = K.tf.stop_gradient(K.tf.squeeze(cons_coefficient[0]))
+
+    y_pred_labeled = y_pred[0:num_labeled]
+    y_true_labeled = K.tf.cast(y_true[0:num_labeled], dtype=K.tf.int32)
 
     """
     Classification cost calculation - only for labeled
@@ -520,13 +522,15 @@ def semisupervised_superpixel_lambda_loss(num_classes):
 
         y_pred, y_true, weights, num_unlabeled, unlabeled_cost_coefficient = args
 
-        num_unlabeled = K.tf.cast(K.tf.reduce_mean(num_unlabeled), dtype=K.tf.int32)
-        y_pred_labeled = K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: y_pred[:-num_unlabeled], lambda: y_pred)
-        y_true_labeled = K.tf.cast(K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: y_true[:-num_unlabeled], lambda: y_true), dtype=K.tf.int32)
-        weights_labeled = K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: weights[:-num_unlabeled], lambda: weights)
-        y_pred_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.argmax(y_pred[-num_unlabeled:], axis=-1), dtype=K.tf.int32))
-        y_true_unlabeled = K.tf.cast(y_true[-num_unlabeled:], dtype=K.tf.int32)
-        unlabeled_cost_coefficient = K.tf.reduce_mean(unlabeled_cost_coefficient)
+        num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
+        num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
+        weights_labeled = K.tf.stop_gradient(weights[0:num_labeled])
+        unlabeled_cost_coefficient = K.tf.stop_gradient(K.tf.squeeze(unlabeled_cost_coefficient[0]))
+
+        y_pred_labeled = y_pred[0:num_labeled]
+        y_true_labeled = K.tf.cast(y_true[:num_labeled], dtype=K.tf.int32)
+        y_pred_unlabeled = K.tf.cast(K.tf.argmax(y_pred[num_labeled:], axis=-1), dtype=K.tf.int32)
+        y_true_unlabeled = K.tf.cast(y_true[num_labeled:], dtype=K.tf.int32)
 
         """
         Classification cost calculation - only for labeled
@@ -589,14 +593,17 @@ def mean_teacher_superpixel_lambda_loss(num_classes):
 
         y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient = args
 
-        num_unlabeled = K.tf.cast(K.tf.reduce_mean(num_unlabeled), dtype=K.tf.int32)
-        y_pred_labeled = K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: y_pred[:-num_unlabeled], lambda: y_pred)
-        y_true_labeled = K.tf.cast(K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: y_true[:-num_unlabeled], lambda: y_true), dtype=K.tf.int32)
-        weights_labeled = K.tf.cond(K.tf.greater(num_unlabeled, 0), lambda: weights[:-num_unlabeled], lambda: weights)
-        y_pred_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.argmax(y_pred[-num_unlabeled:], axis=-1), dtype=K.tf.int32))
-        y_true_unlabeled = K.tf.cast(y_true[-num_unlabeled:], dtype=K.tf.int32)
-        cons_coefficient = K.tf.reduce_mean(cons_coefficient)
-        unlabeled_cost_coefficient = K.tf.reduce_mean(unlabeled_cost_coefficient)
+        num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
+        num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
+        weights_labeled = K.tf.stop_gradient(weights[0:num_labeled])
+        unlabeled_cost_coefficient = K.tf.stop_gradient(K.tf.squeeze(unlabeled_cost_coefficient[0]))
+        cons_coefficient = K.tf.stop_gradient(K.tf.squeeze(cons_coefficient[0]))
+
+        y_pred_labeled = y_pred[:num_labeled]
+        y_true_labeled = K.tf.cast(y_true[:num_labeled], dtype=K.tf.int32)
+        y_pred_unlabeled = K.tf.cast(K.tf.argmax(y_pred[num_labeled:], axis=-1), dtype=K.tf.int32)
+        y_true_unlabeled = K.tf.cast(y_true[num_labeled:], dtype=K.tf.int32)
+
 
         """
         Classification cost calculation - only for labeled
