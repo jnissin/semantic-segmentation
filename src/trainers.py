@@ -213,7 +213,7 @@ class TrainerBase:
         self.config[key] = value
 
     def get_class_weights(self, mask_image_files, data_set_information, material_class_information):
-        # type: (list[ImageFile], SegmentationDataSetInformation, list[MaterialClassInformation]) -> list[float]
+        # type: (list[ImageFile], SegmentationDataSetInformation, list[MaterialClassInformation]) -> np.array[float]
 
         # Calculate class weights for the data if necessary
         if self.get_config_value('use_class_weights'):
@@ -231,7 +231,7 @@ class TrainerBase:
 
             return class_weights
 
-        return None
+        return np.ones([len(material_class_information)], dtype=np.float32)
 
     @staticmethod
     def _create_path_if_not_existing(path):
@@ -322,12 +322,13 @@ class TrainerBase:
 
         return callbacks
 
-    def get_loss_function(self, loss_function_name, use_class_weights, class_weights):
+    def get_loss_function(self, loss_function_name, use_class_weights, class_weights, num_classes):
         loss_function = None
 
-        if not use_class_weights and class_weights is not None:
-            print 'Provided class weigths when use class weights is False. Ignoring class weights for loss function.'
-            class_weights = None
+        if not use_class_weights:
+            if class_weights is not None:
+                print 'Provided class weights when use class weights is False. Ignoring class weights for loss function.'
+            class_weights = np.ones([num_classes], dtype=np.float32)
 
         if loss_function_name == 'pixelwise_crossentropy':
             loss_function = losses.pixelwise_crossentropy_loss(class_weights)
@@ -339,23 +340,19 @@ class TrainerBase:
         self.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, class_weights))
         return loss_function
 
-    def get_lambda_loss_function(self, lambda_loss_function_name, use_class_weights, class_weights):
+    def get_lambda_loss_function(self, lambda_loss_function_name, num_classes):
         lambda_loss_function = None
 
-        if not use_class_weights and class_weights:
-            print 'Provided class weigths when use class weights is False. Ignoring class weights for lambda loss function.'
-            class_weights = None
-
         if lambda_loss_function_name == 'mean_teacher':
-            lambda_loss_function = losses.mean_teacher_lambda_loss(class_weights)
+            lambda_loss_function = losses.mean_teacher_lambda_loss
         elif lambda_loss_function_name == 'semisupervised_superpixel':
-            lambda_loss_function = losses.semisupervised_superpixel_lambda_loss(class_weights)
+            lambda_loss_function = losses.semisupervised_superpixel_lambda_loss(num_classes)
         elif lambda_loss_function_name == 'mean_teacher_superpixel':
-            lambda_loss_function = losses.mean_teacher_superpixel_lambda_loss(class_weights)
+            lambda_loss_function = losses.mean_teacher_superpixel_lambda_loss(num_classes)
         else:
             raise ValueError('Unsupported lambda loss function: {}'.format(lambda_loss_function_name))
 
-        self.log('Using {} lambda loss function, using class weights: {}'.format(lambda_loss_function_name, class_weights))
+        self.log('Using {} lambda loss function'.format(lambda_loss_function_name))
         return lambda_loss_function
 
     @staticmethod
@@ -719,9 +716,10 @@ class SegmentationTrainer(TrainerBase):
         optimizer = self.get_optimizer(self.continue_from_optimizer_checkpoint)
 
         # Get the loss function for the student model
-        loss_function = self.get_loss_function(self.loss_function_name,
-                                               self.use_class_weights,
-                                               self.class_weights)
+        loss_function = self.get_loss_function(loss_function_name=self.loss_function_name,
+                                               use_class_weights=self.use_class_weights,
+                                               class_weights=self.class_weights,
+                                               num_classes=self.num_classes)
 
         # Compile the model
         self.model.compile(optimizer=optimizer,
@@ -1031,9 +1029,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                  .format(self.model_name, self.input_shape, self.num_classes))
 
         self.lambda_loss_function_name = self.get_config_value('lambda_loss_function')
-        self.lambda_loss_function = self.get_lambda_loss_function(self.lambda_loss_function_name,
-                                                                  use_class_weights=self.get_config_value('use_class_weights'),
-                                                                  class_weights=self.class_weights)
+        self.lambda_loss_function = self.get_lambda_loss_function(self.lambda_loss_function_name, num_classes=self.num_classes)
 
         model_type = TrainerBase.lambda_loss_function_to_model_type(self.lambda_loss_function_name)
 
@@ -1070,7 +1066,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         loss_function = self.get_loss_function(self.loss_function_name,
                                                use_class_weights=self.get_config_value('use_class_weights'),
-                                               class_weights=self.class_weights)
+                                               class_weights=self.class_weights,
+                                               num_classes=self.num_classes)
 
         # Compile the student model
         self.model.compile(optimizer=optimizer,
@@ -1136,6 +1133,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             num_labeled_per_batch=self.num_labeled_per_batch,
             num_unlabeled_per_batch=self.num_unlabeled_per_batch,
             params=training_data_generator_params,
+            class_weights=self.class_weights,
             label_generation_function=self.label_generation_function)
 
         self.log('Creating validation data generator')
@@ -1165,6 +1163,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             num_labeled_per_batch=self.validation_num_labeled_per_batch,
             num_unlabeled_per_batch=0,
             params=validation_data_generator_params,
+            class_weights=self.class_weights,
             label_generation_function=None)
 
         # Note: The teacher has a regular SegmentationDataGenerator for validation data generation

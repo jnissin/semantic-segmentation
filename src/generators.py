@@ -1031,6 +1031,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                  num_labeled_per_batch,
                  num_unlabeled_per_batch,
                  params,
+                 class_weights=None,
                  label_generation_function=None):
         # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, Callable[[np.array[np.float32]], np.array]) -> None
 
@@ -1041,6 +1042,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             :param num_labeled_per_batch: number of labeled images per batch
             :param num_unlabeled_per_batch: number of unlabeled images per batch
             :param params: DataGeneratorParameters object
+            :param class_weights: class weights
             :param label_generation_function:
         """
 
@@ -1085,6 +1087,11 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             self.label_generation_function = SemisupervisedSegmentationDataGenerator.default_label_generator_for_unlabeled_photos
         else:
             self.label_generation_function = label_generation_function
+
+        if class_weights is None:
+            raise ValueError('Class weights is None. Use a numpy array of ones instead of None')
+
+        self.class_weights = class_weights
 
     def get_all_photos(self):
         # type: () -> list[ImageFile]
@@ -1141,7 +1148,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Arguments
             :param index_array: indices of the labeled data
         # Returns
-            :return: labeled data as two lists: (X, Y)
+            :return: labeled data as three lists: (X, Y, WEIGHTS)
         """
 
         if self.use_material_samples:
@@ -1168,21 +1175,33 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Unzip the photo mask pairs
         X, Y = zip(*labeled_data)
 
-        return list(X), list(Y)
+        # Create the weights for each ground truth segmentation
+        W = []
+
+        for y in Y:
+            y_w = np.ones_like(y, dtype=np.float32)
+
+            for i in range(len(self.class_weights)):
+                mask = y[:, :] == i
+                y_w[mask] = self.class_weights[i]
+
+            W.append(y_w)
+
+        return list(X), list(Y), W
 
     def get_unlabeled_batch_data(self, index_array):
-        # type: (np.array[int]) -> (list[np.array], list[np.array])
+        # type: (np.array[int]) -> (list[np.array], list[np.array], list[np.array])
 
         """
         # Arguments
             :param index_array: indices of the unlabeled data
         # Returns
-            :return: unlabeled data as two lists: (X, Y)
+            :return: unlabeled data as three lists: (X, Y, WEIGHTS)
         """
 
         # If we don't have unlabeled data return two empty lists
         if not self.has_unlabeled_data():
-            return [], []
+            return [], [], []
 
         unlabeled_batch_files = self.unlabeled_data_set.get_indices(index_array)
 
@@ -1201,8 +1220,12 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             div2_constraint=4) for photo in unlabeled_batch_files]
 
         X_unlabeled, Y_unlabeled = zip(*unlabeled_data)
+        W_unlabeled = []
 
-        return list(X_unlabeled), list(Y_unlabeled)
+        for y in Y_unlabeled:
+            W_unlabeled.append(np.ones_like(y, dtype=np.float32))
+
+        return list(X_unlabeled), list(Y_unlabeled), W_unlabeled
 
     def next(self):
         # type: (int, int, tuple[int]) -> (list[np.array], np.array)
@@ -1230,10 +1253,11 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
             if self.has_unlabeled_data():
                 unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size = self.unlabeled_data_iterator.get_next_batch()
 
-        X, Y = self.get_labeled_batch_data(labeled_index_array)
-        X_unlabeled, Y_unlabeled = self.get_unlabeled_batch_data(unlabeled_index_array)
+        X, Y, W = self.get_labeled_batch_data(labeled_index_array)
+        X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(unlabeled_index_array)
         X = X + X_unlabeled
         Y = Y + Y_unlabeled
+        W = W + W_unlabeled
 
         num_unlabeled_samples_in_batch = len(X_unlabeled)
         num_samples_in_batch = len(X)
@@ -1248,7 +1272,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # End of: debug
 
         # Cast the lists to numpy arrays
-        X, Y = np.array(X), np.array(Y)
+        X, Y, W = np.array(X), np.array(Y), np.array(W)
 
         # Normalize the photo batch data
         X = dataset_utils\
@@ -1262,10 +1286,10 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Generate a dummy output for the dummy loss function and yield a batch of data
         dummy_output = np.zeros(shape=[num_samples_in_batch])
 
-        batch_data = [X, Y, num_unlabeled]
+        batch_data = [X, Y, W, num_unlabeled]
 
-        if X.shape[0] != Y.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
-            print 'Unmatching input first dimensions: {}, {}, {}'.format(X.shape[0], Y.shape[0],  num_unlabeled.shape[0])
+        if X.shape[0] != Y.shape[0] or X.shape[0] != W.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
+            print 'Unmatching input first dimensions: {}, {}, {}, {}'.format(X.shape[0], Y.shape[0], W.shape[0], num_unlabeled.shape[0])
 
         return batch_data, dummy_output
 

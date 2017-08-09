@@ -236,6 +236,9 @@ class ModelBase(object):
         labels = Input(name="labels", shape=labels_shape)
         self.inputs.append(labels)
 
+        class_weights = Input(name="class_weights", shape=labels_shape)
+        self.inputs.append(class_weights)
+
         num_unlabeled = Input(name='num_unlabeled', shape=[1])
         self.inputs.append(num_unlabeled)
 
@@ -243,7 +246,7 @@ class ModelBase(object):
         self.inputs.append(unlabeled_cost_coeff)
 
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, num_unlabeled, unlabeled_cost_coeff]
+        lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, unlabeled_cost_coeff]
         ss_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
         self.outputs = ss_loss_layer
 
@@ -263,6 +266,9 @@ class ModelBase(object):
         labels = Input(name="labels", shape=labels_shape)
         self.inputs.append(labels)
 
+        class_weights = Input(name="class_weights", shape=labels_shape)
+        self.inputs.append(class_weights)
+
         num_unlabeled = Input(name='num_unlabeled', shape=[1])
         self.inputs.append(num_unlabeled)
 
@@ -273,7 +279,7 @@ class ModelBase(object):
         self.inputs.append(consistency_cost)
 
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, num_unlabeled, mt_predictions, consistency_cost]
+        lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, mt_predictions, consistency_cost]
         mt_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
         self.outputs = [mt_loss_layer]
 
@@ -293,6 +299,9 @@ class ModelBase(object):
         labels = Input(name="labels", shape=labels_shape)
         self.inputs.append(labels)
 
+        class_weights = Input(name="class_weights", shape=labels_shape)
+        self.inputs.append(class_weights)
+
         num_unlabeled = Input(name='num_unlabeled', shape=[1])
         self.inputs.append(num_unlabeled)
 
@@ -306,7 +315,7 @@ class ModelBase(object):
         self.inputs.append(unlabeled_cost_coeff)
 
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
+        lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
         mt_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
         self.outputs = [mt_loss_layer]
 
