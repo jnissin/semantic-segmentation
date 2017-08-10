@@ -272,11 +272,11 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
         :return: the consistency cost (mean for the batch)
     """
 
-    student_softmax = K.tf.nn.softmax(y_pred)
-    teacher_softmax = K.tf.nn.softmax(mt_pred)
+    student_softmax = K.tf.nn.softmax(y_pred, dim=-1)
+    teacher_softmax = K.tf.nn.softmax(mt_pred, dim=-1)
 
     # Calculate the L2 distance between the predictions (softmax)
-    l2_softmax_dist = K.tf.reduce_mean((student_softmax - teacher_softmax) ** 2, axis=-1)
+    l2_softmax_dist = K.tf.reduce_mean((teacher_softmax - student_softmax) ** 2, axis=-1)
 
     # Output of the softmax is B_SIZExHxW
     # Sum the last two axes to get the total loss over images
