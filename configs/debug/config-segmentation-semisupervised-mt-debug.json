@@ -79,7 +79,7 @@
 
     "stepwise_learning_rate_scheduler": {
         "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/1000.0)**2))), 1.0)",
-        "verbose": true
+        "verbose": false
     },
 
     "image_data_format": "channels_last",
