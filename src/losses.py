@@ -396,7 +396,7 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     student_softmax = K.tf.nn.softmax(y_pred, dim=-1)
     teacher_softmax = K.tf.nn.softmax(mt_pred, dim=-1)
 
-    # Calculate the L2 distance between the predictions (softmax)
+    # Calculate the MSE between the softmax predictions
     l2_softmax_dist = K.tf.reduce_mean(K.tf.square(K.tf.subtract(teacher_softmax, student_softmax)), axis=-1)
 
     # Output of the softmax is B_SIZExHxW
@@ -618,6 +618,8 @@ def mean_teacher_lambda_loss(args):
 
 
 def semisupervised_superpixel_lambda_loss(args):
+    # type: (list[K.tf.Tensor]) -> K.tf.Tensor
+
     """
     Calculates semi-supervised segmentation loss. If the class weights are
     provided uses weighted pixelwise cross-entropy for the labeled data and
@@ -669,79 +671,74 @@ def semisupervised_superpixel_lambda_loss(args):
     return total_costs
 
 
-def mean_teacher_superpixel_lambda_loss(num_classes):
+def mean_teacher_superpixel_lambda_loss(args):
+    # type: (list[K.tf.Tensor]) -> K.tf.Tensor
 
-    tf_num_classes = K.tf.constant(num_classes, dtype=K.tf.int32)
+    """
+    Calculates the Mean Teacher loss function, which consists of
+    classification cost and consistency cost as presented in.
 
-    def loss(args):
-        # type: (list[K.tf.Tensor]) -> K.tf.Tensor
+        https://arxiv.org/pdf/1703.01780.pdf
 
-        """
-        Calculates the Mean Teacher loss function, which consists of
-        classification cost and consistency cost as presented in.
+    Additionally also uses the generated superpixel labels to calculate
+    a semisupervised cost for the unlabeled.
 
-            https://arxiv.org/pdf/1703.01780.pdf
+    The function is used in conjunction with a Lambda layer to create
+    a layer which can calculate the loss. This is done because the
+    parameters to the function change on each training step and thus
+    need to be passed through the network as inputs.
 
-        Additionally also uses the generated superpixel labels to calculate
-        a semisupervised cost for the unlabeled.
+    # Arguments
+        :param args: a list of Tensorflow tensors, described below
+            0: y_pred: predictions from the network (logits)
+            1: y_true: ground truth labels in index encoded format
+            2: weights: weights for ground truth labels
+            3: num_unlabeled: number of unlabeled data
+            4: mt_pred: mean teacher predictions from the teacher network (logits)
+            5: cons_coefficient: consistency cost coefficient
+            6: unlabeled_cost_coefficient: coefficient for the unlabeled superpixel loss
+    # Returns
+        :return: the mean teacher loss (1x1 Tensor)
+    """
 
-        The function is used in conjunction with a Lambda layer to create
-        a layer which can calculate the loss. This is done because the
-        parameters to the function change on each training step and thus
-        need to be passed through the network as inputs.
+    # TODO: Create option to apply/not apply consistency to labeled data
+    # see: https://github.com/CuriousAI/mean-teacher/blob/master/mean_teacher/model.py#L410
 
-        # Arguments
-            :param args: a list of Tensorflow tensors, described below
-                0: y_pred: predictions from the network (logits)
-                1: y_true: ground truth labels in index encoded format
-                2: weights: weights for ground truth labels
-                3: num_unlabeled: number of unlabeled data
-                4: mt_pred: mean teacher predictions from the teacher network (logits)
-                5: cons_coefficient: consistency cost coefficient
-                6: unlabeled_cost_coefficient: coefficient for the unlabeled superpixel loss
-        # Returns
-            :return: the mean teacher loss (1x1 Tensor)
-        """
+    # Extract arguments
+    if len(args) != 7:
+        raise ValueError('Expected 7 arguments (y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient), got: {} ({})'.format(len(args), args))
 
-        # TODO: Create option to apply/not apply consistency to labeled data
-        # see: https://github.com/CuriousAI/mean-teacher/blob/master/mean_teacher/model.py#L410
+    y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient = args
 
-        # Extract arguments
-        if len(args) != 7:
-            raise ValueError('Expected 7 arguments (y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient), got: {} ({})'.format(len(args), args))
+    num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
+    num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
+    num_classes = K.tf.stop_gradient(K.tf.shape(y_pred)[-1])
+    weights_labeled = K.tf.stop_gradient(weights[0:num_labeled])
+    unlabeled_cost_coefficient = K.tf.stop_gradient(K.tf.squeeze(unlabeled_cost_coefficient[0]))
+    cons_coefficient = K.tf.stop_gradient(K.tf.squeeze(cons_coefficient[0]))
 
-        y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient = args
-
-        num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
-        num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
-        weights_labeled = K.tf.stop_gradient(weights[0:num_labeled])
-        unlabeled_cost_coefficient = K.tf.stop_gradient(K.tf.squeeze(unlabeled_cost_coefficient[0]))
-        cons_coefficient = K.tf.stop_gradient(K.tf.squeeze(cons_coefficient[0]))
-
-        y_pred_labeled = y_pred[:num_labeled]
-        y_true_labeled = K.tf.cast(y_true[:num_labeled], dtype=K.tf.int32)
-        y_pred_unlabeled = K.tf.cast(K.tf.argmax(y_pred[num_labeled:], axis=-1), dtype=K.tf.int32)
-        y_true_unlabeled = K.tf.cast(y_true[num_labeled:], dtype=K.tf.int32)
+    y_pred_labeled = y_pred[0:num_labeled]
+    y_true_labeled = K.tf.cast(y_true[0:num_labeled], dtype=K.tf.int32)
+    y_pred_unlabeled = y_pred[num_labeled:]
+    y_true_unlabeled = K.tf.cast(y_true[num_labeled:], dtype=K.tf.int32)
 
 
-        """
-        Classification cost calculation - only for labeled
-        """
-        classification_costs = _sparse_weighted_pixelwise_crossentropy_loss(y_true=y_true_labeled, y_pred=y_pred_labeled, weights=weights_labeled)
+    """
+    Classification cost calculation - only for labeled
+    """
+    classification_costs = _sparse_weighted_pixelwise_crossentropy_loss(y_true=y_true_labeled, y_pred=y_pred_labeled, weights=weights_labeled)
 
-        """
-        Consistency costs - for labeled and unlabeled
-        """
-        consistency_costs = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient)
+    """
+    Consistency costs - for labeled and unlabeled
+    """
+    consistency_costs = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient)
 
-        """
-        Unlabeled classification costs (superpixel seg) - only for unlabeled
-        """
-        unlabeled_costs = _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, tf_num_classes)
-        unlabeled_costs = K.tf.Print(unlabeled_costs, [consistency_costs, unlabeled_costs, classification_costs], message="costs: ", summarize=24)
+    """
+    Unlabeled classification costs (superpixel seg) - only for unlabeled
+    """
+    unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
+    unlabeled_costs = K.tf.Print(unlabeled_costs, [consistency_costs, unlabeled_costs, classification_costs], message="costs: ", summarize=24)
 
-        # Total cost
-        total_costs = K.tf.add(K.tf.add(classification_costs, consistency_costs), unlabeled_costs)
-        return total_costs
-
-    return loss
+    # Total cost
+    total_costs = K.tf.add(K.tf.add(classification_costs, consistency_costs), unlabeled_costs)
+    return total_costs

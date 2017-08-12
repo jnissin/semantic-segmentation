@@ -15,7 +15,21 @@
     "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
 
     "loss_function": "dummy",
+
     "use_mean_teacher_method": true,
+
+    "mean_teacher_params": {
+      "ema_coefficient_schedule_function": "lambda x: 0.999 if x < 10000 else 0.99",
+      "consistency_cost_coefficient_schedule_function": "lambda x: min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)"
+    },
+
+    "use_superpixel_method": true,
+
+    "superpixel_params": {
+        "unlabeled_cost_coefficient_function": "lambda x: 5.0",
+        "label_generation_function": "felzenswalb"
+    },
+
     "lambda_loss_function": "mean_teacher",
 
     "num_epochs": 100,
@@ -61,6 +75,11 @@
       "cooldown": 5,
       "min_lr": 0,
       "monitor": "loss"
+    },
+
+    "stepwise_learning_rate_scheduler": {
+        "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/1000.0)**2))), 1.0)",
+        "verbose": true
     },
 
     "image_data_format": "channels_last",
