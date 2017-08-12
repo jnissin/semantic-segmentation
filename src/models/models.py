@@ -37,6 +37,7 @@ class ModelType(Enum):
     SEMISUPERVISED = 1
     MEAN_TEACHER_STUDENT = 2
     MEAN_TEACHER_STUDENT_SUPERPIXEL = 3
+    MEAN_TEACHER_TEACHER = 4
 
 
 #############################################
@@ -146,9 +147,9 @@ class ModelBase(object):
         model_inputs = images
 
         # Additive Gaussian Noise with stddev 0.15, same as in
-        # Temporal Ensembling for Semi-Supervised Learning
-        # if model_type == ModelType.MEAN_TEACHER_STUDENT or model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
-        #    model_inputs = GaussianNoise(stddev=0.15)(images)
+        # Temporal Ensembling for Semi-Supervised Learning and Mean Teacher paper
+        if model_type == ModelType.MEAN_TEACHER_STUDENT or model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or model_type == ModelType.MEAN_TEACHER_TEACHER:
+            model_inputs = GaussianNoise(stddev=0.15)(images)
 
         # Build the model
         self.outputs = self._build_model(model_inputs)

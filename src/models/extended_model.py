@@ -14,6 +14,7 @@ from keras.utils import Sequence
 from keras.utils import OrderedEnqueuer
 from keras.engine.training import Model
 from keras.engine.training import GeneratorEnqueuer
+from keras.engine.training import _standardize_input_data
 
 from keras import backend as K
 from keras import callbacks as cbks
@@ -35,6 +36,32 @@ class ExtendedModel(Model):
 
     def stop_fit_generator(self):
         self.fit_generator_stopped = True
+
+    def predict_on_batch(self, x, use_training_phase_layers=False):
+        """Returns predictions for a single batch of samples.
+
+        # Arguments
+            x: Input samples, as a Numpy array.
+            use_training_phase_layers: A boolean value describing whether we should use training only layers
+            such as GaussianNoise and Dropout during predictions.
+
+        # Returns
+            Numpy array(s) of predictions.
+        """
+        x = _standardize_input_data(x, self._feed_input_names,
+                                    self._feed_input_shapes)
+        if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
+            if use_training_phase_layers:
+                ins = x + [1.]
+            else:
+                ins = x + [0.]
+        else:
+            ins = x
+        self._make_predict_function()
+        outputs = self.predict_function(ins)
+        if len(outputs) == 1:
+            return outputs[0]
+        return outputs
 
     @interfaces.legacy_generator_methods_support
     def fit_generator(self, generator,

@@ -682,12 +682,9 @@ class SegmentationTrainer(TrainerBase):
         self.log('Total data set size: {}'.format(self.training_set.size + self.validation_set.size + self.test_set.size))
 
         # Class weights
-        self.class_weights = None
-
-        if self.use_class_weights:
-            self.class_weights = self.get_class_weights(mask_image_files=self.training_set.mask_image_set.image_files,
-                                                        data_set_information=self.data_set_information,
-                                                        material_class_information=self.material_class_information)
+        self.class_weights = self.get_class_weights(mask_image_files=self.training_set.mask_image_set.image_files,
+                                                    data_set_information=self.data_set_information,
+                                                    material_class_information=self.material_class_information)
 
     def _init_models(self):
         super(SegmentationTrainer, self)._init_models()
@@ -1011,12 +1008,9 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                  .format(self.training_set_labeled.size + self.training_set_unlabeled.size + self.validation_set.size + self.test_set.size))
 
         # Class weights
-        self.class_weights = None
-
-        if self.use_class_weights:
-            self.class_weights = self.get_class_weights(mask_image_files=self.training_set_labeled.mask_image_set.image_files,
-                                                        data_set_information=self.data_set_information,
-                                                        material_class_information=self.material_class_information)
+        self.class_weights = self.get_class_weights(mask_image_files=self.training_set_labeled.mask_image_set.image_files,
+                                                    data_set_information=self.data_set_information,
+                                                    material_class_information=self.material_class_information)
 
     def _init_models(self):
         super(SemisupervisedSegmentationTrainer, self)._init_models()
@@ -1065,7 +1059,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             self.loss_function_name = 'dummy'
 
         loss_function = self.get_loss_function(self.loss_function_name,
-                                               use_class_weights=self.get_config_value('use_class_weights'),
+                                               use_class_weights=self.use_class_weights,
                                                class_weights=self.class_weights,
                                                num_classes=self.num_classes)
 
@@ -1081,7 +1075,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         if self.use_mean_teacher_method:
             self.log('Creating teacher model {} instance with input shape: {}, num classes: {}'
                      .format(self.model_name, self.input_shape, self.num_classes))
-            self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, ModelType.NORMAL)
+            self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, ModelType.MEAN_TEACHER_TEACHER)
             self.teacher_model = self.teacher_model_wrapper.model
             self.teacher_model.summary()
 
@@ -1095,7 +1089,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             else:
                 self.teacher_model.set_weights(self.model.get_weights())
 
-            teacher_class_weights = self.class_weights if self.use_class_weights else None
+            teacher_class_weights = self.class_weights #self.class_weights if self.use_class_weights else None
 
             self.teacher_model.compile(optimizer=optimizer,
                                        loss=losses.pixelwise_crossentropy_loss(teacher_class_weights),
@@ -1333,7 +1327,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 if self.debug:
                     s_time = time.time()
 
-                mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
+                # Note: include the training phase noise and dropout layers
+                mean_teacher_predictions = self.teacher_model.predict_on_batch(images, use_training_phase_layers=True)
 
                 if self.debug:
                     self.log('Mean teacher batch predictions took: {} s'.format(time.time()-s_time))
