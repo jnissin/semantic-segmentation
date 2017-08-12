@@ -147,8 +147,8 @@ class ModelBase(object):
 
         # Additive Gaussian Noise with stddev 0.15, same as in
         # Temporal Ensembling for Semi-Supervised Learning
-        if model_type == ModelType.MEAN_TEACHER_STUDENT or model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
-            model_inputs = GaussianNoise(stddev=0.15)(images)
+        # if model_type == ModelType.MEAN_TEACHER_STUDENT or model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
+        #    model_inputs = GaussianNoise(stddev=0.15)(images)
 
         # Build the model
         self.outputs = self._build_model(model_inputs)
@@ -247,8 +247,8 @@ class ModelBase(object):
 
         # Note: assumes there is only a single output, which is the last layer
         lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, unlabeled_cost_coeff]
-        ss_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
-        self.outputs = ss_loss_layer
+        loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+        self.outputs = loss_layer
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
@@ -280,8 +280,8 @@ class ModelBase(object):
 
         # Note: assumes there is only a single output, which is the last layer
         lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, mt_predictions, consistency_cost]
-        mt_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
-        self.outputs = [mt_loss_layer]
+        loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+        self.outputs = loss_layer
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
@@ -316,8 +316,8 @@ class ModelBase(object):
 
         # Note: assumes there is only a single output, which is the last layer
         lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
-        mt_loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
-        self.outputs = [mt_loss_layer]
+        loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+        self.outputs = loss_layer
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
