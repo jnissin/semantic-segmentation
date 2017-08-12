@@ -149,7 +149,7 @@ class ModelBase(object):
         # Additive Gaussian Noise with stddev 0.15, same as in
         # Temporal Ensembling for Semi-Supervised Learning and Mean Teacher paper
         if model_type == ModelType.MEAN_TEACHER_STUDENT or model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or model_type == ModelType.MEAN_TEACHER_TEACHER:
-            model_inputs = GaussianNoise(stddev=0.15)(images)
+            model_inputs = GaussianNoise(stddev=0.05)(images)
 
         # Build the model
         self.outputs = self._build_model(model_inputs)
