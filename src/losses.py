@@ -3,6 +3,8 @@
 import numpy as np
 from keras import backend as K
 
+
+import keras.engine.topology
 ##############################################
 # GLOBALS
 ##############################################
@@ -133,6 +135,10 @@ def _tf_sobel(img):
     return filtered_x, filtered_y
 
 
+##############################################
+# COST FUNCTIONS
+##############################################
+
 def _tf_calculate_superpixel_entropy_with_gradients(j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy):
     # A tensor of HxW
     f_dtype = K.tf.float32
@@ -259,6 +265,121 @@ def _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, unlabeled_
     return K.tf.multiply(unlabeled_cost_coefficient, mean_image_entropy)
 
 
+##############################################
+# SUPERPIXEL
+##############################################
+
+def _tf_calculate_superpixel_cost_superpixel(j, img_y_true_unlabeled, img_y_pred_g_mag, image_entropy):
+    # j is the superpixel label - select only the area of the unlabeled_true
+    # image where the values match the superpixel index
+
+    # Extract a superpixel mask from the ground truth image: 1.0 where in superpixel 0 elsewhere
+    superpixel_mask = K.tf.cast(K.tf.equal(img_y_true_unlabeled, j), dtype=K.tf.float32)
+
+    # Superpixel entropy
+    superpixel_entropy = K.tf.multiply(img_y_pred_g_mag, superpixel_mask)
+    superpixel_entropy = K.tf.reduce_sum(superpixel_entropy)
+
+    # Add the superpixel entropy to the image entropy and increase the loop variable
+    image_entropy = K.tf.add(image_entropy, superpixel_entropy)
+    j = K.tf.add(j, 1)
+
+    return j, img_y_true_unlabeled, img_y_pred_g_mag, image_entropy
+
+
+def _tf_calculate_superpixel_cost_image(i, y_true_unlabeled, y_pred_g_mag, batch_entropy):
+    """
+    Calculates the superpixel entropy for one (unlabeled) image.
+
+    # Arguments
+        :param i: loop index
+        :param img_y_true_unlabeled: index encoded superpixel image, HxW
+        :param img_y_pred_unlabeled: index encoded predictions from the network for the image, HxW
+        :param batch_entropy: batch entropy accumulator
+    # Returns
+        :return: loop index, y true unlabeled, num classes, increased batch entropy
+    """
+
+    # Extract the values specific to this image
+    img_y_true_unlabeled = y_true_unlabeled[i]
+    img_y_pred_g_mag = y_pred_g_mag[i]
+
+    # Superpixel segment indices are continuous and start from index 0
+    num_superpixels = K.tf.reduce_max(img_y_true_unlabeled)+1
+    for_each_superpixel_cond = lambda j, p1, p2, p3: K.tf.less(j, num_superpixels)
+    j = K.tf.constant(0, dtype=K.tf.int32)
+    image_entropy = K.tf.constant(0, dtype=K.tf.float32)
+
+    j, _, _, image_entropy = \
+        K.tf.while_loop(cond=for_each_superpixel_cond,
+                        body=_tf_calculate_superpixel_cost_superpixel,
+                        loop_vars=[j, img_y_true_unlabeled, img_y_pred_g_mag, image_entropy])
+
+    # Add the image entropy to the batch entropy and increase the loop variable
+    batch_entropy = K.tf.add(batch_entropy, image_entropy)
+    i = K.tf.add(i, 1)
+
+    return i, y_true_unlabeled, y_pred_g_mag, batch_entropy
+
+
+def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes):
+    """
+    Calculates loss for a batch of unlabeled images. The function assumes that the
+    ground truth labels are SLIC superpixel segmentations with index encoded superpixel
+    boundaries.
+
+    # Arguments
+        :param y_true_unlabeled: ground truth labels (index encoded) (dtype=int32)
+        :param y_pred_unlabeled: predicted labels (index encoded) (dtype=int32)
+        :param unlabeled_cost_coefficient: cost coefficient (dtype=float32)
+        :param num_unlabeled: number of unlabeled images (dtype=int32)
+        :param num_classes
+    # Returns
+        :return: the mean (image-level) unlabeled superpixel loss for the batch
+    """
+
+    for_each_unlabeled_image_cond = lambda i, p1, p2, p3: K.tf.less(i, num_unlabeled)
+    i = K.tf.constant(0, dtype=K.tf.int32)
+    batch_entropy = K.tf.constant(0, dtype=K.tf.float32)
+
+    # Calculate the softmax of the predictions
+    epsilon = _to_tensor(_EPSILON, y_pred_unlabeled.dtype.base_dtype)
+    y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled)
+
+    # Calculate the gradients for the softmax output using a convolution with a Sobel mask
+    # the kernel dimensions must be: 3x3xN_CLASSESx1
+    sobel_x = K.tf.stop_gradient(K.tf.constant([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], dtype=K.tf.float32))
+    sobel_x = K.tf.stop_gradient(K.tf.expand_dims(sobel_x, dim=-1))
+    sobel_x = K.tf.stop_gradient(K.tf.tile(sobel_x, [1, 1, num_classes]))
+    sobel_x = K.tf.stop_gradient(K.tf.expand_dims(sobel_x, dim=-1))
+    sobel_y = K.tf.stop_gradient(K.tf.transpose(sobel_x, [1, 0, 2, 3]))
+
+    Gx = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, sobel_x, strides=[1, 1, 1, 1], padding='SAME')
+    Gy = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, sobel_y, strides=[1, 1, 1, 1], padding='SAME')
+
+    # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), B_SIZExHxW
+    # Note: Add epsilon to avoid NaN values due to: (small grad value)^2
+    Gx2 = K.tf.square(K.tf.add(Gx, epsilon))
+    Gy2 = K.tf.square(K.tf.add(Gy, epsilon))
+    G_mag = K.tf.sqrt(K.tf.add(Gx2, Gy2))
+    G_mag = K.tf.reduce_mean(G_mag, axis=-1)
+
+    # For each image - extract each superpixel and calculate the cost
+    i, _, _, batch_entropy =\
+        K.tf.while_loop(cond=for_each_unlabeled_image_cond,
+                        body=_tf_calculate_superpixel_cost_image,
+                        loop_vars=[i, y_true_unlabeled, G_mag, batch_entropy])
+
+    # Take the mean over the batch images
+    # Note: take the maximum between num_unlabeled and 1 to avoid dividing by 0
+    mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(K.tf.maximum(num_unlabeled, 1), K.tf.float32))
+    return K.tf.multiply(unlabeled_cost_coefficient, mean_image_entropy)
+
+
+##############################################
+# MEAN TEACHER
+##############################################
+
 def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     """
     Calculates the consistency cost between mean teacher and student model
@@ -276,7 +397,7 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     teacher_softmax = K.tf.nn.softmax(mt_pred, dim=-1)
 
     # Calculate the L2 distance between the predictions (softmax)
-    l2_softmax_dist = K.tf.reduce_mean((teacher_softmax - student_softmax) ** 2, axis=-1)
+    l2_softmax_dist = K.tf.reduce_mean(K.tf.square(K.tf.subtract(teacher_softmax, student_softmax)), axis=-1)
 
     # Output of the softmax is B_SIZExHxW
     # Sum the last two axes to get the total loss over images
@@ -373,10 +494,12 @@ def _weighted_pixelwise_crossentropy_loss(class_weights):
         """
         # Calculate cross-entropy loss
         epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
-        softmax = _tf_softmax(y_pred)
+        softmax = K.tf.nn.softmax(y_pred)
+
+        # Before taking the log, make sure the softmax values are in range [epsilon, 1.0]
+        softmax = K.tf.clip_by_value(softmax, epsilon, 1.0)
 
         xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
-        xent = _tf_filter_nans(xent, epsilon)
         xent = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2, 3)))
         return xent
 
@@ -401,7 +524,8 @@ def _sparse_weighted_pixelwise_crossentropy_loss(y_true, y_pred, weights):
     # Returns cross-entropy loss for each pixel, i.e. B_SIZExHxW, multiply by weights
     xent = K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true)
     xent = K.tf.multiply(xent, weights)
-    # Calculate the sum of pixel cross-entropies for each image and take the mean of images in the batch
+
+    # Calculate the sum of pixel cross-entropies (HxW) for each image and take the mean of images in the batch
     loss = K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2)))
 
     return loss
@@ -493,61 +617,56 @@ def mean_teacher_lambda_loss(args):
     return total_costs
 
 
-def semisupervised_superpixel_lambda_loss(num_classes):
+def semisupervised_superpixel_lambda_loss(args):
+    """
+    Calculates semi-supervised segmentation loss. If the class weights are
+    provided uses weighted pixelwise cross-entropy for the labeled data and
+    uses unlabeled superpixel loss for the unlabeled data.
 
-    tf_num_classes = K.tf.constant(num_classes, dtype=K.tf.int32)
+    The function assumes that the unlabeled labels are SLIC superpixel segmentations
+    of their respective images.
 
-    def loss(args):
-        """
-        Calculates semi-supervised segmentation loss. If the class weights are
-        provided uses weighted pixelwise cross-entropy for the labeled data and
-        uses unlabeled superpixel loss for the unlabeled data.
+    # Arguments
+        :param args: Expects an array with 5 values
 
-        The function assumes that the unlabeled labels are SLIC superpixel segmentations
-        of their respective images.
+        0: y_pred: predictions from the network (logits)
+        1: y_true: ground truth labels in index encoded format
+        2: weights: weights for every pixel in y_true labeled
+        3: num_unlabeled: number of unlabeled data
+        4: unlabeled_cost_coefficient: unlabeled cost coefficient
+    # Returns
+        :return: the semi-supervised segmentation loss (1x1 Tensor)
+    """
+    if len(args) != 5:
+        raise ValueError('Expected 5 values (y_pred, y_true, weights, num_unlabeled, unlabeled_cost_coefficient), got: {} ({})'.format(len(args), args))
 
-        # Arguments
-            :param args: Expects an array with 5 values
+    y_pred, y_true, weights, num_unlabeled, unlabeled_cost_coefficient = args
 
-            0: y_pred: predictions from the network (logits)
-            1: y_true: ground truth labels in index encoded format
-            2: weights: weights for every pixel in y_true labeled
-            3: num_unlabeled: number of unlabeled data
-            4: unlabeled_cost_coefficient: unlabeled cost coefficient
-        # Returns
-            :return: the semi-supervised segmentation loss (1x1 Tensor)
-        """
-        if len(args) != 5:
-            raise ValueError('Expected 5 values (y_pred, y_true, weights, num_unlabeled, unlabeled_cost_coefficient), got: {} ({})'.format(len(args), args))
+    num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
+    num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
+    num_classes = K.tf.stop_gradient(K.tf.shape(y_pred)[-1])
+    weights_labeled = K.tf.stop_gradient(weights[0:num_labeled])
+    unlabeled_cost_coefficient = K.tf.stop_gradient(K.tf.squeeze(unlabeled_cost_coefficient[0]))
 
-        y_pred, y_true, weights, num_unlabeled, unlabeled_cost_coefficient = args
+    y_pred_labeled = y_pred[0:num_labeled]
+    y_true_labeled = K.tf.cast(y_true[0:num_labeled], dtype=K.tf.int32)
+    y_pred_unlabeled = y_pred[num_labeled:]
+    y_true_unlabeled = K.tf.cast(y_true[num_labeled:], dtype=K.tf.int32)
 
-        num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
-        num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
-        weights_labeled = K.tf.stop_gradient(weights[0:num_labeled])
-        unlabeled_cost_coefficient = K.tf.stop_gradient(K.tf.squeeze(unlabeled_cost_coefficient[0]))
+    """
+    Classification cost calculation - only for labeled
+    """
+    classification_costs = _sparse_weighted_pixelwise_crossentropy_loss(y_true=y_true_labeled, y_pred=y_pred_labeled, weights=weights_labeled)
 
-        y_pred_labeled = y_pred[0:num_labeled]
-        y_true_labeled = K.tf.cast(y_true[:num_labeled], dtype=K.tf.int32)
-        y_pred_unlabeled = K.tf.cast(K.tf.argmax(y_pred[num_labeled:], axis=-1), dtype=K.tf.int32)
-        y_true_unlabeled = K.tf.cast(y_true[num_labeled:], dtype=K.tf.int32)
+    """
+    Unlabeled classification costs (superpixel seg) - only for unlabeled
+    """
+    unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
+    unlabeled_costs = K.tf.Print(unlabeled_costs, [unlabeled_costs, classification_costs], message="costs: ")
 
-        """
-        Classification cost calculation - only for labeled
-        """
-        classification_costs = _sparse_weighted_pixelwise_crossentropy_loss(y_true=y_true_labeled, y_pred=y_pred_labeled, weights=weights_labeled)
-
-        """
-        Unlabeled classification costs (superpixel seg) - only for unlabeled
-        """
-        unlabeled_costs = _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, tf_num_classes)
-        unlabeled_costs = K.tf.Print(unlabeled_costs, [unlabeled_costs, classification_costs], message="costs: ")
-
-        # Total cost
-        total_costs = K.tf.add(classification_costs, unlabeled_costs)
-        return total_costs
-
-    return loss
+    # Total cost
+    total_costs = K.tf.add(classification_costs, unlabeled_costs)
+    return total_costs
 
 
 def mean_teacher_superpixel_lambda_loss(num_classes):

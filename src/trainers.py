@@ -346,7 +346,7 @@ class TrainerBase:
         if lambda_loss_function_name == 'mean_teacher':
             lambda_loss_function = losses.mean_teacher_lambda_loss
         elif lambda_loss_function_name == 'semisupervised_superpixel':
-            lambda_loss_function = losses.semisupervised_superpixel_lambda_loss(num_classes)
+            lambda_loss_function = losses.semisupervised_superpixel_lambda_loss
         elif lambda_loss_function_name == 'mean_teacher_superpixel':
             lambda_loss_function = losses.mean_teacher_superpixel_lambda_loss(num_classes)
         else:
@@ -1168,10 +1168,13 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         # Note: The teacher has a regular SegmentationDataGenerator for validation data generation
         # because it doesn't have the semi supervised loss lambda layer
-        self.teacher_validation_data_generator = SegmentationDataGenerator(
-            labeled_data_set=self.validation_set,
-            num_labeled_per_batch=self.validation_num_labeled_per_batch,
-            params=validation_data_generator_params)
+        if self.use_mean_teacher_method:
+            self.teacher_validation_data_generator = SegmentationDataGenerator(
+                labeled_data_set=self.validation_set,
+                num_labeled_per_batch=self.validation_num_labeled_per_batch,
+                params=validation_data_generator_params)
+        else:
+            self.teacher_validation_data_generator = None
 
         self.log('Using material samples: {}'.format(self.training_data_generator.use_material_samples))
         self.log('Using per-channel mean: {}'.format(self.training_data_generator.per_channel_mean))
