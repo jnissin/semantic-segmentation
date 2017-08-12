@@ -90,242 +90,16 @@ def _to_tensor(x, dtype):
     return x
 
 
-def _tf_log2(x):
-    # Note: returns inf when x -> 0
-    numerator = K.tf.log(x)
-    denominator = K.tf.log(K.tf.constant(2, dtype=numerator.dtype))
-    return K.tf.div(numerator, denominator)
-
-
-def _tf_softmax(y_pred):
-    #epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
-
-    softmax = K.tf.nn.softmax(y_pred)
-    #softmax = K.tf.clip_by_value(softmax, epsilon, 1. - epsilon)
-    #softmax = _tf_filter_nans(softmax, epsilon)
-
-    return softmax
-
-
-def _tf_sobel(img):
-    """
-    Applies a Sobel filter to the parameter image.
-
-    # Arguments
-        :param img: Image tensor
-    # Returns
-        :return: Gx, Gy
-    """
-
-    sobel_x = K.tf.constant([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], K.tf.float32)
-    sobel_x_filter = K.tf.reshape(sobel_x, [3, 3, 1, 1])
-    sobel_y_filter = K.tf.transpose(sobel_x_filter, [1, 0, 2, 3])
-
-    # If the image is of form: HxW -> reshape to 1xHxWx1
-    img_reshaped = K.tf.cond(img.rank == 2, lambda: K.tf.cast(K.tf.expand_dims(K.tf.expand_dims(img, 0), 3), K.tf.float32), img)
-    # If the image is of form: HxWx1 -> reshape to 1xHxWx1
-    img_reshaped = K.tf.cond(img.rank == 3, lambda: K.tf.cast(K.tf.expand_dims(img, 0), K.tf.float32), img_reshaped)
-
-    filtered_x = K.tf.nn.conv2d(img_reshaped, sobel_x_filter, strides=[1, 1, 1, 1], padding='SAME')
-    filtered_x = K.tf.squeeze(filtered_x)
-    filtered_y = K.tf.nn.conv2d(img_reshaped, sobel_y_filter, strides=[1, 1, 1, 1], padding='SAME')
-    filtered_y = K.tf.squeeze(filtered_y)
-
-    return filtered_x, filtered_y
-
-
 ##############################################
 # COST FUNCTIONS
 ##############################################
-
-def _tf_calculate_superpixel_entropy_with_gradients(j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy):
-    # A tensor of HxW
-    f_dtype = K.tf.float32
-
-    superpixel_mask = K.tf.cast(K.tf.equal(img_y_true_unlabeled, j), dtype=f_dtype)
-    #num_pixels = K.tf.count_nonzero(superpixel_mask, dtype=K.tf.float32)
-
-    # Create the superpixel prediction mask
-    superpixel_predictions = K.tf.multiply(superpixel_mask, K.tf.cast(img_y_pred_unlabeled, dtype=f_dtype))
-
-    # Calculate the 2D, X and Y, gradient
-    gx, gy = _tf_sobel(superpixel_predictions)
-    gx = K.tf.multiply(superpixel_mask, K.tf.cast(gx, dtype=f_dtype))
-    gy = K.tf.multiply(superpixel_mask, K.tf.cast(gy, dtype=f_dtype))
-    g_mag_squared = K.tf.add(K.tf.square(gx), K.tf.square(gy))
-    g_mag_squared = K.tf.reduce_sum(K.tf.sqrt(g_mag_squared))
-    #g_mag_squared = K.tf.Print(g_mag_squared, [g_mag_squared], message='g_mag: ', summarize=24)
-
-    # Add to the image entropy accumulator and increase the loop variable
-    image_entropy = K.tf.add(image_entropy, g_mag_squared)
-    image_entropy.set_shape(K.tf.TensorShape([]))
-    j = K.tf.add(j, 1)
-
-    return j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy
-
-
-def _tf_calculate_superpixel_entropy(j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy):
-    # j is the superpixel label - select only the area of the unlabeled_true
-    # image where the values match the superpixel index
-
-    # A tensor of HxW
-    superpixel_mask = K.tf.cast(K.tf.equal(img_y_true_unlabeled, j), dtype=K.tf.uint8)
-    num_pixels = K.tf.count_nonzero(superpixel_mask, dtype=K.tf.float32)
-
-    # Count the frequencies of different class predictions within the superpixel and
-    # get rid of the last index, which represents the image area outside the superpixel
-    superpixel_mask = K.tf.reshape(superpixel_mask, [-1])
-    segment_ids = K.tf.reshape(img_y_pred_unlabeled, [-1])
-    class_frequencies = K.tf.cast(K.tf.unsorted_segment_sum(data=superpixel_mask, segment_ids=segment_ids, num_segments=num_classes), K.tf.float32)
-
-    # Calculate the entropy of this superpixel
-    # Log2 can easily have NaNs and infs when class frequencies are zero, filter them out
-    p_k = K.tf.div(class_frequencies, num_pixels)
-    log2_p_k = _tf_filter_infinite(_tf_log2(p_k), 0) # TODO: Get rid of this, instead replace zero frequencies with value 1 -> log2(1) == 0
-
-    # Super pixel entropy can get quite small when multiplying, filter NaNs and replace
-    # NaN values with epsilon
-    superpixel_entropy = K.tf.multiply(p_k, log2_p_k)
-    superpixel_entropy = _tf_filter_infinite(superpixel_entropy, _EPSILON) # TODO: Get rid of this, somehow? 10e-8*10e-8 is something very small.. Does it matter?
-    superpixel_entropy = K.tf.multiply(-1.0, K.tf.reduce_sum(superpixel_entropy))
-
-    # Add to the image entropy accumulator and increase the loop variable
-    image_entropy = K.tf.add(image_entropy, superpixel_entropy)
-    j = K.tf.add(j, 1)
-
-    return j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy
-
-
-def _tf_calculate_image_entropy(i, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, batch_entropy):
-    """
-    Calculates the superpixel entropy for one (unlabeled) image.
-
-    # Arguments
-        :param i: loop index
-        :param img_y_true_unlabeled: index encoded superpixel image, HxW
-        :param img_y_pred_unlabeled: index encoded predictions from the network for the image, HxW
-        :param num_classes: number of classes
-        :param batch_entropy: batch entropy accumulator
-    # Returns
-        :return: loop index, y true unlabeled, num classes, increased batch entropy
-    """
-
-    # Superpixel segment indices are continuous and start from index 0
-    num_superpixels = K.tf.reduce_max(img_y_true_unlabeled)+1
-    for_each_superpixel_cond = lambda j, p1, p2, p3, p4: K.tf.less(j, num_superpixels)
-    j = K.tf.constant(0, dtype=K.tf.int32)
-    image_entropy = K.tf.constant(0, dtype=K.tf.float32)
-
-    j, _, _, _, image_entropy = \
-        K.tf.while_loop(cond=for_each_superpixel_cond,
-                        body=_tf_calculate_superpixel_entropy,
-                        loop_vars=[j, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, image_entropy])
-
-    # Add the image entropy to the batch entropy and increase the loop variable
-    batch_entropy = K.tf.add(batch_entropy, image_entropy)
-    i = K.tf.add(i, 1)
-
-    return i, img_y_true_unlabeled, img_y_pred_unlabeled, num_classes, batch_entropy
-
-
-def _tf_unlabeled_superpixel_loss(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes):
-    """
-    Calculates loss for a batch of unlabeled images. The function assumes that the
-    ground truth labels are SLIC superpixel segmentations with index encoded superpixel
-    boundaries.
-
-    # Arguments
-        :param y_true_unlabeled: ground truth labels (index encoded) (dtype=int32)
-        :param y_pred_unlabeled: predicted labels (index encoded) (dtype=int32)
-        :param unlabeled_cost_coefficient: cost coefficient (dtype=float32)
-        :param num_unlabeled: number of unlabeled images (dtype=int32)
-        :param num_classes: number of classes (dtype=int32)
-    # Returns
-        :return: the mean (image-level) unlabeled superpixel loss for the batch
-    """
-
-    def _tf_unlabeled_superpixel_loss_internal(_y_true_unlabeled, _y_pred_unlabeled, _num_unlabeled, _num_classes):
-        for_each_unlabeled_image_cond = lambda i, p1, p2, p3, p4: K.tf.less(i, _num_unlabeled)
-        i = K.tf.constant(0, dtype=K.tf.int32)
-        batch_entropy = K.tf.constant(0, dtype=K.tf.float32)
-
-        i, _, _, _, batch_entropy =\
-            K.tf.while_loop(cond=for_each_unlabeled_image_cond,
-                            body=_tf_calculate_image_entropy,
-                            loop_vars=[i, _y_true_unlabeled[i], _y_pred_unlabeled[i], _num_classes, batch_entropy])
-
-        # Take the mean over the batch images
-        return K.tf.div(batch_entropy, K.tf.cast(_num_unlabeled, K.tf.float32))
-
-    mean_image_entropy = K.tf.cond(num_unlabeled > 0,
-                                   lambda: _tf_unlabeled_superpixel_loss_internal(y_true_unlabeled, y_pred_unlabeled, num_unlabeled, num_classes),
-                                   lambda: 0.0)
-
-    return K.tf.multiply(unlabeled_cost_coefficient, mean_image_entropy)
-
-
-##############################################
-# SUPERPIXEL
-##############################################
-
-def _tf_calculate_superpixel_cost_superpixel(j, img_y_true_unlabeled, img_y_pred_g_mag, image_entropy):
-    # j is the superpixel label - select only the area of the unlabeled_true
-    # image where the values match the superpixel index
-
-    # Extract a superpixel mask from the ground truth image: 1.0 where in superpixel 0 elsewhere
-    superpixel_mask = K.tf.cast(K.tf.equal(img_y_true_unlabeled, j), dtype=K.tf.float32)
-
-    # Superpixel entropy
-    superpixel_entropy = K.tf.multiply(img_y_pred_g_mag, superpixel_mask)
-    superpixel_entropy = K.tf.reduce_sum(superpixel_entropy)
-
-    # Add the superpixel entropy to the image entropy and increase the loop variable
-    image_entropy = K.tf.add(image_entropy, superpixel_entropy)
-    j = K.tf.add(j, 1)
-
-    return j, img_y_true_unlabeled, img_y_pred_g_mag, image_entropy
-
-
-def _tf_calculate_superpixel_cost_image(i, y_true_unlabeled, y_pred_g_mag, batch_entropy):
-    """
-    Calculates the superpixel entropy for one (unlabeled) image.
-
-    # Arguments
-        :param i: loop index
-        :param img_y_true_unlabeled: index encoded superpixel image, HxW
-        :param img_y_pred_unlabeled: index encoded predictions from the network for the image, HxW
-        :param batch_entropy: batch entropy accumulator
-    # Returns
-        :return: loop index, y true unlabeled, num classes, increased batch entropy
-    """
-
-    # Extract the values specific to this image
-    img_y_true_unlabeled = y_true_unlabeled[i]
-    img_y_pred_g_mag = y_pred_g_mag[i]
-
-    # Superpixel segment indices are continuous and start from index 0
-    num_superpixels = K.tf.reduce_max(img_y_true_unlabeled)+1
-    for_each_superpixel_cond = lambda j, p1, p2, p3: K.tf.less(j, num_superpixels)
-    j = K.tf.constant(0, dtype=K.tf.int32)
-    image_entropy = K.tf.constant(0, dtype=K.tf.float32)
-
-    j, _, _, image_entropy = \
-        K.tf.while_loop(cond=for_each_superpixel_cond,
-                        body=_tf_calculate_superpixel_cost_superpixel,
-                        loop_vars=[j, img_y_true_unlabeled, img_y_pred_g_mag, image_entropy])
-
-    # Add the image entropy to the batch entropy and increase the loop variable
-    batch_entropy = K.tf.add(batch_entropy, image_entropy)
-    i = K.tf.add(i, 1)
-
-    return i, y_true_unlabeled, y_pred_g_mag, batch_entropy
 
 
 def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes):
     """
     Calculates loss for a batch of unlabeled images. The function assumes that the
-    ground truth labels are SLIC superpixel segmentations with index encoded superpixel
-    boundaries.
+    ground truth labels are superpixel segmentations with superpixel areas marked as
+    1 and superpixel borders marked as 0.
 
     # Arguments
         :param y_true_unlabeled: ground truth labels (index encoded) (dtype=int32)
@@ -336,10 +110,6 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_
     # Returns
         :return: the mean (image-level) unlabeled superpixel loss for the batch
     """
-
-    for_each_unlabeled_image_cond = lambda i, p1, p2, p3: K.tf.less(i, num_unlabeled)
-    i = K.tf.constant(0, dtype=K.tf.int32)
-    batch_entropy = K.tf.constant(0, dtype=K.tf.float32)
 
     # Calculate the softmax of the predictions
     epsilon = _to_tensor(_EPSILON, y_pred_unlabeled.dtype.base_dtype)
@@ -364,20 +134,14 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_
     G_mag = K.tf.reduce_mean(G_mag, axis=-1)
 
     # For each image - extract each superpixel and calculate the cost
-    i, _, _, batch_entropy =\
-        K.tf.while_loop(cond=for_each_unlabeled_image_cond,
-                        body=_tf_calculate_superpixel_cost_image,
-                        loop_vars=[i, y_true_unlabeled, G_mag, batch_entropy])
+    batch_entropy = K.tf.reduce_sum(G_mag * K.tf.cast(y_true_unlabeled, dtype=K.tf.float32))
 
     # Take the mean over the batch images
     # Note: take the maximum between num_unlabeled and 1 to avoid dividing by 0
     mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(K.tf.maximum(num_unlabeled, 1), K.tf.float32))
+
     return K.tf.multiply(unlabeled_cost_coefficient, mean_image_entropy)
 
-
-##############################################
-# MEAN TEACHER
-##############################################
 
 def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     """
@@ -404,74 +168,6 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
 
     # Take the mean of the loss per image
     return K.tf.multiply(consistency_coefficient, K.tf.reduce_mean(l2_softmax_dist))
-
-
-##############################################
-# ACTIVATION FUNCTIONS
-##############################################
-
-def _depth_softmax(matrix):
-    """
-    A per-pixel softmax i.e. each pixel is considered as a sample and the
-    class probabilities for each pixel sum to one.
-
-    # Background
-        Keras softmax doesn't work for N-dimensional tensors. The function
-        takes in a keras matrix of size HxWxNUM_CLASSES and applies
-        'depth-wise' softmax to the matrix. The output is thus a matrix of
-        size HxWxNUM_CLASSES where for each WxH entry the depth slice
-        of NUM_CLASSES entries sum to 1.
-    # Arguments
-        matrix: A tensor from a network layer with dimensions HxWxNUM_CLASSES
-    """
-    sigmoid = lambda x: 1.0 / (1.0 + K.exp(-x))
-    sigmoided_matrix = sigmoid(matrix)
-    softmax_matrix = sigmoided_matrix / K.sum(sigmoided_matrix, axis=-1, keepdims=True)
-    return softmax_matrix
-
-
-def np_softmax(X, theta=1.0, axis=None):
-    """
-    Compute the softmax of each element along an axis of X.
-
-    Parameters
-    ----------
-    X: ND-Array. Probably should be floats.
-    theta (optional): float parameter, used as a multiplier
-        prior to exponentiation. Default = 1.0
-    axis (optional): axis to compute values along. Default is the
-        first non-singleton axis.
-
-    Returns an array the same size as X. The result will sum to 1
-    along the specified axis.
-    """
-
-    # make X at least 2d
-    y = np.atleast_2d(X)
-
-    # find axis
-    if axis is None:
-        axis = next(j[0] for j in enumerate(y.shape) if j[1] > 1)
-
-    # multiply y against the theta parameter,
-    y = y * float(theta)
-
-    # subtract the max for numerical stability
-    y = y - np.expand_dims(np.max(y, axis=axis), axis)
-
-    # exponentiate y
-    y = np.exp(y)
-
-    # take the sum along the specified axis
-    ax_sum = np.expand_dims(np.sum(y, axis=axis), axis)
-
-    # finally: divide elementwise
-    p = y / ax_sum
-
-    # flatten if X was 1D
-    if len(X.shape) == 1: p = p.flatten()
-
-    return p
 
 
 ##############################################
@@ -720,7 +416,6 @@ def mean_teacher_superpixel_lambda_loss(args):
     y_true_labeled = K.tf.cast(y_true[0:num_labeled], dtype=K.tf.int32)
     y_pred_unlabeled = y_pred[num_labeled:]
     y_true_unlabeled = K.tf.cast(y_true[num_labeled:], dtype=K.tf.int32)
-
 
     """
     Classification cost calculation - only for labeled
