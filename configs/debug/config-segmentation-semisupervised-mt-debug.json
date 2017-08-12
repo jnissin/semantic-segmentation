@@ -10,26 +10,10 @@
 
     "keras_tensorboard_log_path": "logs/{model_folder}/tensorboard/",
     "keras_model_checkpoint_file_path": "checkpoints/{model_folder}/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
     "keras_csv_log_file_path": "logs/{model_folder}/per-epoch-data.csv",
     "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
 
     "loss_function": "dummy",
-
-    "use_mean_teacher_method": true,
-
-    "mean_teacher_params": {
-      "ema_coefficient_schedule_function": "lambda x: 0.999 if x < 10000 else 0.99",
-      "consistency_cost_coefficient_schedule_function": "lambda x: min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)"
-    },
-
-    "use_superpixel_method": true,
-
-    "superpixel_params": {
-        "unlabeled_cost_coefficient_function": "lambda x: 5.0",
-        "label_generation_function": "felzenswalb"
-    },
-
     "lambda_loss_function": "mean_teacher",
 
     "num_epochs": 100,
@@ -51,6 +35,21 @@
       "learning_rate": 5e-3,
       "momentum": 0.9,
       "decay": 2e-5
+    },
+
+    "use_mean_teacher_method": false,
+
+    "mean_teacher_params": {
+      "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "ema_smoothing_coefficient_function": "lambda x: 0.999 if x < 10000 else 0.99",
+      "consistency_cost_coefficient_function": "lambda x: min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)"
+    },
+
+    "use_superpixel_method": true,
+
+    "superpixel_params": {
+        "unlabeled_cost_coefficient_function": "lambda x: 5.0",
+        "label_generation_function_name": "felzenswalb"
     },
 
     "use_data_augmentation": true,
@@ -79,6 +78,7 @@
 
     "stepwise_learning_rate_scheduler": {
         "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/1000.0)**2))), 1.0)",
+        "last_scheduled_step": 1000,
         "verbose": false
     },
 

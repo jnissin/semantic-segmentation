@@ -2,26 +2,23 @@
 
 import argparse
 import os
-import numpy as np
 import signal
 import sys
 
 import settings
 from trainers import SegmentationTrainer, SemisupervisedSegmentationTrainer, TrainerBase
-from utils import image_utils
 
-early_exit_signal_handler_called = False
+_EARLY_EXIT_SIGNAL_HANDLER_CALLED = False
 
 
 def get_signal_handler(trainer):
     # type: (TrainerBase) -> ()
 
     def signal_handler(signal, frame):
-        global early_exit_signal_handler_called
+        global _EARLY_EXIT_SIGNAL_HANDLER_CALLED
+        if not _EARLY_EXIT_SIGNAL_HANDLER_CALLED:
 
-        if not early_exit_signal_handler_called:
-
-            early_exit_signal_handler_called = True
+            _EARLY_EXIT_SIGNAL_HANDLER_CALLED = True
 
             if trainer is not None:
                 trainer.handle_early_exit()
@@ -31,86 +28,6 @@ def get_signal_handler(trainer):
             sys.exit(0)
 
     return signal_handler
-
-
-def ema_smoothing_coefficient_function(step_idx):
-    # type: (int) -> float
-
-    """
-    Implements a ramp-up period for the Mean Teacher method's EMA smoothing coefficient.
-
-    # Arguments
-        :param step_idx: index of the training step
-    # Returns
-        :return: EMA smoothing coefficient
-    """
-
-    # Original paper: 40 000
-    if step_idx < 10000:
-        a = 0.999
-    else:
-        a = 0.99
-
-    return a
-
-
-def consistency_coefficient_function(step_idx):
-    # type: (int) -> float
-
-    """
-    Implements a ramp-up period for the Mean Teacher method's consistency coefficient.
-
-    # Arguments
-        :param step_idx: index of the training step
-    # Returns
-        :return: consistency coefficient for the given step
-    """
-
-    # type: (int) -> float
-    # How many steps for the ramp up period
-    # Original paper: 40 000
-    ramp_up_period = 10000.0
-
-    # x exists [0,1]
-    x = float(step_idx)/ramp_up_period
-    return min(np.exp(-5.0*((1.0-x)**2)), 1.0)
-
-
-def unlabeled_cost_coefficient_function(step_idx):
-    # type: (int) -> float
-
-    """
-    Returns the unlabeled data cost coefficient for the given training step.
-
-    # Arguments
-        :param step_idx: index of the training step
-    # Return
-        :return: unlabeled cost coefficient
-    """
-
-    return 5.0
-
-
-def label_generation_function(np_img):
-    # type: (np.array[float]) -> (np.array[int])
-
-    """
-    Generates superpixel segmentation (labels) for the given image. The image is expected to be
-    in an unnormalized form with color values in range [0, 255]. The superpixel labels are in
-    index encoded format (integers) with array shape HxW, where the entries are superpixel
-    indices. The integer range is continuous in range [0, num_superpixels]. All the images do
-    not necessarily have the same number of superpixels, but the number can be calculated by
-    taking the max from the data.
-
-    # Arguments
-        :param np_img: image as a numpy array
-    # Returns
-        :return: superpixel segmentation
-    """
-    normalized_img = image_utils.np_normalize_image_channels(np_img, clamp_to_range=True)
-    #val = image_utils.np_get_slic_segmentation(normalized_img, 250, sigma=0, compactness=2.0, max_iter=20)
-    val = image_utils.np_get_felzenswalb_segmentation(normalized_img, scale=550, sigma=1.5, min_size=20)
-    return val
 
 
 def main():
@@ -153,11 +70,7 @@ def main():
         trainer = SemisupervisedSegmentationTrainer(model_name=model_name,
                                                     model_folder_name=model_folder_name,
                                                     config_file_path=trainer_config_file_path,
-                                                    debug=debug,
-                                                    label_generation_function=label_generation_function,
-                                                    consistency_cost_coefficient_function=consistency_coefficient_function,
-                                                    ema_smoothing_coefficient_function=ema_smoothing_coefficient_function,
-                                                    unlabeled_cost_coefficient_function=unlabeled_cost_coefficient_function)
+                                                    debug=debug)
     elif trainer_type == 'classification':
         raise NotImplementedError('Classification training has not yet been implemented')
     else:

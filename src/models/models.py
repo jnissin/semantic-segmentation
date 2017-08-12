@@ -23,6 +23,8 @@ from layers.pooling import MaxUnpooling2D
 
 from extended_model import ExtendedModel
 
+from .. import losses
+
 ##############################################
 # ENUM MODEL TYPES
 ##############################################
@@ -47,9 +49,8 @@ class ModelType(Enum):
 def get_model(model_name,
               input_shape,
               num_classes,
-              model_type=ModelType.NORMAL,
-              lambda_loss_function=None):
-    # type: (str, tuple(int), int, ModelType, Callable) -> ModelBase
+              model_type=ModelType.NORMAL):
+    # type: (str, tuple(int), int, ModelType) -> ModelBase
 
     """
     Get the model by the model name.
@@ -59,8 +60,6 @@ def get_model(model_name,
         input_shape: input shape to the model
         num_classes: number of classification classes
         model_type: type of the model - affects loss calculation
-        lambda_loss_function: a custom function for loss calculation is used with SEMISUPERVISED and
-        MEAN_TEACHER_STUDENT model types
     # Returns
         The appropriate ModelBase.
     """
@@ -69,52 +68,62 @@ def get_model(model_name,
         model_wrapper = UNetModel(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
     elif model_name == 'enet-naive-upsampling':
         model_wrapper = ENetNaiveUpsampling(
             input_shape=input_shape,
             num_classes=num_classes,
             model_type=model_type,
-            encoder_only=False,
-            lambda_loss_function=lambda_loss_function)
+            encoder_only=False)
     elif model_name == 'enet-naive-upsampling-encoder-only':
         model_wrapper = ENetNaiveUpsampling(
             input_shape=input_shape,
             num_classes=num_classes,
             model_type=model_type,
-            encoder_only=True,
-            lambda_loss_function=lambda_loss_function)
+            encoder_only=True)
     elif model_name == 'enet-max-unpooling':
         model_wrapper = ENetMaxUnpooling(
             input_shape=input_shape,
             num_classes=num_classes,
             model_type=model_type,
-            encoder_only=False,
-            lambda_loss_function=lambda_loss_function)
+            encoder_only=False)
     elif model_name == 'enet-max-unpooling-encoder-only':
         model_wrapper = ENetMaxUnpooling(
             input_shape=input_shape,
             num_classes=num_classes,
             model_type=model_type,
-            encoder_only=True,
-            lambda_loss_function=lambda_loss_function)
+            encoder_only=True)
     elif model_name == 'segnet':
         model_wrapper = SegNetBasicModel(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
     elif model_name == 'yolonet':
         model_wrapper = YOLONetModel(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
     else:
         raise ValueError('Unknown model name: {}'.format(model_name))
 
     return model_wrapper
+
+
+def model_type_to_lambda_loss_function(model_type):
+    # type: (ModelType) -> function
+
+    if model_type == ModelType.SEMISUPERVISED:
+        return losses.semisupervised_superpixel_lambda_loss
+    elif model_type == ModelType.MEAN_TEACHER_STUDENT:
+        return losses.mean_teacher_lambda_loss
+    elif model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
+        return losses.mean_teacher_superpixel_lambda_loss
+    elif model_type == ModelType.MEAN_TEACHER_TEACHER:
+        return None
+    elif model_type == ModelType.NORMAL:
+        return None
+
+    raise ValueError('Unknown model type: {}'.format(model_type))
 
 
 ##############################################
@@ -130,14 +139,16 @@ class ModelBase(object):
                  name,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL,
-                 lambda_loss_function=None):
+                 model_type=ModelType.NORMAL):
+        # type: (str, tuple[int], int, ModelType) -> None
 
         self.name = name
         self.input_shape = input_shape
         self.num_classes = num_classes
         self.model_type = model_type
-        self.lambda_loss_function = lambda_loss_function
+
+        # Deduce the lambda loss function from the model type
+        self.lambda_loss_function = model_type_to_lambda_loss_function(model_type)
 
         # Configure inputs
         images = Input(name="images", shape=self.input_shape)
@@ -341,15 +352,13 @@ class UNetModel(ModelBase):
     def __init__(self,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL,
-                 lambda_loss_function=None):
+                 model_type=ModelType.NORMAL):
 
         super(UNetModel, self).__init__(
             name="UNet",
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
 
     def _build_model(self, inputs):
         '''
@@ -524,15 +533,13 @@ class SegNetBasicModel(ModelBase):
     def __init__(self,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL,
-                 lambda_loss_function=None):
+                 model_type=ModelType.NORMAL):
 
         super(SegNetBasicModel, self).__init__(
             name="SegNet-Basic",
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
 
     def _build_model(self, inputs):
 
@@ -574,8 +581,7 @@ class ENetNaiveUpsampling(ModelBase):
                  input_shape,
                  num_classes,
                  encoder_only=False,
-                 model_type=ModelType.NORMAL,
-                 lambda_loss_function=None):
+                 model_type=ModelType.NORMAL):
 
         self.encoder_only = encoder_only
 
@@ -588,8 +594,7 @@ class ENetNaiveUpsampling(ModelBase):
             name=name,
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
 
     def _build_model(self, inputs):
         enet = ENetNaiveUpsampling.encoder_build(inputs)
@@ -851,8 +856,7 @@ class ENetMaxUnpooling(ModelBase):
                  input_shape,
                  num_classes,
                  encoder_only=False,
-                 model_type=ModelType.NORMAL,
-                 lambda_loss_function=None):
+                 model_type=ModelType.NORMAL):
 
         self.encoder_only = encoder_only
 
@@ -865,8 +869,7 @@ class ENetMaxUnpooling(ModelBase):
             name=name,
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
 
     def _build_model(self, inputs):
         enet, pooling_indices = ENetMaxUnpooling.encoder_build(inputs)
@@ -1135,15 +1138,13 @@ class YOLONetModel(ModelBase):
     def __init__(self,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL,
-                 lambda_loss_function=None):
+                 model_type=ModelType.NORMAL):
 
         super(YOLONetModel, self).__init__(
             name="YOLONet",
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
-            lambda_loss_function=lambda_loss_function)
+            model_type=model_type)
 
     def _build_model(self, inputs):
 
@@ -1248,6 +1249,7 @@ class YOLONetModel(ModelBase):
             kernel_size=(3, 3),
             pool_size=(2, 2),
             strides=(2, 2)):
+
         previous_layer = input_layer
 
         # Add the convolution blocks

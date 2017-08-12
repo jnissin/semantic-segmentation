@@ -382,7 +382,7 @@ def np_get_random_crop_area(np_image, crop_width, crop_height):
     return (x1, y1), (x2, y2)
 
 
-def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_iter=20):
+def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_iter=20, normalize_img=False):
     # type: (np.array, int, int, float) -> np.array
 
     """
@@ -400,29 +400,48 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
         :return: the superpixel segmentation
     """
 
-    # Apply SLIC and extract (approximately) the supplied number
-    # of segments
-    segments = slic(np_img, n_segments=n_segments, sigma=sigma, compactness=compactness, max_iter=max_iter)
+    if normalize_img:
+        normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
+        segments = slic(normalized_img, n_segments=n_segments, sigma=sigma, compactness=compactness, max_iter=max_iter)
+    else:
+        segments = slic(np_img, n_segments=n_segments, sigma=sigma, compactness=compactness, max_iter=max_iter)
+
     return segments
 
 
-def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True):
+def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False):
     # type: (np.array, float, float, int, bool) -> np.array
 
-    segments = felzenszwalb(image=np_img, scale=scale, sigma=sigma, min_size=min_size, multichannel=multichannel)
+    if normalize_img:
+        normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
+        segments = felzenszwalb(image=normalized_img, scale=scale, sigma=sigma, min_size=min_size, multichannel=multichannel)
+    else:
+        segments = felzenszwalb(image=np_img, scale=scale, sigma=sigma, min_size=min_size, multichannel=multichannel)
+
     return segments
 
 
-def np_get_watershed_segmentation(np_img, markers, compactness=0.001):
+def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_img=False):
     # type: (np.array, int, float) -> np.array
 
-    gradient = sobel(rgb2gray(np_img))
+    if normalize_img:
+        normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
+        gradient = sobel(rgb2gray(normalized_img))
+    else:
+        gradient = sobel(rgb2gray(np_img))
+
     segments = watershed(gradient, markers=markers, compactness=compactness)
+
     return segments
 
 
-def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5):
+def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5, normalize_img=False):
     # type: (np.array, float, float, float, float) -> np.array
 
-    segments = quickshift(np_img, kernel_size=kernel_size, max_dist=max_dist, sigma=sigma, ratio=ratio)
+    if normalize_img:
+        normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
+        segments = quickshift(normalized_img, kernel_size=kernel_size, max_dist=max_dist, sigma=sigma, ratio=ratio)
+    else:
+        segments = quickshift(np_img, kernel_size=kernel_size, max_dist=max_dist, sigma=sigma, ratio=ratio)
+
     return segments

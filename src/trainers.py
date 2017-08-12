@@ -26,6 +26,7 @@ from generators import DataGeneratorParameters, DataAugmentationParameters
 
 from utils import dataset_utils
 from models.models import ModelType, get_model
+from utils import image_utils
 
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
 from utils.dataset_utils import MaterialClassInformation, SegmentationDataSetInformation
@@ -318,6 +319,7 @@ class TrainerBase:
 
         if stepwise_learning_rate_scheduler is not None:
             stepwise_lr_scheduler = StepwiseLearningRateScheduler(schedule=eval(stepwise_learning_rate_scheduler.get('schedule')),
+                                                                  last_scheduled_step=stepwise_learning_rate_scheduler.get('last_scheduled_step'),
                                                                   verbose=stepwise_learning_rate_scheduler.get('verbose'))
 
             callbacks.append(stepwise_lr_scheduler)
@@ -347,32 +349,6 @@ class TrainerBase:
 
         self.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, class_weights))
         return loss_function
-
-    def get_lambda_loss_function(self, lambda_loss_function_name, num_classes):
-        lambda_loss_function = None
-
-        if lambda_loss_function_name == 'mean_teacher':
-            lambda_loss_function = losses.mean_teacher_lambda_loss
-        elif lambda_loss_function_name == 'semisupervised_superpixel':
-            lambda_loss_function = losses.semisupervised_superpixel_lambda_loss
-        elif lambda_loss_function_name == 'mean_teacher_superpixel':
-            lambda_loss_function = losses.mean_teacher_superpixel_lambda_loss(num_classes)
-        else:
-            raise ValueError('Unsupported lambda loss function: {}'.format(lambda_loss_function_name))
-
-        self.log('Using {} lambda loss function'.format(lambda_loss_function_name))
-        return lambda_loss_function
-
-    @staticmethod
-    def lambda_loss_function_to_model_type(lambda_loss_function_name):
-        if lambda_loss_function_name == 'mean_teacher':
-            return ModelType.MEAN_TEACHER_STUDENT
-        elif lambda_loss_function_name == 'semisupervised_superpixel':
-            return ModelType.SEMISUPERVISED
-        elif lambda_loss_function_name == 'mean_teacher_superpixel':
-            return ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL
-
-        raise ValueError('Unsupported lambda loss function: {}'.format(lambda_loss_function_name))
 
     def get_optimizer(self, continue_from_optimizer_checkpoint):
         optimizer_info = self.get_config_value('optimizer')
@@ -869,20 +845,15 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                  model_name,
                  model_folder_name,
                  config_file_path,
-                 debug=None,
-                 label_generation_function=None,
-                 consistency_cost_coefficient_function=None,
-                 ema_smoothing_coefficient_function=None,
-                 unlabeled_cost_coefficient_function=None):
-
-        # type: (str, str, str, str, Callable[[np.array[np.float32]], np.array], Callable[[int], float], Callable[[int], float], Callable[[int], float]) -> ()
-
-        self.label_generation_function = label_generation_function
-        self.consistency_cost_coefficient_function = consistency_cost_coefficient_function
-        self.ema_smoothing_coefficient_function = ema_smoothing_coefficient_function
-        self.unlabeled_cost_coefficient_function = unlabeled_cost_coefficient_function
+                 debug=None):
+        # type: (str, str, str, str) -> ()
 
         # Declare variables that are going to be initialized in the _init_ functions
+        self.label_generation_function = None
+        self.consistency_cost_coefficient_function = None
+        self.ema_smoothing_coefficient_function = None
+        self.unlabeled_cost_coefficient_function = None
+
         self.material_class_information = None
         self.data_set_information = None
         self.num_classes = -1
@@ -896,8 +867,6 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.validation_set = None
         self.test_set = None
 
-        self.lambda_loss_function_name = None
-        self.lambda_loss_function = None
         self.use_mean_teacher_method = False
         self.model_wrapper = None
         self.model = None
@@ -922,7 +891,6 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.use_class_weights = self.get_config_value('use_class_weights')
         self.use_material_samples = self.get_config_value('use_material_samples')
 
-        self.use_mean_teacher_method = bool(self.get_config_value('use_mean_teacher_method'))
         self.input_shape = self.get_config_value('input_shape')
         self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
         self.weights_directory_path = os.path.dirname(self.get_config_value('keras_model_checkpoint_file_path')).format(model_folder=self.model_folder_name)
@@ -931,10 +899,48 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
         self.loss_function_name = self.get_config_value('loss_function')
 
-        self.teacher_weights_directory_path = ""
+        # If using mean teacher method read the parameters - any missing parameters should raise
+        # exceptions
+        self.use_mean_teacher_method = bool(self.get_config_value('use_mean_teacher_method'))
 
         if self.use_mean_teacher_method:
-            self.teacher_weights_directory_path = os.path.dirname(self.get_config_value('teacher_model_checkpoint_file_path')).format(model_folder=self.model_folder_name)
+            self.log('Reading mean teacher method configuration')
+            mean_teacher_params = self.get_config_value('mean_teacher_params')
+
+            if mean_teacher_params is None:
+                raise ValueError('Could not find entry for mean_teacher_params from the configuration JSON')
+
+            teacher_weights_directory_path = os.path.dirname(mean_teacher_params['teacher_model_checkpoint_file_path']).format(model_folder=self.model_folder_name)
+            self.log('Teacher weights directory path: {}'.format(teacher_weights_directory_path))
+            self.teacher_weights_directory_path = teacher_weights_directory_path
+            self.teacher_model_checkpoint_file_path = mean_teacher_params['teacher_model_checkpoint_file_path']
+
+            ema_coefficient_schedule_function = mean_teacher_params['ema_smoothing_coefficient_function']
+            self.log('EMA smoothing coefficient function: {}'.format(ema_coefficient_schedule_function))
+            self.ema_smoothing_coefficient_function = eval(ema_coefficient_schedule_function)
+
+            consistency_cost_coefficient_function = mean_teacher_params['consistency_cost_coefficient_function']
+            self.log('Consistency cost coefficient function: {}'.format(consistency_cost_coefficient_function))
+            self.consistency_cost_coefficient_function = eval(consistency_cost_coefficient_function)
+
+        # If using superpixel method; read the parameters - any missing parameters should raise
+        # exceptions
+        self.use_superpixel_method = bool(self.get_config_value('use_superpixel_method'))
+
+        if self.use_superpixel_method:
+            self.log('Reading superpixel method configuration')
+            superpixel_params = self.get_config_value('superpixel_params')
+
+            if superpixel_params is None:
+                raise ValueError('Could not find entry for superpixel_params from the configuration JSON')
+
+            label_generation_function_name = superpixel_params['label_generation_function_name']
+            self.log('Label generation function name: {}'.format(label_generation_function_name))
+            self.label_generation_function = self.get_label_generation_function(label_generation_function_name)
+
+            unlabeled_cost_coefficient_function = superpixel_params['unlabeled_cost_coefficient_function']
+            self.log('Unlabeled cost coefficient function: {}'.format(unlabeled_cost_coefficient_function))
+            self.unlabeled_cost_coefficient_function = eval(unlabeled_cost_coefficient_function)
 
         self.use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
         self.num_color_channels = self.get_config_value('num_color_channels')
@@ -1023,23 +1029,20 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
     def _init_models(self):
         super(SemisupervisedSegmentationTrainer, self)._init_models()
 
-        # Are we using the mean teacher method?
-        self.log('Use mean teacher method for training: {}'.format(self.use_mean_teacher_method))
+        # Are we using the mean teacher method or superpixel method?
+        self.log('Use mean teacher method: {}'.format(self.use_mean_teacher_method))
+        self.log('Use superpixel method: {}'.format(self.use_superpixel_method))
 
         # Model creation
-        self.log('Creating student model {} instance with input shape: {}, num classes: {}'
-                 .format(self.model_name, self.input_shape, self.num_classes))
+        student_model_type = self.get_model_type()
 
-        self.lambda_loss_function_name = self.get_config_value('lambda_loss_function')
-        self.lambda_loss_function = self.get_lambda_loss_function(self.lambda_loss_function_name, num_classes=self.num_classes)
-
-        model_type = TrainerBase.lambda_loss_function_to_model_type(self.lambda_loss_function_name)
+        self.log('Creating student model {} instance with type: {}, input shape: {}, num classes: {}'
+                 .format(self.model_name, student_model_type, self.input_shape, self.num_classes))
 
         self.model_wrapper = get_model(self.model_name,
                                        self.input_shape,
                                        self.num_classes,
-                                       model_type=model_type,
-                                       lambda_loss_function=self.lambda_loss_function)
+                                       model_type=student_model_type)
 
         self.model = self.model_wrapper.model
         self.model.summary()
@@ -1062,8 +1065,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         # Get the loss function for the student model
         if self.loss_function_name != 'dummy':
-            self.log('Semisupervised trainer should use \'dummy\' loss function, got: {}. Ignoring passed loss function.'
-                     .format(self.loss_function_name))
+            self.log('Semisupervised trainer should use \'dummy\' loss function, got: {}. Ignoring passed loss function.'.format(self.loss_function_name))
             self.loss_function_name = 'dummy'
 
         loss_function = self.get_loss_function(self.loss_function_name,
@@ -1081,9 +1083,9 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         # If we are using the mean teacher method create the teacher model
         if self.use_mean_teacher_method:
-            self.log('Creating teacher model {} instance with input shape: {}, num classes: {}'
-                     .format(self.model_name, self.input_shape, self.num_classes))
-            self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, ModelType.MEAN_TEACHER_TEACHER)
+            teacher_model_type = ModelType.MEAN_TEACHER_TEACHER
+            self.log('Creating teacher model {} instance with type: {}, input shape: {}, num classes: {}'.format(self.model_name, teacher_model_type, self.input_shape, self.num_classes))
+            self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, model_type=teacher_model_type)
             self.teacher_model = self.teacher_model_wrapper.model
             self.teacher_model.summary()
 
@@ -1097,7 +1099,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             else:
                 self.teacher_model.set_weights(self.model.get_weights())
 
-            teacher_class_weights = self.class_weights #self.class_weights if self.use_class_weights else None
+            teacher_class_weights = self.class_weights
 
             self.teacher_model.compile(optimizer=optimizer,
                                        loss=losses.pixelwise_crossentropy_loss(teacher_class_weights),
@@ -1277,7 +1279,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             :return: a tuple of (input data, output data)
         """
 
-        if self.lambda_loss_function_name == 'mean_teacher':
+        if self.model_wrapper.model_type == ModelType.MEAN_TEACHER_STUDENT:
             if self.teacher_model is None:
                 raise ValueError('Teacher model is not set, cannot run predictions')
 
@@ -1304,7 +1306,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
                 np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
                 x = x + [mean_teacher_predictions, np_consistency_coefficients]
-        elif self.lambda_loss_function_name == 'semisupervised_superpixel':
+        elif self.model_wrapper.model_type == ModelType.SEMISUPERVISED:
             # First dimension in all of the input data should be the batch size
             batch_size = x[0].shape[0]
 
@@ -1315,7 +1317,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 unlabeled_cost_coefficient = self.unlabeled_cost_coefficient_function(step_index)
                 np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
                 x = x + [np_unlabeled_cost_coefficients]
-        elif self.lambda_loss_function_name == 'mean_teacher_superpixel':
+        elif self.model_wrapper.model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
             if self.teacher_model is None:
                 raise ValueError('Teacher model is not set, cannot run predictions')
 
@@ -1455,8 +1457,8 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             if self.teacher_model is None:
                 raise ValueError('Teacher model is not set, cannot save weights')
 
-            # Save the weights
-            teacher_model_checkpoint_file_path = self.get_config_value('teacher_model_checkpoint_file_path')
+            # Save the teacher model weights:
+            teacher_model_checkpoint_file_path = self.teacher_model_checkpoints_file_path
 
             # Don't crash here, too much effort done - save with a different name to the same path as
             # the student model
@@ -1472,3 +1474,27 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
             self.log('Saving mean teacher model weights to file: {}'.format(file_path))
             self.teacher_model.save_weights(file_path, overwrite=True)
+
+    def get_model_type(self):
+        if self.use_mean_teacher_method and self.use_superpixel_method:
+            return ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL
+        elif self.use_mean_teacher_method:
+            return ModelType.MEAN_TEACHER_STUDENT
+        elif self.use_superpixel_method:
+            return ModelType.SEMISUPERVISED
+        else:
+            raise ValueError('Unsupported combination for a semisupervised trainer - cannot deduce model type')
+
+    def get_label_generation_function(self, label_generation_function_name):
+        # type: (str) -> Callable
+
+        if label_generation_function_name.lower() == 'felzenswalb':
+            return lambda np_img: image_utils.np_get_felzenswalb_segmentation(np_img, scale=550, sigma=1.5, min_size=20, normalize_img=True)
+        elif label_generation_function_name.lower() == 'slic':
+            return lambda np_img: image_utils.np_get_slic_segmentation(np_img, 250, sigma=0, compactness=2.0, max_iter=20, normalize_img=True)
+        elif label_generation_function_name.lower() == 'quickshift':
+            return lambda np_img: image_utils.np_get_quickshift_segmentation(np_img, kernel_size=20, max_dist=15, ratio=0.5, normalize_img=True)
+        elif label_generation_function_name.lower() == 'watershed':
+            return lambda np_img: image_utils.np_get_watershed_segmentation(np_img, markers=250, compactness=0.001, normalize_img=True)
+        else:
+            raise ValueError('Unknown label generation function name: {}'.format(label_generation_function_name))

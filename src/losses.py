@@ -4,7 +4,6 @@ import numpy as np
 from keras import backend as K
 
 
-import keras.engine.topology
 ##############################################
 # GLOBALS
 ##############################################
