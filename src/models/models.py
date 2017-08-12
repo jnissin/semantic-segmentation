@@ -146,10 +146,12 @@ class ModelBase(object):
         # If using Mean Teacher -method add a gaussian noise after input
         model_inputs = images
 
-        # Additive Gaussian Noise with stddev 0.15, same as in
-        # Temporal Ensembling for Semi-Supervised Learning and Mean Teacher paper
-        if model_type == ModelType.MEAN_TEACHER_STUDENT or model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or model_type == ModelType.MEAN_TEACHER_TEACHER:
-            model_inputs = GaussianNoise(stddev=0.05)(images)
+        # Note: With stddev 0.15 as in Mean Teacher and Temporal Ensembling papers,
+        # the mean teacher method doesn't seem to converge, attempting smaller values
+        if model_type == ModelType.MEAN_TEACHER_STUDENT or \
+           model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or \
+           model_type == ModelType.MEAN_TEACHER_TEACHER:
+            model_inputs = GaussianNoise(stddev=0.05, name='noise')(images)
 
         # Build the model
         self.outputs = self._build_model(model_inputs)
@@ -1125,7 +1127,7 @@ class ENetMaxUnpooling(ModelBase):
 
 
 ##############################################
-# BULLNET
+# YOLONET
 ##############################################
 
 class YOLONetModel(ModelBase):

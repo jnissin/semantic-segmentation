@@ -73,8 +73,7 @@ def consistency_coefficient_function(step_idx):
 
     # x exists [0,1]
     x = float(step_idx)/ramp_up_period
-    x = min(x, 1.0)
-    return np.exp(-5.0*((1.0-x)**2))
+    return min(np.exp(-5.0*((1.0-x)**2)), 1.0)
 
 
 def unlabeled_cost_coefficient_function(step_idx):

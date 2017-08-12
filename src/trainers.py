@@ -19,6 +19,7 @@ from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnP
 from tensorflow.python.client import timeline
 
 from callbacks.optimizer_checkpoint import OptimizerCheckpoint
+from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
 from models.extended_model import ExtendedModel
 from generators import SemisupervisedSegmentationDataGenerator, SegmentationDataGenerator
 from generators import DataGeneratorParameters, DataAugmentationParameters
@@ -246,10 +247,11 @@ class TrainerBase:
             os.path.dirname(self.get_config_value('keras_model_checkpoint_file_path')).format(model_folder=self.model_folder_name),
             os.path.basename(self.get_config_value('keras_model_checkpoint_file_path')))
 
-        keras_tensorboard_log_path=self.get_config_value('keras_tensorboard_log_path').format(model_folder=self.model_folder_name)
-        keras_csv_log_file_path=self.get_config_value('keras_csv_log_file_path').format(model_folder=self.model_folder_name)
-        reduce_lr_on_plateau=self.get_config_value('reduce_lr_on_plateau')
-        optimizer_checkpoint_file_path=self.get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
+        keras_tensorboard_log_path = self.get_config_value('keras_tensorboard_log_path').format(model_folder=self.model_folder_name)
+        keras_csv_log_file_path = self.get_config_value('keras_csv_log_file_path').format(model_folder=self.model_folder_name)
+        reduce_lr_on_plateau = self.get_config_value('reduce_lr_on_plateau')
+        stepwise_learning_rate_scheduler = self.get_config_value('stepwise_learning_rate_scheduler')
+        optimizer_checkpoint_file_path = self.get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
 
         callbacks = []
 
@@ -313,6 +315,12 @@ class TrainerBase:
                 verbose=verbose)
 
             callbacks.append(reduce_lr)
+
+        if stepwise_learning_rate_scheduler is not None:
+            stepwise_lr_scheduler = StepwiseLearningRateScheduler(schedule=eval(stepwise_learning_rate_scheduler.get('schedule')),
+                                                                  verbose=stepwise_learning_rate_scheduler.get('verbose'))
+
+            callbacks.append(stepwise_lr_scheduler)
 
         # Optimizer checkpoint
         if optimizer_checkpoint_file_path is not None:
