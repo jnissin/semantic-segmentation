@@ -18,16 +18,17 @@ class StepwiseLearningRateScheduler(keras.callbacks.Callback):
         self.schedule = schedule
         self.step_index = 0
         self.last_scheduled_step = int(last_scheduled_step) if last_scheduled_step is not None else None
-        self.stop_reported = True
+        self.stop_reported = False
         self.verbose = verbose
 
     def on_batch_begin(self, batch, logs=None):
         if not hasattr(self.model.optimizer, 'lr'):
             raise ValueError('Optimizer must have a "lr" attribute.')
 
+        # Check whether the last scheduled step has been reached
         if self.last_scheduled_step is not None and self.step_index > self.last_scheduled_step:
             if not self.stop_reported:
-                print 'Stop schedule limit reached - stopping scheduling at step: {}'.format(self.step_index)
+                print 'Stop schedule limit reached, stopping scheduling at step: {}, current learning rate: {}'.format(self.step_index, self.model.optimizer.lr)
                 self.stop_reported = True
             return
 
