@@ -260,9 +260,10 @@ class ModelBase(object):
         self.inputs.append(unlabeled_cost_coeff)
 
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, unlabeled_cost_coeff]
+        logits = self.outputs[0]
+        lambda_inputs = [logits, labels, class_weights, num_unlabeled, unlabeled_cost_coeff]
         loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
-        self.outputs = loss_layer
+        self.outputs = [loss_layer, logits]
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
@@ -293,9 +294,10 @@ class ModelBase(object):
         self.inputs.append(consistency_cost)
 
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, mt_predictions, consistency_cost]
+        logits = self.outputs[0]
+        lambda_inputs = [logits, labels, class_weights, num_unlabeled, mt_predictions, consistency_cost]
         loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
-        self.outputs = loss_layer
+        self.outputs = [loss_layer, logits]
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
@@ -329,9 +331,10 @@ class ModelBase(object):
         self.inputs.append(unlabeled_cost_coeff)
 
         # Note: assumes there is only a single output, which is the last layer
-        lambda_inputs = [self.outputs[0], labels, class_weights, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
+        logits = self.outputs[0]
+        lambda_inputs = [logits, labels, class_weights, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
         loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
-        self.outputs = loss_layer
+        self.outputs = [loss_layer, logits]
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
@@ -394,7 +397,7 @@ class UNetModel(ModelBase):
         Last convolutional layer and softmax activation for
         per-pixel classification
         '''
-        conv10 = Conv2D(self.num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
+        conv10 = Conv2D(self.num_classes, (1, 1), name='logits', kernel_initializer='he_normal', bias_initializer='zeros')(conv9)
 
         return [conv10]
 
@@ -565,7 +568,7 @@ class SegNetBasicModel(ModelBase):
         Last convolutional layer and softmax activation for
         per-pixel classification
         """
-        conv9 = Conv2D(self.num_classes, (1, 1), name='fc1', kernel_initializer='he_normal', bias_initializer='zeros')(conv8)
+        conv9 = Conv2D(self.num_classes, (1, 1), name='logits', kernel_initializer='he_normal', bias_initializer='zeros')(conv8)
 
         return [conv9]
 
@@ -607,7 +610,7 @@ class ENetNaiveUpsampling(ModelBase):
 
             enet = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(enet)
             enet = Flatten(name='flatten')(enet)
-            enet = Dense(self.num_classes, activation='softmax', name='fc1')(enet)
+            enet = Dense(self.num_classes, activation='softmax', name='logits')(enet)
         else:
             enet = ENetNaiveUpsampling.decoder_build(enet, nc=self.num_classes)
 
@@ -841,7 +844,7 @@ class ENetNaiveUpsampling(ModelBase):
                                kernel_size=(2, 2),
                                strides=(2, 2),
                                padding='same',
-                               name='de_tconv2d')(enet)
+                               name='logits')(enet)
 
         return enet
 
@@ -882,7 +885,7 @@ class ENetMaxUnpooling(ModelBase):
 
             enet = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(enet)
             enet = Flatten(name='flatten')(enet)
-            enet = Dense(self.num_classes, activation='softmax', name='fc1')(enet)
+            enet = Dense(self.num_classes, activation='softmax', name='logits')(enet)
         else:
             enet = ENetMaxUnpooling.decoder_build(enet, index_stack=pooling_indices, nc=self.num_classes)
 
@@ -1124,7 +1127,7 @@ class ENetMaxUnpooling(ModelBase):
                                kernel_size=(2, 2),
                                strides=(2, 2),
                                padding='same',
-                               name='de_tconv2d')(enet)
+                               name='logits')(enet)
 
         return enet
 
@@ -1171,7 +1174,7 @@ class YOLONetModel(ModelBase):
         """
         FC
         """
-        conv13 = Conv2D(self.num_classes, (1, 1), name='fc1', padding='same', kernel_initializer='he_normal', bias_initializer='zeros')(conv12)
+        conv13 = Conv2D(self.num_classes, (1, 1), name='logits', padding='same', kernel_initializer='he_normal', bias_initializer='zeros')(conv12)
 
         return [conv13]
 

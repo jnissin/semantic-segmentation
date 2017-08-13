@@ -20,8 +20,8 @@
     "crop_shape": [384, 384],
     "resize_shape": null,
 
-    "num_labeled_per_batch": 10,
-    "num_unlabeled_per_batch": 10,
+    "num_labeled_per_batch": 3,
+    "num_unlabeled_per_batch": 3,
     "validation_num_labeled_per_batch": 5,
     "validation_crop_shape": null,
     "validation_resize_shape": [512, 512],
@@ -47,22 +47,30 @@
     "use_superpixel_method": true,
 
     "superpixel_params": {
-        "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
-        "label_generation_function_name": "felzenswalb"
+      "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
+      "label_generation_function_name": "felzenswalb"
     },
 
     "use_data_augmentation": true,
     "use_material_samples": true,
 
     "data_augmentation_params": {
-        "augmentation_probability": 0.5,
-        "rotation_range": 40.0,
-        "zoom_range": 0.5,
-        "width_shift_range": 0.15,
-        "height_shift_range": 0.15,
-        "channel_shift_range": 0.10,
-        "horizontal_flip": true,
-        "vertical_flip": false
+      "augmentation_probability": 0.5,
+      "rotation_range": 40.0,
+      "zoom_range": 0.5,
+      "width_shift_range": 0.15,
+      "height_shift_range": 0.15,
+      "channel_shift_range": 0.10,
+      "horizontal_flip": true,
+      "vertical_flip": false
+    },
+
+    "_early_stopping": {
+      "monitor": "loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
     },
 
     "reduce_lr_on_plateau": {
@@ -75,10 +83,10 @@
       "monitor": "loss"
     },
 
-    "stepwise_learning_rate_scheduler": {
-        "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
-        "last_scheduled_step": 10000,
-        "verbose": false
+    "_stepwise_learning_rate_scheduler": {
+      "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
+      "last_scheduled_step": 10000,
+      "verbose": false
     },
 
     "image_data_format": "channels_last",

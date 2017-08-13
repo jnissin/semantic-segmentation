@@ -3,6 +3,8 @@
 import numpy as np
 from keras import backend as K
 
+import settings
+
 
 ##############################################
 # GLOBALS
@@ -305,7 +307,9 @@ def mean_teacher_lambda_loss(args):
     Consistency costs - for labeled and unlabeled
     """
     consistency_cost = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient)
-    consistency_cost = K.tf.Print(consistency_cost, [consistency_cost, classification_costs], message="costs: ", summarize=24)
+
+    if settings.DEBUG:
+        consistency_cost = K.tf.Print(consistency_cost, [consistency_cost, classification_costs], message="costs: ", summarize=24)
 
     # Total cost
     total_costs = K.tf.add(classification_costs, consistency_cost)
@@ -359,7 +363,9 @@ def semisupervised_superpixel_lambda_loss(args):
     Unlabeled classification costs (superpixel seg) - only for unlabeled
     """
     unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
-    unlabeled_costs = K.tf.Print(unlabeled_costs, [unlabeled_costs, classification_costs], message="costs: ")
+
+    if settings.DEBUG:
+        unlabeled_costs = K.tf.Print(unlabeled_costs, [unlabeled_costs, classification_costs], message="costs: ")
 
     # Total cost
     total_costs = K.tf.add(classification_costs, unlabeled_costs)
@@ -431,7 +437,9 @@ def mean_teacher_superpixel_lambda_loss(args):
     Unlabeled classification costs (superpixel seg) - only for unlabeled
     """
     unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
-    unlabeled_costs = K.tf.Print(unlabeled_costs, [consistency_costs, unlabeled_costs, classification_costs], message="costs: ", summarize=24)
+
+    if settings.DEBUG:
+        unlabeled_costs = K.tf.Print(unlabeled_costs, [consistency_costs, unlabeled_costs, classification_costs], message="costs: ", summarize=24)
 
     # Total cost
     total_costs = K.tf.add(K.tf.add(classification_costs, consistency_costs), unlabeled_costs)

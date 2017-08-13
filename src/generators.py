@@ -13,6 +13,7 @@ from utils import dataset_utils
 from utils import image_utils
 from utils.dataset_utils import MaterialClassInformation, MaterialSample
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile
+import settings
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 import keras.backend as K
@@ -1262,12 +1263,13 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         num_samples_in_batch = len(X)
 
         # Debug: Write images
-        #for i in range(len(X)):
-        #    from keras.preprocessing.image import array_to_img
-        #    _debug_photo = array_to_img(X[i])
-        #    _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
-        #    _debug_mask = array_to_img(Y[i][:, :, np.newaxis]*255)
-        #    _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
+        if settings.DEBUG:
+            for i in range(len(X)):
+                from keras.preprocessing.image import array_to_img
+                _debug_photo = array_to_img(X[i])
+                _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
+                _debug_mask = array_to_img(Y[i][:, :, np.newaxis]*255)
+                _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
         # End of: debug
 
         # Cast the lists to numpy arrays
@@ -1285,12 +1287,16 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Generate a dummy output for the dummy loss function and yield a batch of data
         dummy_output = np.zeros(shape=[num_samples_in_batch])
 
-        batch_data = [X, Y, W, num_unlabeled]
+        batch_input_data = [X, Y, W, num_unlabeled]
 
         if X.shape[0] != Y.shape[0] or X.shape[0] != W.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
             print 'Unmatching input first dimensions: {}, {}, {}, {}'.format(X.shape[0], Y.shape[0], W.shape[0], num_unlabeled.shape[0])
 
-        return batch_data, dummy_output
+        logits_output = np.expand_dims(np.copy(Y), -1)
+        logits_output[num_samples_in_batch-num_unlabeled_samples_in_batch:] = 0
+        batch_output_data = [dummy_output, logits_output]
+
+        return batch_input_data, batch_output_data
 
     @property
     def num_steps_per_epoch(self):

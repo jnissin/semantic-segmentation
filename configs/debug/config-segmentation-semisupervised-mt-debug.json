@@ -75,6 +75,14 @@
       "monitor": "loss"
     },
 
+    "_early_stopping": {
+      "monitor": "loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
+    },
+
     "stepwise_learning_rate_scheduler": {
         "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
         "last_scheduled_step": 10000,

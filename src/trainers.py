@@ -13,7 +13,7 @@ from abc import ABCMeta, abstractmethod
 import keras
 import keras.backend as K
 from keras.optimizers import SGD, Adam
-from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau
+from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau, EarlyStopping
 
 from tensorflow.python.client import timeline
 
@@ -249,6 +249,7 @@ class TrainerBase:
 
         keras_tensorboard_log_path = self.get_config_value('keras_tensorboard_log_path').format(model_folder=self.model_folder_name)
         keras_csv_log_file_path = self.get_config_value('keras_csv_log_file_path').format(model_folder=self.model_folder_name)
+        early_stopping = self.get_config_value('early_stopping')
         reduce_lr_on_plateau = self.get_config_value('reduce_lr_on_plateau')
         stepwise_learning_rate_scheduler = self.get_config_value('stepwise_learning_rate_scheduler')
         optimizer_checkpoint_file_path = self.get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
@@ -296,6 +297,24 @@ class TrainerBase:
 
             callbacks.append(csv_logger_callback)
 
+        # Early stopping to conserve resources
+        if early_stopping is not None:
+            monitor = early_stopping.get('monitor') or 'val_loss'
+            min_delta = early_stopping.get('min_delta') or 0.0
+            patience = early_stopping.get('patience') or 2
+            verbose = early_stopping.get('verbose') or 0
+            mode = early_stopping.get('mode') or 'auto'
+
+            early_stop = EarlyStopping(
+                monitor=monitor,
+                min_delta=min_delta,
+                patience=patience,
+                verbose=verbose,
+                mode=mode)
+
+            callbacks.append(early_stop)
+
+        # Reduce LR on plateau to adjust learning rate
         if reduce_lr_on_plateau is not None:
             factor = reduce_lr_on_plateau.get('factor') or 0.1
             patience = reduce_lr_on_plateau.get('patience') or 10
@@ -316,6 +335,7 @@ class TrainerBase:
 
             callbacks.append(reduce_lr)
 
+        # Stepwise learning rate scheduler to schedule learning rate ramp-ups/downs
         # Note: This is added after the possible Reduce LR on plateau callback
         # so it overrides it's changes if they are both present
         if stepwise_learning_rate_scheduler is not None:
@@ -707,8 +727,8 @@ class SegmentationTrainer(TrainerBase):
         self.model.compile(optimizer=optimizer,
                            loss=loss_function,
                            metrics=['accuracy',
-                                    metrics.mean_iou(self.num_classes),
-                                    metrics.mean_per_class_accuracy(self.num_classes)],
+                                    metrics.mean_iou(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1),
+                                    metrics.mean_per_class_accuracy(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1)],
                            **self.get_compile_kwargs())
 
     def _init_data_generators(self):
@@ -1076,9 +1096,11 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
         # Compile the student model
         self.model.compile(optimizer=optimizer,
-                           loss=loss_function,
+                           loss={'loss': loss_function, 'logits': lambda _, y_pred: 0.0*y_pred},
+                           loss_weights=[1., 0.],
+                           metrics={'logits': [metrics.semisupervised_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1),
+                                               metrics.semisupervised_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1)]},
                            **self.get_compile_kwargs())
-                           #metrics=['accuracy',
                            #metrics.mean_iou(self.num_classes),
                            #metrics.mean_per_class_accuracy(self.num_classes)])
 
@@ -1102,11 +1124,12 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
 
             teacher_class_weights = self.class_weights
 
+            # Note: Teacher model can use the regular metrics
             self.teacher_model.compile(optimizer=optimizer,
                                        loss=losses.pixelwise_crossentropy_loss(teacher_class_weights),
                                        metrics=['accuracy',
-                                                metrics.mean_iou(self.num_classes),
-                                                metrics.mean_per_class_accuracy(self.num_classes)],
+                                                metrics.mean_iou(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1),
+                                                metrics.mean_per_class_accuracy(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1)],
                                        **self.get_compile_kwargs())
 
     def _init_data_generators(self):
