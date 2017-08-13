@@ -1262,12 +1262,12 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         num_samples_in_batch = len(X)
 
         # Debug: Write images
-        for i in range(len(X)):
-            from keras.preprocessing.image import array_to_img
-            _debug_photo = array_to_img(X[i])
-            _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
-            _debug_mask = array_to_img(Y[i][:, :, np.newaxis]*255)
-            _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
+        #for i in range(len(X)):
+        #    from keras.preprocessing.image import array_to_img
+        #    _debug_photo = array_to_img(X[i])
+        #    _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
+        #    _debug_mask = array_to_img(Y[i][:, :, np.newaxis]*255)
+        #    _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
         # End of: debug
 
         # Cast the lists to numpy arrays
