@@ -9,7 +9,6 @@ import numpy as np
 
 from PIL import ImageFile
 from abc import ABCMeta, abstractmethod
-from typing import Callable
 
 import keras
 import keras.backend as K
@@ -1460,7 +1459,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
                 raise ValueError('Teacher model is not set, cannot save weights')
 
             # Save the teacher model weights:
-            teacher_model_checkpoint_file_path = self.teacher_model_checkpoints_file_path
+            teacher_model_checkpoint_file_path = self.teacher_model_checkpoint_file_path
 
             # Don't crash here, too much effort done - save with a different name to the same path as
             # the student model
@@ -1488,7 +1487,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             raise ValueError('Unsupported combination for a semisupervised trainer - cannot deduce model type')
 
     def get_label_generation_function(self, label_generation_function_name):
-        # type: (str) -> Callable
+        # type: (str) -> function
 
         if label_generation_function_name.lower() == 'felzenswalb':
             return lambda np_img: image_utils.np_get_felzenswalb_segmentation(np_img, scale=550, sigma=1.5, min_size=20, normalize_img=True, borders_only=True)

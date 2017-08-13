@@ -16,7 +16,6 @@ from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 import keras.backend as K
-from typing import Callable
 
 
 #######################################
@@ -114,7 +113,7 @@ def get_unlabeled_segmentation_data_pair(photo,
                                          data_augmentation_params=None,
                                          img_data_format='channels_last',
                                          div2_constraint=4):
-    # type: (ImageFile, Callable[np.array], int, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
+    # type: (ImageFile, function, int, tuple[int], tuple[int], np.array, np.array, bool, DataAugmentationParameters, str, int, str) -> (np.array, np.array)
 
     """
     Returns a photo mask pair for semi-supervised/unsupervised segmentation training.
@@ -746,7 +745,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             return dataset_utils.get_number_of_batches(self._num_unique_material_samples, self.batch_size)
         elif self.iter_mode == IterationMode.UNIFORM:
             # If all classes are sampled uniformly, we have been through all the samples in the data
-            # on average after we have gone through all the samples in the biggest class
+            # on average after we have gone through all the samples in the largest class
             return dataset_utils.get_number_of_batches(self._num_samples_in_biggest_material_category * self._num_non_zero_classes, self.batch_size)
 
         raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
@@ -1033,7 +1032,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
                  params,
                  class_weights=None,
                  label_generation_function=None):
-        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, Callable[[np.array[np.float32]], np.array]) -> None
+        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, DataGeneratorParameters, function[[np.array[np.float32]], np.array]) -> None
 
         """
         # Arguments
@@ -1263,12 +1262,12 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         num_samples_in_batch = len(X)
 
         # Debug: Write images
-        #for i in range(len(X)):
-        #    from keras.preprocessing.image import array_to_img
-        #    _debug_photo = array_to_img(X[i])
-        #    _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
-        #    _debug_mask = array_to_img(Y[i][:, :, np.newaxis])
-        #    _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
+        for i in range(len(X)):
+            from keras.preprocessing.image import array_to_img
+            _debug_photo = array_to_img(X[i])
+            _debug_photo.save('./photos/debug-photos/{}_{}_photo.jpg'.format(labeled_current_index, i), format='JPEG')
+            _debug_mask = array_to_img(Y[i][:, :, np.newaxis]*255)
+            _debug_mask.save('./photos/debug-photos/{}_{}_mask.png'.format(labeled_current_index, i), format='PNG')
         # End of: debug
 
         # Cast the lists to numpy arrays
