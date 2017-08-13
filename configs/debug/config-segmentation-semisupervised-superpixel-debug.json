@@ -1,30 +1,27 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_data_set_information_file": "data/debug-10/512/data-set-information.json",
-    "path_to_labeled_photos": "data/debug-10/512/labeled/photos",
-    "path_to_labeled_masks": "data/debug-10/512/labeled/masks",
-    "path_to_unlabeled_photos": "data/debug-10/512/unlabeled",
+    "path_to_data_set_information_file": "data/debug/512/data-set-information.json",
+    "path_to_labeled_photos": "data/debug/512/labeled/photos",
+    "path_to_labeled_masks": "data/debug/512/labeled/masks",
+    "path_to_unlabeled_photos": "data/debug/512/unlabeled",
 
     "log_file_path": "logs/{model_folder}/log.txt",
     "log_to_stdout": true,
 
     "keras_tensorboard_log_path": "logs/{model_folder}/tensorboard/",
     "keras_model_checkpoint_file_path": "checkpoints/{model_folder}/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
     "keras_csv_log_file_path": "logs/{model_folder}/per-epoch-data.csv",
     "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
 
     "loss_function": "dummy",
-    "use_mean_teacher_method": false,
-    "lambda_loss_function": "semisupervised_superpixel",
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
     "crop_shape": [384, 384],
     "resize_shape": null,
 
-    "num_labeled_per_batch": 3,
-    "num_unlabeled_per_batch": 3,
+    "num_labeled_per_batch": 10,
+    "num_unlabeled_per_batch": 10,
     "validation_num_labeled_per_batch": 5,
     "validation_crop_shape": null,
     "validation_resize_shape": [512, 512],
@@ -34,9 +31,24 @@
 
     "optimizer": {
       "name": "adam",
-      "learning_rate": 5e-3,
+      "learning_rate": 5e-4,
       "momentum": 0.9,
-      "decay": 2e-5
+      "decay": 2e-4
+    },
+
+    "use_mean_teacher_method": false,
+
+    "mean_teacher_params": {
+      "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "ema_smoothing_coefficient_function": "lambda x: 0.999 if x > 10000 else 0.99",
+      "consistency_cost_coefficient_function": "lambda x: 1.0 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)"
+    },
+
+    "use_superpixel_method": true,
+
+    "superpixel_params": {
+        "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
+        "label_generation_function_name": "felzenswalb"
     },
 
     "use_data_augmentation": true,
@@ -61,6 +73,12 @@
       "cooldown": 5,
       "min_lr": 0,
       "monitor": "loss"
+    },
+
+    "_stepwise_learning_rate_scheduler": {
+        "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
+        "last_scheduled_step": 10000,
+        "verbose": false
     },
 
     "image_data_format": "channels_last",
