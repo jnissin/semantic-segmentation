@@ -162,7 +162,7 @@ class ModelBase(object):
         if model_type == ModelType.MEAN_TEACHER_STUDENT or \
            model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or \
            model_type == ModelType.MEAN_TEACHER_TEACHER:
-            model_inputs = GaussianNoise(stddev=0.05, name='noise')(images)
+            model_inputs = GaussianNoise(stddev=0.03, name='noise')(images)
 
         # Build the model
         self.outputs = self._build_model(model_inputs)
