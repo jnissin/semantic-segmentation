@@ -1126,7 +1126,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
             # Note: Teacher model can use the regular metrics
             self.teacher_model.compile(optimizer=optimizer,
                                        loss=losses.pixelwise_crossentropy_loss(teacher_class_weights),
-                                       metrics=['accuracy',
+                                       metrics=[metrics.accuracy(ignore_class=0 if self.class_weights[0] == 0 else -1),
                                                 metrics.mean_iou(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1),
                                                 metrics.mean_per_class_accuracy(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1)],
                                        **self.get_compile_kwargs())
