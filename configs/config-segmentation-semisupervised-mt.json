@@ -75,7 +75,15 @@
       "monitor": "val_loss"
     },
 
-    "stepwise_learning_rate_scheduler": {
+    "_early_stopping": {
+      "monitor": "val_loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
+    },
+
+    "_stepwise_learning_rate_scheduler": {
         "schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/40000.0)**2))), 1.0)",
         "last_scheduled_step": 40000,
         "verbose": false

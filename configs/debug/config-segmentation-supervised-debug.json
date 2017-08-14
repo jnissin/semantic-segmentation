@@ -81,6 +81,14 @@
         "verbose": false
     },
 
+    "_early_stopping": {
+      "monitor": "loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
+    },
+
     "image_data_format": "channels_last",
     "continue_from_last_checkpoint": false,
     "transfer_weights": false,

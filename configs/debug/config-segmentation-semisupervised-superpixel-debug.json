@@ -48,7 +48,7 @@
 
     "superpixel_params": {
         "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
-        "label_generation_function_name": "slic"
+        "label_generation_function_name": "felzenswalb"
     },
 
     "use_data_augmentation": true,
@@ -73,6 +73,14 @@
       "cooldown": 5,
       "min_lr": 0,
       "monitor": "loss"
+    },
+
+    "_early_stopping": {
+      "monitor": "loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
     },
 
     "_stepwise_learning_rate_scheduler": {

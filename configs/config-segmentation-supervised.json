@@ -47,22 +47,22 @@
     "use_superpixel_method": false,
 
     "superpixel_params": {
-        "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/40000.0)**2))), 1.0)",
-        "label_generation_function_name": "felzenswalb"
+      "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/40000.0)**2))), 1.0)",
+      "label_generation_function_name": "felzenswalb"
     },
 
     "use_data_augmentation": true,
     "use_material_samples": true,
 
     "data_augmentation_params": {
-        "augmentation_probability": 0.5,
-        "rotation_range": 40.0,
-        "zoom_range": 0.5,
-        "width_shift_range": 0.15,
-        "height_shift_range": 0.15,
-        "channel_shift_range": 0.10,
-        "horizontal_flip": true,
-        "vertical_flip": false
+      "augmentation_probability": 0.5,
+      "rotation_range": 40.0,
+      "zoom_range": 0.5,
+      "width_shift_range": 0.15,
+      "height_shift_range": 0.15,
+      "channel_shift_range": 0.10,
+      "horizontal_flip": true,
+      "vertical_flip": false
     },
 
     "reduce_lr_on_plateau": {
@@ -73,6 +73,14 @@
       "cooldown": 5,
       "min_lr": 0,
       "monitor": "val_loss"
+    },
+
+    "_early_stopping": {
+      "monitor": "val_loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
     },
 
     "_stepwise_learning_rate_scheduler": {
