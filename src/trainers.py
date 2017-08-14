@@ -1098,11 +1098,10 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         self.model.compile(optimizer=optimizer,
                            loss={'loss': loss_function, 'logits': lambda _, y_pred: 0.0*y_pred},
                            loss_weights=[1., 0.],
-                           metrics={'logits': [metrics.semisupervised_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1),
+                           metrics={'logits': [metrics.semisupervised_accuracy(self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1),
+                                               metrics.semisupervised_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1),
                                                metrics.semisupervised_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1)]},
                            **self.get_compile_kwargs())
-                           #metrics.mean_iou(self.num_classes),
-                           #metrics.mean_per_class_accuracy(self.num_classes)])
 
         # If we are using the mean teacher method create the teacher model
         if self.use_mean_teacher_method:
