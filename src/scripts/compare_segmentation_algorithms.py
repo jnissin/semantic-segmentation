@@ -27,11 +27,11 @@ def main():
     print 'Image size: {}'.format(img.size)
 
     fz_time = time.time()
-    segments_fz = image_utils.np_get_felzenswalb_segmentation(np_img, scale=400, sigma=0.8, min_size=50)
+    segments_fz = image_utils.np_get_felzenswalb_segmentation(np_img, scale=300, sigma=1, min_size=20)
     fz_time = time.time() - fz_time
 
     slic_time = time.time()
-    segments_slic = image_utils.np_get_slic_segmentation(np_img, n_segments=250, compactness=10, sigma=1)
+    segments_slic = image_utils.np_get_slic_segmentation(np_img, n_segments=250, compactness=10, sigma=1, max_iter=20)
     slic_time = time.time() - slic_time
 
     quick_time = time.time()
@@ -42,10 +42,10 @@ def main():
     segments_watershed = image_utils.np_get_watershed_segmentation(np_img, markers=250, compactness=0.001)
     watershed_time = time.time() - watershed_time
 
-    print("Felzenszwalb number of segments: {}, time: {}s".format(len(np.unique(segments_fz)), fz_time))
-    print("SLIC number of segments: {}, time: {}s".format(len(np.unique(segments_slic)), slic_time))
-    print("Quickshift number of segments: {}, time: {}s".format(len(np.unique(segments_quick)), quick_time))
-    print("Watershed number of segments: {}, time: {}s".format(len(np.unique(segments_watershed)), watershed_time))
+    print("Felzenszwalb number of segments: {}, time: {}s".format(np.max(segments_fz), fz_time))
+    print("SLIC number of segments: {}, time: {}s".format(np.max(segments_slic), slic_time))
+    print("Quickshift number of segments: {}, time: {}s".format(np.max(segments_quick), quick_time))
+    print("Watershed number of segments: {}, time: {}s".format(np.max(segments_watershed), watershed_time))
 
     fig, ax = plt.subplots(2, 2, figsize=(10, 10), sharex=True, sharey=True, subplot_kw={'adjustable': 'box-forced'})
 

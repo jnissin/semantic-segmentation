@@ -1292,6 +1292,8 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         if X.shape[0] != Y.shape[0] or X.shape[0] != W.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
             print 'Unmatching input first dimensions: {}, {}, {}, {}'.format(X.shape[0], Y.shape[0], W.shape[0], num_unlabeled.shape[0])
 
+        # Provide the true classification masks for labeled samples only - these go to the second lost function
+        # in the semisupervised model that is only used to calculate metrics
         logits_output = np.expand_dims(np.copy(Y), -1)
         logits_output[num_samples_in_batch-num_unlabeled_samples_in_batch:] = 0
         batch_output_data = [dummy_output, logits_output]

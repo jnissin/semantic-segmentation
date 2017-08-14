@@ -1515,7 +1515,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         if label_generation_function_name.lower() == 'felzenswalb':
             return lambda np_img: image_utils.np_get_felzenswalb_segmentation(np_img, scale=550, sigma=1.5, min_size=20, normalize_img=True, borders_only=True)
         elif label_generation_function_name.lower() == 'slic':
-            return lambda np_img: image_utils.np_get_slic_segmentation(np_img, 250, sigma=0, compactness=2.0, max_iter=20, normalize_img=True, borders_only=True)
+            return lambda np_img: image_utils.np_get_slic_segmentation(np_img, n_segments=250, sigma=1, compactness=10.0, max_iter=20, normalize_img=True, borders_only=True)
         elif label_generation_function_name.lower() == 'quickshift':
             return lambda np_img: image_utils.np_get_quickshift_segmentation(np_img, kernel_size=20, max_dist=15, ratio=0.5, normalize_img=True, borders_only=True)
         elif label_generation_function_name.lower() == 'watershed':
