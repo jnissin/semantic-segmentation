@@ -479,7 +479,7 @@ def calculate_median_frequency_balancing_weights(image_files, material_class_inf
         num_classes = len(material_class_information)
         for class_idx in ignored_classes:
             if class_idx >= num_classes or class_idx < 0:
-                raise ValueError('Invalid ignore class index: {} for {} classes'.format(val, num_classes))
+                raise ValueError('Invalid ignore class index: {} for {} classes'.format(class_idx, num_classes))
 
     n_jobs = get_number_of_parallel_jobs()
 
