@@ -1060,7 +1060,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
             self.labeled_data_iterator = MaterialSampleDataSetIterator(
                 material_samples=self.labeled_data_set.material_samples,
-                batch_size=num_unlabeled_per_batch,
+                batch_size=num_labeled_per_batch,
                 shuffle=self.shuffle_data_after_epoch,
                 seed=self.random_seed)
 
@@ -1073,7 +1073,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
 
         self.unlabeled_data_iterator = None
 
-        if unlabeled_data_set is not None and unlabeled_data_set.size > 0:
+        if unlabeled_data_set is not None and unlabeled_data_set.size > 0 and num_unlabeled_per_batch > 0:
             self.unlabeled_data_iterator = FileDataSetIterator(
                 n=self.unlabeled_data_set.size,
                 batch_size=num_unlabeled_per_batch,
@@ -1139,7 +1139,7 @@ class SemisupervisedSegmentationDataGenerator(DataGenerator):
         # Returns
             :return: true if there is unlabeled data otherwise false
         """
-        return self.unlabeled_data_set is not None and self.unlabeled_data_set.size > 0 and self.unlabeled_data_iterator is not None
+        return self.unlabeled_data_set is not None and self.unlabeled_data_set.size > 0 and self.unlabeled_data_iterator is not None and self.num_unlabeled_per_batch > 0
 
     def get_labeled_batch_data(self, index_array):
         # type: (np.array[int]) -> (list[np.array], list[np.array])
