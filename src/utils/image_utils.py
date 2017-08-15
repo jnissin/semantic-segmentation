@@ -124,6 +124,19 @@ def np_apply_random_transform(images,
                                 [0, 0, 1]])
         transform_matrix = zoom_matrix if transform_matrix is None else np.dot(transform_matrix, zoom_matrix)
 
+    # Apply random channel shifts
+    # Note: apply before transform to keep the possible cvalue always constant in the transformed images
+    if channel_shift_ranges is not None:
+        if len(channel_shift_ranges) > len(images):
+            raise ValueError('Channel shift ranges list is longer than the image list: {} vs {}'.format(len(channel_shift_ranges), len(images)))
+
+        for i in range(0, len(channel_shift_ranges)):
+            if channel_shift_ranges[i] is None:
+                continue
+
+            # Images are [0,255] color encoded, multiply intensity [0,1] by 255 to get the real shift intensity
+            images[i] = random_channel_shift(images[i], intensity=channel_shift_ranges[i]*255.0, channel_axis=img_channel_axis)
+
     # Apply the transformation matrix to the image
     if transform_matrix is not None:
         # The function apply_transform only accepts float for cval,
@@ -149,18 +162,6 @@ def np_apply_random_transform(images,
         if np.random.random() < 0.5:
             for i in range(0, len(images)):
                 images[i] = flip_axis(images[i], img_row_axis)
-
-    # Random channel shifts
-    if channel_shift_ranges is not None:
-        if len(channel_shift_ranges) > len(images):
-            raise ValueError('Channel shift ranges list is longer than the image list: {} vs {}'.format(len(channel_shift_ranges), len(images)))
-
-        for i in range(0, len(channel_shift_ranges)):
-            if channel_shift_ranges[i] is None:
-                continue
-
-            # Images are [0,255] color encoded, multiply intensity [0,1] by 255 to get the real shift intensity
-            images[i] = random_channel_shift(images[i], intensity=channel_shift_ranges[i]*255.0, channel_axis=img_channel_axis)
 
     # Check that we don't have any NaN values
     for i in range(0, len(images)):
