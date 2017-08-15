@@ -1103,7 +1103,7 @@ class SemisupervisedSegmentationTrainer(TrainerBase):
         # Compile the student model
         self.model.compile(optimizer=optimizer,
                            loss={'loss': loss_function, 'logits': lambda _, y_pred: 0.0*y_pred},
-                           loss_weights=[1., 0.],
+                           loss_weights={'loss': 1., 'logits': 0.},
                            metrics={'logits': [metrics.semisupervised_accuracy(self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1),
                                                metrics.semisupervised_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1),
                                                metrics.semisupervised_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_class=0 if self.class_weights[0] == 0 else -1)]},
