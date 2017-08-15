@@ -20,8 +20,8 @@
     "crop_shape": [384, 384],
     "resize_shape": null,
 
-    "num_labeled_per_batch": 10,
-    "num_unlabeled_per_batch": 10,
+    "num_labeled_per_batch": 12,
+    "num_unlabeled_per_batch": 12,
     "validation_num_labeled_per_batch": 5,
     "validation_crop_shape": null,
     "validation_resize_shape": [512, 512],
@@ -40,14 +40,14 @@
 
     "mean_teacher_params": {
       "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-      "ema_smoothing_coefficient_function": "lambda x: 0.999 if x >= 40000 else 0.99",
-      "consistency_cost_coefficient_function": "lambda x: 1.0 * min(np.exp(-5.0*(1.0-((float(x)/40000.0)**2))), 1.0)"
+      "ema_smoothing_coefficient_function": "lambda x: 0.999 if x >= 5000 else 0.99",
+      "consistency_cost_coefficient_function": "lambda x: 1.0 * min(np.exp(-5.0*(1.0-((float(x)/5000.0)**2))), 1.0)"
     },
 
     "use_superpixel_method": false,
 
     "superpixel_params": {
-        "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/40000.0)**2))), 1.0)",
+        "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/5000.0)**2))), 1.0)",
         "label_generation_function_name": "felzenszwalb"
     },
 
@@ -84,9 +84,9 @@
     },
 
     "stepwise_learning_rate_scheduler": {
-      "lr_schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/40000.0)**2))), 1.0)",
-      "b2_schedule": "lambda x: 0.999 if x >= 40000 else 0.99",
-      "last_scheduled_step": 40000,
+      "lr_schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/5000.0)**2))), 1.0)",
+      "b2_schedule": "lambda x: 0.999 if x >= 5000 else 0.99",
+      "last_scheduled_step": 5000,
       "verbose": false
     },
 
