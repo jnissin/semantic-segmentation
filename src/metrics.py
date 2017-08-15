@@ -8,6 +8,9 @@ import keras.backend as K
 
 
 def _miou(labels, predictions, num_classes, weights=None):
+    K.tf.assert_rank(labels, 3)
+    K.tf.assert_rank(predictions, 3)
+
     cfm = K.tf.confusion_matrix(
         labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
 
@@ -31,6 +34,9 @@ def _miou(labels, predictions, num_classes, weights=None):
 
 
 def _mpca(labels, predictions, num_classes, weights=None):
+    K.tf.assert_rank(labels, 3)
+    K.tf.assert_rank(predictions, 3)
+
     cfm = K.tf.confusion_matrix(
         labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
 
@@ -52,6 +58,8 @@ def _mpca(labels, predictions, num_classes, weights=None):
 
 
 def _accuracy(labels, predictions, ignore_class):
+    K.tf.assert_rank(labels, 3)
+    K.tf.assert_rank(predictions, 3)
 
     prediction_results = K.tf.cast(K.equal(labels, predictions), dtype=K.tf.float32)
 
@@ -69,7 +77,6 @@ def _accuracy(labels, predictions, ignore_class):
     number_of_pixels = K.tf.ones_like(prediction_results, dtype=K.tf.float32) * K.tf.cast((K.tf.shape(predictions)[1] * K.tf.shape(predictions)[2]),
                                                                                           dtype=K.tf.float32)
     number_of_pixels = K.tf.subtract(number_of_pixels, ignored_pixels)
-
     prediction_results = K.tf.reduce_mean(K.tf.div(prediction_results, number_of_pixels))
 
     return prediction_results
@@ -140,7 +147,7 @@ def semisupervised_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
 
     def mpca(y_true, y_pred):
         num_labeled = K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32)
-        labels = K.flatten(K.tf.squeeze(y_true[0:num_labeled]))
+        labels = K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1))
         predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), K.tf.int32))
         weights = K.tf.where(K.tf.equal(predictions, ignore_class),
                              K.tf.zeros_like(predictions, dtype=K.tf.float32),
@@ -155,7 +162,7 @@ def semisupervised_mean_iou(num_classes, num_unlabeled, ignore_class=-1):
 
     def miou(y_true, y_pred):
         num_labeled = K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32)
-        labels = K.flatten(K.tf.squeeze(y_true[0:num_labeled]))
+        labels = K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1))
         predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32))
         weights = K.tf.where(K.tf.equal(predictions, ignore_class),
                              K.tf.zeros_like(predictions, dtype=K.tf.float32),
@@ -170,7 +177,7 @@ def semisupervised_accuracy(num_unlabeled, ignore_class=-1):
 
     def acc(y_true, y_pred):
         num_labeled = K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32)
-        labels = K.tf.cast(K.tf.squeeze(y_true[0:num_labeled]), dtype=K.tf.int32)
+        labels = K.tf.cast(K.tf.squeeze(y_true[0:num_labeled], axis=-1), dtype=K.tf.int32)
         predictions = K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32)
         return _accuracy(labels, predictions, ignore_class)
 
