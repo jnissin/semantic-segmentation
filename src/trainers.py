@@ -732,7 +732,7 @@ class SegmentationTrainer(TrainerBase):
         # Compile the model
         self.model.compile(optimizer=optimizer,
                            loss=loss_function,
-                           metrics=['accuracy',
+                           metrics=[metrics.accuracy(ignore_class=0 if self.class_weights[0] == 0 else -1),
                                     metrics.mean_iou(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1),
                                     metrics.mean_per_class_accuracy(self.num_classes, ignore_class=0 if self.class_weights[0] == 0 else -1)],
                            **self.get_compile_kwargs())
