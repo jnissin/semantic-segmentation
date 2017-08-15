@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
     "path_to_data_set_information_file": "data/512/data-set-information.json",
-    "path_to_labeled_photos": "data/512/labeled/photos",
-    "path_to_labeled_masks": "data/512/labeled/masks",
-    "path_to_unlabeled_photos": "data/512/unlabeled",
+    "path_to_labeled_photos": "data/512/labeled/photos.tar.gz",
+    "path_to_labeled_masks": "data/512/labeled/masks.tar.gz",
+    "path_to_unlabeled_photos": "data/512/unlabeled.tar.gz",
 
     "log_file_path": "logs/{model_folder}/log.txt",
     "log_to_stdout": true,
