@@ -4,6 +4,8 @@ import argparse
 import time
 import numpy as np
 import matplotlib.pyplot as plt
+import scipy.misc as misc
+import skimage.exposure as exposure
 
 from PIL import Image
 
@@ -23,19 +25,20 @@ def main():
 
     img = Image.open(image_path)
     np_img = img_to_array(img)
+    #np_img = exposure.equalize_hist(np_img.astype(np.uint8))
     np_img = image_utils.np_normalize_image_channels(np_img, clamp_to_range=True)
     print 'Image size: {}'.format(img.size)
 
     fz_time = time.time()
-    segments_fz = image_utils.np_get_felzenswalb_segmentation(np_img, scale=300, sigma=1, min_size=20)
+    segments_fz = image_utils.np_get_felzenswalb_segmentation(np_img, scale=700, sigma=0.6, min_size=250)
     fz_time = time.time() - fz_time
 
     slic_time = time.time()
-    segments_slic = image_utils.np_get_slic_segmentation(np_img, n_segments=250, compactness=10, sigma=1, max_iter=20)
+    segments_slic = image_utils.np_get_slic_segmentation(np_img, n_segments=300, compactness=10, sigma=1, max_iter=20)
     slic_time = time.time() - slic_time
 
     quick_time = time.time()
-    segments_quick = image_utils.quickshift(np_img, kernel_size=20, max_dist=15, ratio=0.5)
+    segments_quick = image_utils.quickshift(np_img, kernel_size=5, max_dist=5, ratio=0.5)
     quick_time = time.time() - quick_time
 
     watershed_time = time.time()
@@ -49,14 +52,20 @@ def main():
 
     fig, ax = plt.subplots(2, 2, figsize=(10, 10), sharex=True, sharey=True, subplot_kw={'adjustable': 'box-forced'})
 
-    ax[0, 0].imshow(mark_boundaries(img, segments_fz))
+    boundary_mode = 'thick'
+
+    ax[0, 0].imshow(mark_boundaries(img, segments_fz, mode=boundary_mode))
     ax[0, 0].set_title("Felzenszwalb, {}, {}s".format(len(np.unique(segments_fz)), fz_time))
-    ax[0, 1].imshow(mark_boundaries(img, segments_slic))
+    ax[0, 1].imshow(mark_boundaries(img, segments_slic, mode=boundary_mode))
     ax[0, 1].set_title("SLIC, {}, {}s".format(len(np.unique(segments_slic)), slic_time))
-    ax[1, 0].imshow(mark_boundaries(img, segments_quick))
+    ax[1, 0].imshow(mark_boundaries(img, segments_quick, mode=boundary_mode))
     ax[1, 0].set_title("Quickshift, {}, {}s".format(len(np.unique(segments_quick)), quick_time))
-    ax[1, 1].imshow(mark_boundaries(img, segments_watershed))
+    ax[1, 1].imshow(mark_boundaries(img, segments_watershed, mode=boundary_mode))
     ax[1, 1].set_title("Watershed, {}, {}s".format(len(np.unique(segments_watershed)), watershed_time))
+
+    # Debug: save fz and slic images
+    #misc.imsave('out_fz.jpg', mark_boundaries(img, segments_fz, mode=boundary_mode))
+    #misc.imsave('out_slic.jpg', mark_boundaries(img, segments_slic, mode=boundary_mode))
 
     for a in ax.ravel():
         a.set_axis_off()

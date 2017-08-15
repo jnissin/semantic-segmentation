@@ -1005,16 +1005,36 @@ def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None, clamp
         :return: The parameter batch normalized with the given values
     """
 
-    # TODO: Refactor to take values in range [0,255]
-    if per_channel_mean is not None:
-        if not ((per_channel_mean < 1.0 + 1e-7).all() and (per_channel_mean > -1.0 - 1e-7).all()):
-            raise ValueError('Per-channel mean is not within range [-1, 1]')
-        batch -= np_from_normalized_to_255(per_channel_mean)
+    # Make sure the batch data type is correct
+    batch = batch.astype(np.float32)
 
+    # Subtract the per-channel-mean from the batch to "center" the data.
+    if per_channel_mean is not None:
+        _per_channel_mean = np.array(per_channel_mean).astype(np.float32)
+
+        # Per channel mean is in range [-1,1]
+        if (_per_channel_mean >= -1.0 - 1e-7).all() and (_per_channel_mean <= 1.0 + 1e-7).all():
+            batch -= np_from_normalized_to_255(_per_channel_mean)
+        # Per channel mean is in range [0, 255]
+        elif (_per_channel_mean >= 0.0).all() and (_per_channel_mean <= 255.0).all():
+            batch -= _per_channel_mean
+        else:
+            raise ValueError('Per channel mean is in unknown range: {}'.format(_per_channel_mean))
+
+    # Additionally, you ideally would like to divide by the sttdev of
+    # that feature or pixel as well if you want to normalize each feature
+    # value to a z-score.
     if per_channel_stddev is not None:
-        if not ((per_channel_stddev < 1.0 + 1e-7).all() and (per_channel_stddev > -1.0 - 1e-7).all()):
-            raise ValueError('Per-channel stddev is not within range [-1, 1]')
-        batch /= np_from_normalized_to_255(per_channel_stddev + 1e-7)
+        _per_channel_stddev = np.array(per_channel_stddev).astype(np.float32)
+
+        # Per channel stddev is in range [-1, 1]
+        if (_per_channel_stddev >= -1.0 - 1e-7).all() and (_per_channel_stddev <= 1.0 + 1e-7).all():
+            batch /= np_from_normalized_to_255(_per_channel_stddev)
+        # Per channel stddev is in range [0, 255]
+        elif (_per_channel_stddev >= 0.0).all() and (_per_channel_stddev <= 255.0).all():
+            batch /= _per_channel_stddev
+        else:
+            raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
 
     batch -= 128.0
     batch /= 128.0

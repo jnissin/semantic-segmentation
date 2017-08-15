@@ -303,6 +303,8 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
 
 
 def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None, clamp_to_range=False, inplace=False):
+    # type: (np.array, np.array, np.array, bool, bool) -> np.array
+
     """
     Normalizes the color channels from the given image to zero-centered
     range [-1, 1] from the original [0, 255] range. If the per channels
@@ -321,25 +323,40 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
         :returns: the normalized image with channels in  range [-1, 1]
     """
     if inplace:
-        normalized_img_array = img_array
+        normalized_img_array = img_array.astype(np.float32)
     else:
-        normalized_img_array = copy.deepcopy(img_array)
+        normalized_img_array = copy.deepcopy(img_array).astype(np.float32)
+
+    if not ((normalized_img_array >= 0.0).all() and (normalized_img_array <= 255.0).all()):
+        raise ValueError('Image values are not in range [0, 255]: ({}, {})'.format(np.min(normalized_img_array), np.max(normalized_img_array)))
 
     # Subtract the per-channel-mean from the batch to "center" the data.
     if per_channel_mean is not None:
-        _per_channel_mean = np.array(per_channel_mean)
-        if not ((_per_channel_mean < 1.0 + 1e-7).all() and (_per_channel_mean > -1.0 - 1e-7).all()):
-            raise ValueError('Per-channel mean is not within range [-1, 1]')
-        normalized_img_array -= dataset_utils.np_from_normalized_to_255(_per_channel_mean)
+        _per_channel_mean = np.array(per_channel_mean).astype(np.float32)
+
+        # Per channel mean is in range [-1,1]
+        if (_per_channel_mean >= -1.0 - 1e-7).all() and (_per_channel_mean <= 1.0 + 1e-7).all():
+            normalized_img_array -= dataset_utils.np_from_normalized_to_255(_per_channel_mean)
+        # Per channel mean is in range [0, 255]
+        elif (_per_channel_mean >= 0.0).all() and (_per_channel_mean <= 255.0).all():
+            normalized_img_array -= _per_channel_mean
+        else:
+            raise ValueError('Per channel mean is in unknown range: {}'.format(_per_channel_mean))
 
     # Additionally, you ideally would like to divide by the sttdev of
     # that feature or pixel as well if you want to normalize each feature
     # value to a z-score.
     if per_channel_stddev is not None:
-        _per_channel_stddev = np.array(per_channel_stddev)
-        if not ((_per_channel_stddev < 1.0 + 1e-7).all() and (_per_channel_stddev > -1.0 - 1e-7).all()):
-            raise ValueError('Per-channel stddev is not within range [-1, 1]')
-        normalized_img_array /= dataset_utils.np_from_normalized_to_255(_per_channel_stddev)
+        _per_channel_stddev = np.array(per_channel_stddev).astype(np.float32)
+
+        # Per channel stddev is in range [-1, 1]
+        if (_per_channel_stddev >= -1.0 - 1e-7).all() and (_per_channel_stddev <= 1.0 + 1e-7).all():
+            normalized_img_array /= dataset_utils.np_from_normalized_to_255(_per_channel_stddev)
+        # Per channel stddev is in range [0, 255]
+        elif (_per_channel_stddev >= 0.0).all() and (_per_channel_stddev <= 255.0).all():
+            normalized_img_array /= _per_channel_stddev
+        else:
+            raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
 
     normalized_img_array -= 128.0
     normalized_img_array /= 128.0
