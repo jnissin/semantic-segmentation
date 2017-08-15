@@ -339,9 +339,15 @@ class TrainerBase:
         # Note: This is added after the possible Reduce LR on plateau callback
         # so it overrides it's changes if they are both present
         if stepwise_learning_rate_scheduler is not None:
-            stepwise_lr_scheduler = StepwiseLearningRateScheduler(schedule=eval(stepwise_learning_rate_scheduler.get('schedule')),
-                                                                  last_scheduled_step=stepwise_learning_rate_scheduler.get('last_scheduled_step'),
-                                                                  verbose=stepwise_learning_rate_scheduler.get('verbose'))
+            lr_schedule = stepwise_learning_rate_scheduler.get('lr_schedule')
+            b2_schedule = stepwise_learning_rate_scheduler.get('b2_schedule')
+            last_scheduled_step = stepwise_learning_rate_scheduler.get('last_scheduled_step')
+            verbose = stepwise_learning_rate_scheduler.get('verbose')
+
+            stepwise_lr_scheduler = StepwiseLearningRateScheduler(lr_schedule=eval(lr_schedule) if lr_schedule is not None else None,
+                                                                  b2_schedule=eval(b2_schedule) if b2_schedule is not None else None,
+                                                                  last_scheduled_step=last_scheduled_step,
+                                                                  verbose=verbose)
 
             callbacks.append(stepwise_lr_scheduler)
 

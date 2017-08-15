@@ -8,8 +8,8 @@ import keras.backend as K
 
 
 def _miou(labels, predictions, num_classes, weights=None):
-    K.tf.assert_rank(labels, 3)
-    K.tf.assert_rank(predictions, 3)
+    K.tf.assert_rank(labels, 1)
+    K.tf.assert_rank(predictions, 1)
 
     cfm = K.tf.confusion_matrix(
         labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
@@ -34,8 +34,8 @@ def _miou(labels, predictions, num_classes, weights=None):
 
 
 def _mpca(labels, predictions, num_classes, weights=None):
-    K.tf.assert_rank(labels, 3)
-    K.tf.assert_rank(predictions, 3)
+    K.tf.assert_rank(labels, 1)
+    K.tf.assert_rank(predictions, 1)
 
     cfm = K.tf.confusion_matrix(
         labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
