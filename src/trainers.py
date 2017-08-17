@@ -220,6 +220,12 @@ class TrainerBase:
         if self.get_config_value('use_class_weights'):
             num_classes = len(material_class_information)
             class_weights = data_set_information.class_weights
+            override_class_weights = self.get_config_value('override_class_weights')
+
+            if override_class_weights is not None:
+                print 'Found override class weights: {}'.format(override_class_weights)
+                print 'Using override class weights instead of data set information ones'
+                class_weights = override_class_weights
 
             if class_weights is None or (len(class_weights) != num_classes):
                 self.log('Existing class weights were not found or did not match the number of material classes')
@@ -374,7 +380,7 @@ class TrainerBase:
         else:
             raise ValueError('Unsupported loss function: {}'.format(loss_function_name))
 
-        self.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, class_weights))
+        self.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, list(class_weights)))
         return loss_function
 
     def get_optimizer(self, continue_from_optimizer_checkpoint):

@@ -36,7 +36,7 @@ class StepwiseLearningRateScheduler(keras.callbacks.Callback):
         # Check whether the last scheduled step has been reached
         if self.last_scheduled_step is not None and self.step_index > self.last_scheduled_step:
             if not self.stop_reported:
-                print 'Stop schedule limit reached, stopping scheduling at step: {}, current learning rate: {}'.format(self.step_index, self.model.optimizer.lr)
+                print 'Stop schedule limit reached, stopping scheduling at step: {}, current learning rate: {}'.format(self.step_index, K.get_value(self.model.optimizer.lr))
                 self.stop_reported = True
             return
 
