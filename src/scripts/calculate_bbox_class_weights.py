@@ -91,10 +91,11 @@ def main():
 
     non_zero_class_weights = [w for w in class_weights if w > 0.0]
     print 'Weights: {}'.format(class_weights)
-    print 'Weights (excl. 0.0) min: {}, max: {}, variance: {}, stddev: {}'.format(np.min(non_zero_class_weights),
-                                                                                  np.max(non_zero_class_weights),
-                                                                                  np.var(non_zero_class_weights),
-                                                                                  np.std(non_zero_class_weights))
+    print 'Weights (excl. 0.0): min: {}, max: {}, range: {}, variance: {}, stddev: {}'.format(np.min(non_zero_class_weights),
+                                                                                             np.max(non_zero_class_weights),
+                                                                                             np.max(non_zero_class_weights) - np.min(non_zero_class_weights),
+                                                                                             np.var(non_zero_class_weights),
+                                                                                             np.std(non_zero_class_weights))
     print 'Done'
 
 

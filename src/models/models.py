@@ -159,10 +159,10 @@ class ModelBase(object):
 
         # Note: With stddev 0.15 as in Mean Teacher and Temporal Ensembling papers,
         # the mean teacher method doesn't seem to converge, attempting smaller values
-        if model_type == ModelType.MEAN_TEACHER_STUDENT or \
-           model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or \
-           model_type == ModelType.MEAN_TEACHER_TEACHER:
-            model_inputs = GaussianNoise(stddev=0.02, name='noise')(images)
+        #if model_type == ModelType.MEAN_TEACHER_STUDENT or \
+        #   model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or \
+        #   model_type == ModelType.MEAN_TEACHER_TEACHER:
+        model_inputs = GaussianNoise(stddev=0.03, name='noise')(images)
 
         # Build the model
         self.outputs = self._build_model(model_inputs)
