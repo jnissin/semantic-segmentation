@@ -2,17 +2,25 @@
 
 import keras.backend as K
 
+
 ##############################################
 # METRICS
 ##############################################
 
 
-def _miou(labels, predictions, num_classes, weights=None):
-    K.tf.assert_rank(labels, 1)
-    K.tf.assert_rank(predictions, 1)
+def _get_ignore_mask(labels, ignore_classes):
+    K.tf.assert_rank(ignore_classes, 1)
+    ignore_mask = K.tf.foldl(fn=lambda a, v: a + K.tf.cast(K.tf.equal(labels, v), dtype=K.tf.int32),
+                             initializer=K.tf.zeros_like(labels, dtype=K.tf.int32),
+                             elems=ignore_classes)
+    return K.tf.cast(ignore_mask, dtype=K.tf.bool)
 
-    cfm = K.tf.confusion_matrix(
-        labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
+
+def _segmentation_miou(labels, predictions, num_classes, weights=None):
+    K.tf.assert_rank(labels, 1)         # Flattened labels
+    K.tf.assert_rank(predictions, 1)    # Flattened predictions
+
+    cfm = K.tf.confusion_matrix(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
 
     # Compute the mean intersection-over-union via the confusion matrix.
     sum_over_row = K.tf.to_float(K.tf.reduce_sum(cfm, 0))
@@ -22,10 +30,7 @@ def _miou(labels, predictions, num_classes, weights=None):
 
     # If the value of the denominator is 0, set it to 1 to avoid
     # zero division.
-    denominator = K.tf.where(
-        K.tf.greater(denominator, 0),
-        denominator,
-        K.tf.ones_like(denominator))
+    denominator = K.tf.where(K.tf.greater(denominator, 0), denominator, K.tf.ones_like(denominator))
 
     iou = K.tf.div(cm_diag, denominator)
     result = K.tf.reduce_mean(iou)
@@ -33,39 +38,36 @@ def _miou(labels, predictions, num_classes, weights=None):
     return result
 
 
-def _mpca(labels, predictions, num_classes, weights=None):
-    K.tf.assert_rank(labels, 1)
-    K.tf.assert_rank(predictions, 1)
+def _segmentation_mpca(labels, predictions, num_classes, weights=None):
+    K.tf.assert_rank(labels, 1)         # Flattened labels
+    K.tf.assert_rank(predictions, 1)    # Flattened predictions
 
-    cfm = K.tf.confusion_matrix(
-        labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
+    cfm = K.tf.confusion_matrix(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
 
     # Compute the mean per class accuracy via the confusion matrix.
-
     per_row_sum = K.tf.to_float(K.tf.reduce_sum(cfm, 1))
     cm_diag = K.tf.to_float(K.tf.diag_part(cfm))
     denominator = per_row_sum
 
     # If the value of the denominator is 0, set it to 1 to avoid
     # zero division.
-    denominator = K.tf.where(
-        K.tf.greater(denominator, 0), denominator,
-        K.tf.ones_like(denominator))
+    denominator = K.tf.where(K.tf.greater(denominator, 0), denominator, K.tf.ones_like(denominator))
     accuracies = K.tf.div(cm_diag, denominator)
     result = K.tf.reduce_mean(accuracies)
 
     return result
 
 
-def _accuracy(labels, predictions, ignore_class):
-    K.tf.assert_rank(labels, 3)
-    K.tf.assert_rank(predictions, 3)
+def _segmentation_accuracy(labels, predictions, ignore_classes):
+    K.tf.assert_rank(labels, 3)          # BxHxW
+    K.tf.assert_rank(predictions, 3)     # BxHxW
+    K.tf.assert_rank(ignore_classes, 1)  # N
 
     # Create a mask of true/false describing correct/false classification: [B_SIZE, H, W]
     prediction_results = K.tf.cast(K.equal(labels, predictions), dtype=K.tf.float32)
 
     # Create a mask of the ignored pixels: [B_SIZE, H, W]
-    ignore_mask = K.equal(labels, ignore_class)
+    ignore_mask = _get_ignore_mask(labels, ignore_classes)
 
     # Calculate number of ignored pixels: [B_SIZE]
     ignored_pixels = K.tf.reduce_sum(K.tf.cast(ignore_mask, dtype=K.tf.float32), axis=(1, 2))
@@ -90,104 +92,68 @@ def _accuracy(labels, predictions, ignore_class):
     return K.tf.cond(K.tf.is_finite(prediction_results), lambda: prediction_results, lambda: -1.0)
 
 
-def accuracy(ignore_class=-1):
-
-    def acc(y_true, y_pred):
-        labels = K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32)
-        predictions = K.tf.cast(K.tf.argmax(y_pred, axis=-1), dtype=K.tf.int32)
-        return _accuracy(labels, predictions, ignore_class)
-
-    return acc
-
-
-def mean_per_class_accuracy(num_classes, ignore_class=-1):
-
+def segmentation_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_classes=None):
     def mpca(y_true, y_pred):
-        """
-         Calculates the accuracy for each class, then takes the mean of that.
+        K.tf.assert_rank(y_true, 4)  # BxHxWx1
+        K.tf.assert_rank(y_pred, 4)  # BxHxWxC
 
-         # Arguments
-             y_true: ground truth classification BATCH_SIZExHxWxNUM_CLASSES
-             y_predicted: predicted classification BATCH_SIZExHxWxNUM_CLASSES
+        if ignore_classes is not None and len(ignore_classes) > 0:
+            _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
+        else:
+            _ignore_classes = K.tf.constant([-1], dtype=K.tf.int32)
 
-         # Returns
-             The mean class accuracy.
-         """
+        # Assumes that in evaluation/validation there are no unlabeled
+        num_labeled = K.in_train_phase(K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32), K.tf.shape(y_true)[0])
 
-        labels = K.flatten(K.tf.cast(K.tf.argmax(y_true, axis=-1), K.tf.int32))
-        predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred, axis=-1), K.tf.int32))
-        weights = K.tf.where(K.tf.equal(labels, ignore_class),
-                             K.tf.zeros_like(labels, dtype=K.tf.float32),
-                             K.tf.ones_like(labels, dtype=K.tf.float32))
-
-        return _mpca(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
-
-    return mpca
-
-
-def mean_iou(num_classes, ignore_class=-1):
-
-    def miou(y_true, y_pred):
-        """
-        Calculates the mean intersection over union which is a popular measure
-        for segmentation accuracy.
-
-        # Arguments
-            y_true: ground truth classification BATCH_SIZExHxWxNUM_CLASSES
-            y_predicted: predicted classification BATCH_SIZExHxWxNUM_CLASSES
-
-        # Returns
-            The mean of IoU metrics over all classes
-        """
-
-        labels = K.flatten(K.tf.cast(K.tf.argmax(y_true, axis=-1), dtype=K.tf.int32))
-        predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred, axis=-1), dtype=K.tf.int32))
-        weights = K.tf.where(K.tf.equal(labels, ignore_class),
-                             K.tf.zeros_like(labels, dtype=K.tf.float32),
-                             K.tf.ones_like(labels, dtype=K.tf.float32))
-
-        return _miou(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
-
-    return miou
-
-
-def semisupervised_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_class=-1):
-
-    def mpca(y_true, y_pred):
-        num_labeled = K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32)
-        labels = K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1))
+        labels = K.tf.cast(K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1)), dtype=K.tf.int32)
         predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), K.tf.int32))
-        weights = K.tf.where(K.tf.equal(labels, ignore_class),
-                             K.tf.zeros_like(labels, dtype=K.tf.float32),
-                             K.tf.ones_like(labels, dtype=K.tf.float32))
+        ignore_mask = _get_ignore_mask(labels, _ignore_classes)
+        weights = K.tf.cast(K.tf.logical_not(ignore_mask), dtype=K.tf.float32)
 
-        return _mpca(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
+        return _segmentation_mpca(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
 
     return mpca
 
 
-def semisupervised_mean_iou(num_classes, num_unlabeled, ignore_class=-1):
-
+def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
     def miou(y_true, y_pred):
-        num_labeled = K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32)
-        labels = K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1))
-        predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32))
-        weights = K.tf.where(K.tf.equal(labels, ignore_class),
-                             K.tf.zeros_like(labels, dtype=K.tf.float32),
-                             K.tf.ones_like(labels, dtype=K.tf.float32))
+        K.tf.assert_rank(y_true, 4)  # BxHxWx1
+        K.tf.assert_rank(y_pred, 4)  # BxHxWxC
 
-        return _miou(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
+        if ignore_classes is not None and len(ignore_classes) > 0:
+            _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
+        else:
+            _ignore_classes = K.tf.constant([-1], dtype=K.tf.int32)
+
+        # Assumes that in evaluation/validation there are no unlabeled
+        num_labeled = K.in_train_phase(K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32), K.tf.shape(y_true)[0])
+
+        labels = K.tf.cast(K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1)), dtype=K.tf.int32)
+        predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32))
+        ignore_mask = _get_ignore_mask(labels, _ignore_classes)
+        weights = K.tf.cast(K.tf.logical_not(ignore_mask), dtype=K.tf.float32)
+
+        return _segmentation_miou(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights)
 
     return miou
 
 
-def semisupervised_accuracy(num_unlabeled, ignore_class=-1):
-
+def segmentation_accuracy(num_unlabeled, ignore_classes=None):
     def acc(y_true, y_pred):
-        num_labeled = K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32)
+        K.tf.assert_rank(y_true, 4)  # BxHxWx1
+        K.tf.assert_rank(y_pred, 4)  # BxHxWxC
+
+        if ignore_classes is not None and len(ignore_classes) > 0:
+            _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
+        else:
+            _ignore_classes = K.tf.constant([-1], dtype=K.tf.int32)
+
+        # Assumes that in evaluation/validation there are no unlabeled
+        num_labeled = K.in_train_phase(K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32), K.tf.shape(y_true)[0])
+
         labels = K.tf.cast(K.tf.squeeze(y_true[0:num_labeled], axis=-1), dtype=K.tf.int32)
         predictions = K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32)
-        return _accuracy(labels, predictions, ignore_class)
+        return _segmentation_accuracy(labels, predictions, _ignore_classes)
 
     return acc
 

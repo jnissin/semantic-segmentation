@@ -178,7 +178,7 @@ def calculate_material_statistics(mask_img_file, materials):
 
     mask_img = mask_img_file.get_image()
     mask_img_array = img_to_array(mask_img)
-    expanded_mask = dataset_utils.expand_mask(mask_img_array, materials)
+    expanded_mask = dataset_utils.one_hot_encode_mask(mask_img_array, materials)
 
     image_name = mask_img_file.file_name
     material_pixels = []

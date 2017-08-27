@@ -53,7 +53,7 @@ def calculate_image_statistics(mask_file_path, materials):
 
     mask_img = load_img(mask_file_path)
     mask_img_array = img_to_array(mask_img)
-    expanded_mask = dataset_utils.expand_mask(mask_img_array, materials)
+    expanded_mask = dataset_utils.one_hot_encode_mask(mask_img_array, materials)
 
     image_name = os.path.basename(mask_file_path)
     num_pixels = mask_img_array.shape[0] * mask_img_array.shape[1]

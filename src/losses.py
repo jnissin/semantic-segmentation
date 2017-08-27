@@ -162,14 +162,14 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     teacher_softmax = K.tf.nn.softmax(mt_pred, dim=-1)
 
     # Calculate the MSE between the softmax predictions
-    l2_softmax_dist = K.tf.reduce_mean(K.tf.square(K.tf.subtract(teacher_softmax, student_softmax)), axis=-1)
+    mse_softmax = K.tf.reduce_mean(K.tf.square(K.tf.subtract(teacher_softmax, student_softmax)), axis=-1)
 
     # Output of the softmax is B_SIZExHxW
     # Sum the last two axes to get the total loss over images
-    l2_softmax_dist = K.tf.reduce_sum(l2_softmax_dist, axis=(1, 2))
+    mse_softmax = K.tf.reduce_sum(mse_softmax, axis=(1, 2))
 
     # Take the mean of the loss per image
-    return K.tf.multiply(consistency_coefficient, K.tf.reduce_mean(l2_softmax_dist))
+    return K.tf.multiply(consistency_coefficient, K.tf.reduce_mean(mse_softmax))
 
 
 ##############################################
@@ -203,6 +203,19 @@ def _weighted_pixelwise_crossentropy_loss(class_weights):
     return loss
 
 
+def _weighted_categorical_crossentropy_loss(class_weights):
+    def loss(y_true, y_pred):
+        # Note: Assumes y_pred is softmax
+
+        epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
+        softmax = K.tf.clip_by_value(y_pred, epsilon, 1.0)
+        xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
+        xent = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=-1))
+
+        return xent
+
+    return loss
+
 def _sparse_weighted_pixelwise_crossentropy_loss(y_true, y_pred, weights):
     """
     Calculates weighted pixelwise cross-entropy loss from sparse ground truth
@@ -229,12 +242,21 @@ def _sparse_weighted_pixelwise_crossentropy_loss(y_true, y_pred, weights):
 
 
 def pixelwise_crossentropy_loss(class_weights):
-    # type: (np.array) -> Callable[K.tf.Tensor, K.tf.Tensor]
+    # type: (np.array) -> function[K.tf.Tensor, K.tf.Tensor]
 
     if class_weights is None:
         raise ValueError('Class weights is None. Use a numpy array of ones instead of None.')
 
     return _weighted_pixelwise_crossentropy_loss(K.constant(value=class_weights))
+
+
+def categorical_crossentropy_loss(class_weights):
+    # type: (np.array) -> function[K.tf.Tensor, K.tf.Tensor]
+
+    if class_weights is None:
+        raise ValueError('Class weights is None. Use a numpy array of ones instead of None.')
+
+    return _weighted_categorical_crossentropy_loss(K.constant(value=class_weights))
 
 
 def dummy_loss(y_true, y_pred):
@@ -254,7 +276,93 @@ def dummy_loss(y_true, y_pred):
     return y_pred
 
 
-def mean_teacher_lambda_loss(args):
+def _segmentation_sparse_weighted_categorical_cross_entropy(class_weights):
+
+    def get_per_sample_weights(i, weights, y_true):
+        class_i_weights = K.tf.where(K.tf.equal(y_true, i), K.tf.ones_like(y_true, dtype=K.tf.float32)*class_weights[i], K.tf.zeros_like(y_true, dtype=K.tf.float32))
+        weights = K.tf.add(weights, class_i_weights)
+        i = K.tf.add(i, 1)
+        return i, weights, y_true
+
+    def loss(y_true, y_pred):
+        # Sanity checks for argument ranks
+        K.tf.assert_rank(y_pred, 4)
+        K.tf.assert_rank(y_true, 4)
+
+        # Squeeze the last dimension from the labels
+        # It only exists so keras metrics won't whine about mismatching ranks of y_pred and y_true
+        y_true = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(y_true, axis=-1), dtype=K.tf.int32))
+
+        # Pre-process the weights, we need them separately for every y_true in the batch
+        num_classes = K.tf.stop_gradient(K.tf.shape(y_pred)[-1])
+        weights = K.tf.stop_gradient(K.tf.zeros_like(y_true, dtype=K.tf.float32))
+        i = K.tf.stop_gradient(K.tf.constant(0, dtype=K.tf.int32))
+        cond = lambda i, _, __: K.tf.less(i, num_classes)
+        K.tf.while_loop(cond=cond, body=get_per_sample_weights, loop_vars=[i, weights, y_true], back_prop=False)
+
+        # Returns cross-entropy loss for each pixel, i.e. B_SIZExHxW, multiply by weights
+        xent = K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true)
+        xent = K.tf.multiply(xent, weights)
+
+        # Calculate the sum of pixel cross-entropies (HxW) for each image and take the mean of images in the batch
+        loss = K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2)))
+        return loss
+
+    return loss
+
+
+def segmentation_sparse_weighted_categorical_cross_entropy(class_weights):
+    if class_weights is None:
+        raise ValueError('Class weights is None. Use a numpy array of ones instead of None.')
+
+    return _segmentation_sparse_weighted_categorical_cross_entropy(K.tf.constant(value=class_weights, dtype=K.tf.float32))
+
+
+def segmentation_categorical_cross_entropy_lambda_loss(args):
+    # type: (list[K.tf.Tensor]) -> K.tf.Tensor
+
+    """
+    Calculates the categorical cross entropy loss, assuming the
+    data only contains labeled examples.
+
+    The function is used in conjunction with a Lambda layer to create
+    a layer which can calculate the loss. This is done because the
+    parameters to the function change on each training step and thus
+    need to be passed through the network as inputs.
+
+    # Arguments
+        :param args: a list of Tensorflow tensors, described below
+            0: y_pred: predictions from the network (logits)
+            1: y_true: ground truth labels in index encoded format
+            2: weights: weights for every pixel in y_true labeled
+            3: num_unlabeled: number of unlabeled - ignored in this loss function
+    # Returns
+        :return: the categorical cross entropy loss (1x1 Tensor)
+    """
+
+    # Extract arguments
+    if len(args) != 4:
+        raise ValueError('Expected 4 arguments (y_pred, y_true, weights, num_unlabeled), got: {} ({})'.format(len(args), args))
+
+    y_pred, y_true, weights, _ = args
+
+    # Sanity checks for argument ranks
+    K.tf.assert_rank(y_pred, 4)
+    K.tf.assert_rank(y_true, 3)
+    K.tf.assert_rank(weights, K.tf.rank(y_true))
+
+    """
+    Classification cost calculation - only for labeled
+    """
+    classification_costs = _sparse_weighted_pixelwise_crossentropy_loss(y_true=K.tf.cast(y_true, dtype=K.tf.int32), y_pred=y_pred, weights=weights)
+
+    if settings.DEBUG:
+        classification_costs = K.tf.Print(classification_costs, [classification_costs], message="costs: ", summarize=24)
+
+    return classification_costs
+
+
+def segmentation_mean_teacher_lambda_loss(args):
     # type: (list[K.tf.Tensor]) -> K.tf.Tensor
 
     """
@@ -289,6 +397,14 @@ def mean_teacher_lambda_loss(args):
 
     y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient = args
 
+    # Sanity checks for argument ranks
+    K.tf.assert_rank(y_pred, 4)
+    K.tf.assert_rank(y_true, 3)
+    K.tf.assert_rank(weights, K.tf.rank(y_true))
+    K.tf.assert_rank(num_unlabeled, 2)
+    K.tf.assert_rank(mt_pred, K.tf.rank(y_pred))
+    K.tf.assert_rank(cons_coefficient, 2)
+
     # Stop gradient while parsing the necessary values
     num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
     num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
@@ -316,7 +432,7 @@ def mean_teacher_lambda_loss(args):
     return total_costs
 
 
-def semisupervised_superpixel_lambda_loss(args):
+def segmentation_superpixel_lambda_loss(args):
     # type: (list[K.tf.Tensor]) -> K.tf.Tensor
 
     """
@@ -336,12 +452,19 @@ def semisupervised_superpixel_lambda_loss(args):
         3: num_unlabeled: number of unlabeled data
         4: unlabeled_cost_coefficient: unlabeled cost coefficient
     # Returns
-        :return: the semi-supervised segmentation loss (1x1 Tensor)
+        :return: the classification + superpixel loss (1x1 Tensor)
     """
     if len(args) != 5:
         raise ValueError('Expected 5 values (y_pred, y_true, weights, num_unlabeled, unlabeled_cost_coefficient), got: {} ({})'.format(len(args), args))
 
     y_pred, y_true, weights, num_unlabeled, unlabeled_cost_coefficient = args
+
+    # Sanity checks for argument ranks
+    K.tf.assert_rank(y_pred, 4)
+    K.tf.assert_rank(y_true, 3)
+    K.tf.assert_rank(weights, K.tf.rank(y_true))
+    K.tf.assert_rank(num_unlabeled, 2)
+    K.tf.assert_rank(unlabeled_cost_coefficient, 2)
 
     num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
     num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
@@ -372,7 +495,7 @@ def semisupervised_superpixel_lambda_loss(args):
     return total_costs
 
 
-def mean_teacher_superpixel_lambda_loss(args):
+def segmentation_mean_teacher_superpixel_lambda_loss(args):
     # type: (list[K.tf.Tensor]) -> K.tf.Tensor
 
     """
@@ -399,7 +522,7 @@ def mean_teacher_superpixel_lambda_loss(args):
             5: cons_coefficient: consistency cost coefficient
             6: unlabeled_cost_coefficient: coefficient for the unlabeled superpixel loss
     # Returns
-        :return: the mean teacher loss (1x1 Tensor)
+        :return: the classification + mean teacher + superpixel loss (1x1 Tensor)
     """
 
     # TODO: Create option to apply/not apply consistency to labeled data
@@ -410,6 +533,15 @@ def mean_teacher_superpixel_lambda_loss(args):
         raise ValueError('Expected 7 arguments (y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient), got: {} ({})'.format(len(args), args))
 
     y_pred, y_true, weights, num_unlabeled, mt_pred, cons_coefficient, unlabeled_cost_coefficient = args
+
+    # Sanity checks for argument ranks
+    K.tf.assert_rank(y_pred, 4)
+    K.tf.assert_rank(y_true, 3)
+    K.tf.assert_rank(weights, K.tf.rank(y_true))
+    K.tf.assert_rank(num_unlabeled, 2)
+    K.tf.assert_rank(mt_pred, K.tf.rank(y_pred))
+    K.tf.assert_rank(cons_coefficient, 2)
+    K.tf.assert_rank(unlabeled_cost_coefficient, 2)
 
     num_unlabeled = K.tf.stop_gradient(K.tf.cast(K.tf.squeeze(num_unlabeled[0]), dtype=K.tf.int32))
     num_labeled = K.tf.stop_gradient(K.tf.shape(y_true)[0] - num_unlabeled)
@@ -444,3 +576,68 @@ def mean_teacher_superpixel_lambda_loss(args):
     # Total cost
     total_costs = K.tf.add(K.tf.add(classification_costs, consistency_costs), unlabeled_costs)
     return total_costs
+
+
+# def mean_teacher_lambda_loss_classification(args):
+#     # type: (list[K.tf.Tensor]) -> K.tf.Tensor
+#
+#     """
+#     Calculates the Mean Teacher loss function, which consists of
+#     classification cost and consistency cost as presented in:
+#
+#         https://arxiv.org/pdf/1703.01780.pdf
+#
+#     The function is used in conjunction with a Lambda layer to create
+#     a layer which can calculate the loss. This is done because the
+#     parameters to the function change on each training step and thus
+#     need to be passed through the network as inputs.
+#
+#     # Arguments
+#         :param args: a list of Tensorflow tensors, described below
+#             0: y_pred: predictions from the network (softmax) [B_SIZExN_CLASSES]
+#             1: y_true: ground truth labels in one-hot encoded format [B_SIZExN_CLASSES]
+#             2: weights: class weights [B_SIZExN_CLASSES]
+#             4: mt_pred: mean teacher predictions from the teacher network (softmax) [B_SIZExN_CLASSES]
+#             5: cons_coefficient: consistency cost coefficient [B_SIZExN_CLASSES]
+#     # Returns
+#         :return: the classification + mean teacher loss (1x1 Tensor)
+#     """
+#
+#     # TODO: Create option to apply/not apply consistency to labeled data
+#     # see: https://github.com/CuriousAI/mean-teacher/blob/master/mean_teacher/model.py#L410
+#
+#     # Extract arguments
+#     if len(args) != 5:
+#         raise ValueError('Expected 5 arguments (y_pred, y_true, weights, mt_pred, cons_coefficient), got: {} ({})'.format(len(args), args))
+#
+#     y_pred, y_true, weights, mt_pred, cons_coefficient = args
+#     cons_coefficient = K.tf.stop_gradient(K.tf.squeeze(cons_coefficient[0]))
+#
+#     """
+#     Classification cost calculation - only for labeled
+#     """
+#     # Calculate cross-entropy loss - before taking the log, make sure the softmax values are in range [epsilon, 1.0]
+#     epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
+#     softmax = K.tf.clip_by_value(y_pred, epsilon, 1.0)
+#     xent = K.tf.multiply(y_true * K.tf.log(softmax), weights)
+#     classification_costs = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=-1))
+#
+#     """
+#     Consistency costs - for labeled and unlabeled
+#     """
+#     student_softmax = y_pred
+#     teacher_softmax = mt_pred
+#
+#     # Calculate the MSE between the softmax predictions
+#     mse_softmax = K.tf.reduce_mean(K.tf.square(K.tf.subtract(teacher_softmax, student_softmax)), axis=-1)
+#
+#     # Take the mean of the loss per image
+#     consistency_cost = K.tf.multiply(cons_coefficient, K.tf.reduce_mean(mse_softmax))
+#
+#     if settings.DEBUG:
+#         consistency_cost = K.tf.Print(consistency_cost, [consistency_cost, classification_costs], message="costs: ", summarize=24)
+#
+#     # Total cost
+#     total_costs = K.tf.add(classification_costs, consistency_cost)
+#     return total_costs
+

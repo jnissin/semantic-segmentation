@@ -59,7 +59,7 @@ class MaterialSample(object):
 
     @property
     def bbox_top_right_corner_abs(self):
-        return (self.yx_min[0], self.yx_max[1])
+        return self.yx_min[0], self.yx_max[1]
 
     @property
     def bbox_bottom_right_corner_abs(self):
@@ -67,23 +67,40 @@ class MaterialSample(object):
 
     @property
     def bbox_bottom_left_corner_abs(self):
-        return (self.yx_max[0], self.yx_min[1])
+        return self.yx_max[0], self.yx_min[1]
+
+    def get_bbox_abs(self):
+        return self.bbox_top_left_corner_abs, self.bbox_top_right_corner_abs, self.bbox_bottom_right_corner_abs, self.bbox_bottom_left_corner_abs
 
     @property
     def bbox_top_left_corner_rel(self):
-        return (float(self.yx_min[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width))
+        return float(self.yx_min[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width)
 
     @property
     def bbox_top_right_corner_rel(self):
-        return (float(self.yx_min[0])/float(self.image_height), float(self.yx_max[1])/float(self.image_width))
+        return float(self.yx_min[0])/float(self.image_height), float(self.yx_max[1])/float(self.image_width)
 
     @property
     def bbox_bottom_right_corner_rel(self):
-        return (float(self.yx_max[0])/float(self.image_height), float(self.yx_max[1])/float(self.image_width))
+        return float(self.yx_max[0])/float(self.image_height), float(self.yx_max[1])/float(self.image_width)
 
     @property
     def bbox_bottom_left_corner_rel(self):
-        return (float(self.yx_max[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width))
+        return float(self.yx_max[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width)
+
+    def get_bbox_rel(self):
+        return self.bbox_top_left_corner_rel, self.bbox_top_right_corner_rel, self.bbox_bottom_right_corner_rel, self.bbox_bottom_left_corner_rel
+
+
+class MINCSample(object):
+
+    def __init__(self, label, photo_id, x, y):
+        # type: (int, str, float, float) -> None
+
+        self.minc_label = int(label)
+        self.photo_id = photo_id
+        self.x = float(x)
+        self.y = float(y)
 
 
 class MaterialClassInformation(object):
@@ -526,7 +543,7 @@ def _calculate_mask_class_frequencies(image_file, material_class_information):
     # type: (ImageFile, list[MaterialClassInformation]) -> (np.array[np.int32], int)
 
     img_array = img_to_array(image_file.get_image())
-    expanded_mask = expand_mask(img_array, material_class_information)
+    expanded_mask = one_hot_encode_mask(img_array, material_class_information)
     class_pixels = np.sum(expanded_mask, axis=(0, 1))
 
     # Select all classes which appear in the picture i.e. have a value over zero
@@ -659,7 +676,7 @@ def _get_material_samples(mask_file, r_color_to_material_id, background_class=0,
     return material_samples
 
 
-def expand_mask(np_mask_img, material_class_information, verbose=False):
+def one_hot_encode_mask(np_mask_img, material_class_information, verbose=False):
     # type: (np.array, list[MaterialClassInformation], bool) -> np.array[np.float32]
 
     """
@@ -973,22 +990,18 @@ def count_trailing_zeroes(num):
 def np_from_255_to_normalized(val):
     # type: (np.array) -> np.array
 
-    # From [0,255] to [-128,128] and then to [-1,1]
-    val -= 128.0
-    val /= 128.0
-    return val
+    # From [0,255] to [0,1] to [-0.5,0.5] and then to [-1,1]
+    return ((val/255.0) - 0.5) * 2.0
 
 
 def np_from_normalized_to_255(val):
     # type: (np.array) -> np.array
 
-    # Move to range [0,1] and then to [0,255]
-    val = (val+1.0)/2.0
-    val *= 255.0
-    return val
+    # Move to range [0,2] to [0,1] and then to [0,255]
+    return ((val+1.0)/2.0) * 255.0
 
 
-def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None, clamp_to_range=False):
+def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None):
     # type: (np.array, np.array, np.array) -> np.array
 
     """
@@ -1008,16 +1021,22 @@ def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None, clamp
     # Make sure the batch data type is correct
     batch = batch.astype(np.float32)
 
+    if np.min(batch) < 0 or np.max(batch) > 255:
+        raise ValueError('Batch image values are not between [0, 255], got [{}, {}]'.format(np.min(batch), np.max(batch)))
+
+    # Map the values from [0, 255] to [-1, 1]
+    batch = ((batch / 255.0) - 0.5) * 2.0
+
     # Subtract the per-channel-mean from the batch to "center" the data.
     if per_channel_mean is not None:
         _per_channel_mean = np.array(per_channel_mean).astype(np.float32)
 
         # Per channel mean is in range [-1,1]
         if (_per_channel_mean >= -1.0 - 1e-7).all() and (_per_channel_mean <= 1.0 + 1e-7).all():
-            batch -= np_from_normalized_to_255(_per_channel_mean)
+            batch -= _per_channel_mean
         # Per channel mean is in range [0, 255]
         elif (_per_channel_mean >= 0.0).all() and (_per_channel_mean <= 255.0).all():
-            batch -= _per_channel_mean
+            batch -= np_from_255_to_normalized(_per_channel_mean)
         else:
             raise ValueError('Per channel mean is in unknown range: {}'.format(_per_channel_mean))
 
@@ -1029,17 +1048,11 @@ def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None, clamp
 
         # Per channel stddev is in range [-1, 1]
         if (_per_channel_stddev >= -1.0 - 1e-7).all() and (_per_channel_stddev <= 1.0 + 1e-7).all():
-            batch /= np_from_normalized_to_255(_per_channel_stddev)
+            batch /= _per_channel_stddev
         # Per channel stddev is in range [0, 255]
         elif (_per_channel_stddev >= 0.0).all() and (_per_channel_stddev <= 255.0).all():
-            batch /= _per_channel_stddev
+            batch /= np_from_255_to_normalized(_per_channel_stddev)
         else:
             raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
-
-    batch -= 128.0
-    batch /= 128.0
-
-    if clamp_to_range:
-        np.clip(batch, -1.0, 1.0, out=batch)
 
     return batch

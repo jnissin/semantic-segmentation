@@ -2,7 +2,7 @@
 *.pyc
 
 data/*
-
+model-data/*
 logs/*
 checkpoints/*
 photos/*

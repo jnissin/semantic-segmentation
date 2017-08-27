@@ -5,13 +5,23 @@
     "path_to_labeled_masks": "data/debug/512/labeled/masks",
     "path_to_unlabeled_photos": "data/debug/512/unlabeled",
 
-    "log_file_path": "logs/{model_folder}/log.txt",
+    "log_file_path": "model-data/{model_folder}/logs/log.txt",
     "log_to_stdout": true,
 
-    "keras_tensorboard_log_path": "logs/{model_folder}/tensorboard/",
-    "keras_model_checkpoint_file_path": "checkpoints/{model_folder}/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "keras_csv_log_file_path": "logs/{model_folder}/per-epoch-data.csv",
-    "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
+    "keras_tensorboard_log_path": "model-data/{model_folder}/logs/tensorboard/",
+    "keras_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "model-data/{model_folder}/logs/per-epoch-data.csv",
+    "optimizer_checkpoint_file_path": "model-data/{model_folder}/checkpoints/optimizer/optimizer-checkpoint.json",
+
+    "keras_model_checkpoint": {
+      "checkpoint_file_path": "model-data/{model_folder}/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "monitor": "val_loss",
+      "verbose": 1,
+      "save_best_only": false,
+      "save_weights_only": false,
+      "mode": "auto",
+      "period": 1
+    },
 
     "loss_function": "dummy",
 
@@ -36,33 +46,31 @@
       "decay": 2e-4
     },
 
-    "use_mean_teacher_method": false,
-
     "mean_teacher_params": {
-      "teacher_model_checkpoint_file_path": "checkpoints/{model_folder}/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "teacher_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
       "ema_smoothing_coefficient_function": "lambda x: 0.999 if x >= 10000 else 0.99",
       "consistency_cost_coefficient_function": "lambda x: 1.0 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)"
     },
 
-    "use_superpixel_method": true,
-
     "superpixel_params": {
-        "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
-        "label_generation_function_name": "felzenszwalb"
+      "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
+      "label_generation_function_name": "felzenszwalb"
     },
 
     "use_data_augmentation": true,
     "use_material_samples": true,
 
     "data_augmentation_params": {
-        "augmentation_probability": 0.5,
-        "rotation_range": 40.0,
-        "zoom_range": 0.5,
-        "width_shift_range": 0.15,
-        "height_shift_range": 0.15,
-        "channel_shift_range": 0.10,
-        "horizontal_flip": true,
-        "vertical_flip": false
+      "augmentation_probability_function": "lambda x: 0.5 if x >= 100 else 0",
+      "rotation_range": 40.0,
+      "zoom_range": 0.5,
+      "width_shift_range": 0.15,
+      "height_shift_range": 0.15,
+      "channel_shift_range": 0.10,
+      "horizontal_flip": true,
+      "vertical_flip": false,
+      "gaussian_noise_stddev_function": "lambda x: 0.15",
+      "gamma_adjust_range": 0.5
     },
 
     "reduce_lr_on_plateau": {
@@ -72,11 +80,11 @@
       "epsilon": 0.0001,
       "cooldown": 5,
       "min_lr": 0,
-      "monitor": "loss"
+      "monitor": "loss_loss"
     },
 
     "_early_stopping": {
-      "monitor": "loss",
+      "monitor": "loss_loss",
       "min_delta": 0,
       "patience": 2,
       "verbose": 0,

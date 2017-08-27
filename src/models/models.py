@@ -15,7 +15,6 @@ from keras.layers.convolutional import Conv2D, ZeroPadding2D, Conv2DTranspose, U
 from keras.layers.core import Activation, Flatten, Dense
 from keras.layers.merge import add, concatenate
 from keras.layers.normalization import BatchNormalization
-from keras.layers.noise import GaussianNoise
 from keras.layers import Input
 
 from layers.pooling import MaxPoolingWithArgmax2D
@@ -24,33 +23,35 @@ from layers.pooling import MaxUnpooling2D
 from extended_model import ExtendedModel
 
 from .. import losses
+from ..logger import Logger
 
 ##############################################
 # ENUM MODEL TYPES
 ##############################################
 
 
-class ModelType(Enum):
+class ModelLambdaLossType(Enum):
     """
-    These model types are required in order to determine the necessary lambda layer
+    These types are required in order to determine the necessary lambda layer
     for cost calculation (Keras doesn't support extra parameters to cost functions).
     """
-    NORMAL = 0
-    SEMISUPERVISED = 1
-    MEAN_TEACHER_STUDENT = 2
-    MEAN_TEACHER_STUDENT_SUPERPIXEL = 3
-    MEAN_TEACHER_TEACHER = 4
-
+    NONE = 0
+    SEGMENTATION_CATEGORICAL_CROSS_ENTROPY = 1
+    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER = 2
+    SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL = 3
+    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL = 4
 
 #############################################
 # UTILITY FUNCTIONS
 #############################################
 
+
 def get_model(model_name,
               input_shape,
               num_classes,
-              model_type=ModelType.NORMAL):
-    # type: (str, tuple(int), int, ModelType) -> ModelBase
+              logger=None,
+              model_lambda_loss_type=ModelLambdaLossType.NONE):
+    # type: (str, tuple(int), int, Logger, ModelLambdaLossType) -> ModelBase
 
     """
     Get the model by the model name.
@@ -59,6 +60,7 @@ def get_model(model_name,
         model_name: name of the model
         input_shape: input shape to the model
         num_classes: number of classification classes
+        logger: an instance of Logger
         model_type: type of the model - affects loss calculation
     # Returns
         The appropriate ModelBase.
@@ -68,62 +70,67 @@ def get_model(model_name,
         model_wrapper = UNetModel(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
     elif model_name == 'enet-naive-upsampling':
         model_wrapper = ENetNaiveUpsampling(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
+            model_lambda_loss_type=model_lambda_loss_type,
             encoder_only=False)
     elif model_name == 'enet-naive-upsampling-encoder-only':
         model_wrapper = ENetNaiveUpsampling(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
+            model_lambda_loss_type=model_lambda_loss_type,
             encoder_only=True)
     elif model_name == 'enet-max-unpooling':
         model_wrapper = ENetMaxUnpooling(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
+            model_lambda_loss_type=model_lambda_loss_type,
             encoder_only=False)
     elif model_name == 'enet-max-unpooling-encoder-only':
         model_wrapper = ENetMaxUnpooling(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type,
+            model_lambda_loss_type=model_lambda_loss_type,
             encoder_only=True)
     elif model_name == 'segnet':
         model_wrapper = SegNetBasicModel(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
     elif model_name == 'yolonet':
         model_wrapper = YOLONetModel(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
     else:
         raise ValueError('Unknown model name: {}'.format(model_name))
 
+    model_wrapper.model.logger = logger
     return model_wrapper
 
 
-def model_type_to_lambda_loss_function(model_type):
-    # type: (ModelType) -> function
+def get_lambda_loss_function(model_lambda_loss_type):
+    # type: (ModelLambdaLossType) -> function
 
-    if model_type == ModelType.SEMISUPERVISED:
-        return losses.semisupervised_superpixel_lambda_loss
-    elif model_type == ModelType.MEAN_TEACHER_STUDENT:
-        return losses.mean_teacher_lambda_loss
-    elif model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
-        return losses.mean_teacher_superpixel_lambda_loss
-    elif model_type == ModelType.MEAN_TEACHER_TEACHER:
+    if model_lambda_loss_type == ModelLambdaLossType.NONE:
         return None
-    elif model_type == ModelType.NORMAL:
-        return None
+    elif model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_CATEGORICAL_CROSS_ENTROPY:
+        return losses.segmentation_categorical_cross_entropy_lambda_loss
+    elif model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL:
+        return losses.segmentation_superpixel_lambda_loss
+    elif model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
+        return losses.segmentation_mean_teacher_lambda_loss
+    elif model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
+        return losses.segmentation_mean_teacher_superpixel_lambda_loss
+    #elif model_type == ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY:
+    #    return losses.classification_categorical_cross_entropy
+    #elif model_type == ModelLambdaLossType.CLASSIFICATION_MEAN_TEACHER_TEACHER:
+    #    return losses.classification_mean_teacher_lambda_loss
 
-    raise ValueError('Unknown model type: {}'.format(model_type))
+    raise ValueError('Unknown model lambda loss type: {}'.format(model_lambda_loss_type))
 
 
 ##############################################
@@ -139,45 +146,38 @@ class ModelBase(object):
                  name,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL):
-        # type: (str, tuple[int], int, ModelType) -> None
+                 model_lambda_loss_type=ModelLambdaLossType.NONE):
+        # type: (str, tuple[int], int, ModelLambdaLossType) -> None
 
         self.name = name
         self.input_shape = input_shape
         self.num_classes = num_classes
-        self.model_type = model_type
+        self.model_lambda_loss_type = model_lambda_loss_type
 
         # Deduce the lambda loss function from the model type
-        self.lambda_loss_function = model_type_to_lambda_loss_function(model_type)
+        self.lambda_loss_function = get_lambda_loss_function(model_lambda_loss_type)
 
         # Configure inputs
-        images = Input(name="images", shape=self.input_shape)
+        images = Input(name="images", shape=self.input_shape, dtype='float32')
         self.inputs = [images]
 
-        # If using Mean Teacher -method add a gaussian noise after input
-        model_inputs = images
-
-        # Note: With stddev 0.15 as in Mean Teacher and Temporal Ensembling papers,
-        # the mean teacher method doesn't seem to converge, attempting smaller values
-        #if model_type == ModelType.MEAN_TEACHER_STUDENT or \
-        #   model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL or \
-        #   model_type == ModelType.MEAN_TEACHER_TEACHER:
-        model_inputs = GaussianNoise(stddev=0.03, name='noise')(images)
-
         # Build the model
-        self.outputs = self._build_model(model_inputs)
+        self.outputs = self._build_model(images)
 
         # If we are using the mean teacher method and this is the student model or
         # we are using a semisupervised model - add the custom lambda loss layer
-        if self.model_type == ModelType.MEAN_TEACHER_STUDENT:
-            self.name = self.name + '-MTS'
-            self._model = self._get_mean_teacher_student_model()
-        elif self.model_type == ModelType.SEMISUPERVISED:
+        if self.model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_CATEGORICAL_CROSS_ENTROPY:
+            self.name = self.name + '-CCE'
+            self._model = self._get_segmentation_categorical_cross_entropy_lambda_loss_model()
+        if self.model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
+            self.name = self.name + '-MT'
+            self._model = self._get_segmentation_semi_supervised_mean_teacher_lambda_loss_model()
+        elif self.model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL:
             self.name = self.name + '-SS'
-            self._model = self._get_semisupervised_model()
-        elif self.model_type == ModelType.MEAN_TEACHER_STUDENT_SUPERPIXEL:
-            self.name = self.name + '-MTS-SP'
-            self._model = self._get_mean_teacher_superpixel_student_model()
+            self._model = self._get_segmentation_semi_supervised_superpixel_lambda_loss_model()
+        elif self.model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
+            self.name = self.name + '-MT-SP'
+            self._model = self._get_segmentation_semi_supervised_mean_teacher_superpixel_lambda_loss_model()
         else:
             # Otherwise just return the model
             self._model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
@@ -185,20 +185,6 @@ class ModelBase(object):
     @property
     def model(self):
         return self._model
-
-    @abstractmethod
-    def _build_model(self, inputs):
-        """
-        Builds the model and returns the inputs and outputs as lists. This method does not
-        take into account additional inputs due to being possible Mean Teacher student model.
-
-        # Arguments
-            :param inputs: The previous layer i.e. an input layer
-        # Returns
-            :return: inputs and outputs of the model as a tuple of two lists [inputs, outputs]
-        """
-
-        raise NotImplementedError('This method should be implemented in the class derived from ModelBase')
 
     def transfer_weights(self, from_model, from_layer_index, to_layer_index, freeze_transferred_layers):
         # type: (Model, int, int, bool) -> (int, str)
@@ -238,59 +224,68 @@ class ModelBase(object):
 
         return num_transferred_layers, from_model.layers[to_layer_index - 1].name
 
-    def _get_semisupervised_model(self):
+    @abstractmethod
+    def _build_model(self, inputs):
+        """
+        Builds the model and returns the inputs and outputs as lists. This method does not
+        take into account additional inputs due to being possible Mean Teacher student model.
 
+        # Arguments
+            :param inputs: The previous layer i.e. an input layer
+        # Returns
+            :return: inputs and outputs of the model as a tuple of two lists [inputs, outputs]
+        """
+
+        raise NotImplementedError('This method should be implemented in the class derived from ModelBase')
+
+    def _get_segmentation_categorical_cross_entropy_lambda_loss_model(self):
         if self.inputs is None or self.outputs is None:
             raise RuntimeError('The model must be built by calling _build_model() first')
         if self.lambda_loss_function is None:
-            raise ValueError('Semisupervised models must be given a lambda loss function')
+            raise ValueError('Categorical cross entropy models must be given a lambda loss function')
 
         labels_shape = (self.input_shape[0], self.input_shape[1])
-
-        labels = Input(name="labels", shape=labels_shape)
+        labels = Input(name="labels", shape=labels_shape, dtype='int32')
         self.inputs.append(labels)
 
-        class_weights = Input(name="class_weights", shape=labels_shape)
+        class_weights = Input(name="class_weights", shape=labels_shape, dtype='float32')
         self.inputs.append(class_weights)
 
-        num_unlabeled = Input(name='num_unlabeled', shape=[1])
+        num_unlabeled = Input(name='num_unlabeled', shape=[1], dtype='int32')
         self.inputs.append(num_unlabeled)
-
-        unlabeled_cost_coeff = Input(name='unlabeled_cost_coeff', shape=[1])
-        self.inputs.append(unlabeled_cost_coeff)
 
         # Note: assumes there is only a single output, which is the last layer
         logits = self.outputs[0]
-        lambda_inputs = [logits, labels, class_weights, num_unlabeled, unlabeled_cost_coeff]
+        lambda_inputs = [logits, labels, class_weights, num_unlabeled]
         loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
         self.outputs = [loss_layer, logits]
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
 
-    def _get_mean_teacher_student_model(self):
+    def _get_segmentation_semi_supervised_mean_teacher_lambda_loss_model(self):
 
         if self.inputs is None or self.outputs is None:
             raise RuntimeError('The model must be built by calling _build_model() first')
         if self.lambda_loss_function is None:
-            raise ValueError('Mean teacher student models must be given a lambda loss function')
+            raise ValueError('Mean teacher models must be given a lambda loss function')
 
         labels_shape = (self.input_shape[0], self.input_shape[1])
         logits_shape = (self.input_shape[0], self.input_shape[1], self.num_classes)
 
-        labels = Input(name="labels", shape=labels_shape)
+        labels = Input(name="labels", shape=labels_shape, dtype='int32')
         self.inputs.append(labels)
 
-        class_weights = Input(name="class_weights", shape=labels_shape)
+        class_weights = Input(name="class_weights", shape=labels_shape, dtype='float32')
         self.inputs.append(class_weights)
 
-        num_unlabeled = Input(name='num_unlabeled', shape=[1])
+        num_unlabeled = Input(name='num_unlabeled', shape=[1], dtype='int32')
         self.inputs.append(num_unlabeled)
 
-        mt_predictions = Input(name="mt_predictions", shape=logits_shape)
+        mt_predictions = Input(name="mt_predictions", shape=logits_shape, dtype='float32')
         self.inputs.append(mt_predictions)
 
-        consistency_cost = Input(name="consistency_cost", shape=[1])
+        consistency_cost = Input(name="consistency_cost", shape=[1], dtype='float32')
         self.inputs.append(consistency_cost)
 
         # Note: assumes there is only a single output, which is the last layer
@@ -302,32 +297,62 @@ class ModelBase(object):
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
 
-    def _get_mean_teacher_superpixel_student_model(self):
+    def _get_segmentation_semi_supervised_superpixel_lambda_loss_model(self):
 
         if self.inputs is None or self.outputs is None:
             raise RuntimeError('The model must be built by calling _build_model() first')
         if self.lambda_loss_function is None:
-            raise ValueError('Mean teacher student models must be given a lambda loss function')
+            raise ValueError('Semi-supervised models must be given a lambda loss function')
+
+        labels_shape = (self.input_shape[0], self.input_shape[1])
+
+        labels = Input(name="labels", shape=labels_shape, dtype='int32')
+        self.inputs.append(labels)
+
+        class_weights = Input(name="class_weights", shape=labels_shape, dtype='float32')
+        self.inputs.append(class_weights)
+
+        num_unlabeled = Input(name='num_unlabeled', shape=[1], dtype='int32')
+        self.inputs.append(num_unlabeled)
+
+        unlabeled_cost_coeff = Input(name='unlabeled_cost_coeff', shape=[1], dtype='float32')
+        self.inputs.append(unlabeled_cost_coeff)
+
+        # Note: assumes there is only a single output, which is the last layer
+        logits = self.outputs[0]
+        lambda_inputs = [logits, labels, class_weights, num_unlabeled, unlabeled_cost_coeff]
+        loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+        self.outputs = [loss_layer, logits]
+
+        model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
+        return model
+
+    def _get_segmentation_semi_supervised_mean_teacher_superpixel_lambda_loss_model(self):
+
+        if self.inputs is None or self.outputs is None:
+            raise RuntimeError('The model must be built by calling _build_model() first')
+        if self.lambda_loss_function is None:
+            raise ValueError('Mean teacher models must be given a lambda loss function')
 
         labels_shape = (self.input_shape[0], self.input_shape[1])
         logits_shape = (self.input_shape[0], self.input_shape[1], self.num_classes)
 
-        labels = Input(name="labels", shape=labels_shape)
+        labels = Input(name="labels", shape=labels_shape, dtype='int32')
         self.inputs.append(labels)
 
-        class_weights = Input(name="class_weights", shape=labels_shape)
+        class_weights = Input(name="class_weights", shape=labels_shape, dtype='float32')
         self.inputs.append(class_weights)
 
-        num_unlabeled = Input(name='num_unlabeled', shape=[1])
+        num_unlabeled = Input(name='num_unlabeled', shape=[1], dtype='int32')
         self.inputs.append(num_unlabeled)
 
-        mt_predictions = Input(name="mt_predictions", shape=logits_shape)
+        mt_predictions = Input(name="mt_predictions", shape=logits_shape, dtype='float32')
         self.inputs.append(mt_predictions)
 
-        consistency_cost = Input(name="consistency_cost", shape=[1])
+        consistency_cost = Input(name="consistency_cost", shape=[1], dtype='float32')
         self.inputs.append(consistency_cost)
 
-        unlabeled_cost_coeff = Input(name="unlabeled_cost_coeff", shape=[1])
+        unlabeled_cost_coeff = Input(name="unlabeled_cost_coeff", shape=[1], dtype='float32')
         self.inputs.append(unlabeled_cost_coeff)
 
         # Note: assumes there is only a single output, which is the last layer
@@ -338,6 +363,37 @@ class ModelBase(object):
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
+
+    # def _get_mean_teacher_student_model_classification(self):
+    #
+    #     if self.inputs is None or self.outputs is None:
+    #         raise RuntimeError('The model must be built by calling _build_model() first')
+    #     if self.lambda_loss_function is None:
+    #         raise ValueError('Mean teacher models must be given a lambda loss function')
+    #
+    #     labels_shape = (self.input_shape[0], self.input_shape[1])
+    #     logits_shape = (self.num_classes)
+    #
+    #     labels = Input(name="labels", shape=labels_shape)
+    #     self.inputs.append(labels)
+    #
+    #     class_weights = Input(name="class_weights", shape=labels_shape)
+    #     self.inputs.append(class_weights)
+    #
+    #     mt_predictions = Input(name="mt_predictions", shape=logits_shape)
+    #     self.inputs.append(mt_predictions)
+    #
+    #     consistency_cost = Input(name="consistency_cost", shape=[1])
+    #     self.inputs.append(consistency_cost)
+    #
+    #     # Note: assumes there is only a single output, which is the last layer
+    #     logits = self.outputs[0]
+    #     lambda_inputs = [logits, labels, class_weights, mt_predictions, consistency_cost]
+    #     loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+    #     self.outputs = [loss_layer, logits]
+    #
+    #     model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
+    #     return model
 
 
 ##############################################
@@ -355,13 +411,13 @@ class UNetModel(ModelBase):
     def __init__(self,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL):
+                 model_lambda_loss_type=ModelLambdaLossType.NONE):
 
         super(UNetModel, self).__init__(
             name="UNet",
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
 
     def _build_model(self, inputs):
         '''
@@ -536,13 +592,13 @@ class SegNetBasicModel(ModelBase):
     def __init__(self,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL):
+                 model_lambda_loss_type=ModelLambdaLossType.NONE):
 
         super(SegNetBasicModel, self).__init__(
             name="SegNet-Basic",
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
 
     def _build_model(self, inputs):
 
@@ -584,20 +640,16 @@ class ENetNaiveUpsampling(ModelBase):
                  input_shape,
                  num_classes,
                  encoder_only=False,
-                 model_type=ModelType.NORMAL):
+                 model_lambda_loss_type=ModelLambdaLossType.NONE):
 
         self.encoder_only = encoder_only
-
-        if self.encoder_only and model_type == ModelType.MEAN_TEACHER_STUDENT:
-            raise NotImplementedError("Mean teacher support has not been implemented for encoder only (classification)")
-
         name = "ENet-Naive-Upsampling" if not self.encoder_only else "ENet-Naive-Upsampling-Encoder-Only"
 
         super(ENetNaiveUpsampling, self).__init__(
             name=name,
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
 
     def _build_model(self, inputs):
         enet = ENetNaiveUpsampling.encoder_build(inputs)
@@ -859,20 +911,16 @@ class ENetMaxUnpooling(ModelBase):
                  input_shape,
                  num_classes,
                  encoder_only=False,
-                 model_type=ModelType.NORMAL):
+                 model_lambda_loss_type=ModelLambdaLossType.NONE):
 
         self.encoder_only = encoder_only
-
-        if self.encoder_only and model_type == ModelType.MEAN_TEACHER_STUDENT:
-            raise NotImplementedError("Mean teacher support has not been implemented for encoder only (classification)")
-
         name = "ENet-Max-Unpooling" if not self.encoder_only else "ENet-Max-Unpooling-Encoder-Only"
 
         super(ENetMaxUnpooling, self).__init__(
             name=name,
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
 
     def _build_model(self, inputs):
         enet, pooling_indices = ENetMaxUnpooling.encoder_build(inputs)
@@ -1141,13 +1189,13 @@ class YOLONetModel(ModelBase):
     def __init__(self,
                  input_shape,
                  num_classes,
-                 model_type=ModelType.NORMAL):
+                 model_lambda_loss_type=ModelLambdaLossType.NONE):
 
         super(YOLONetModel, self).__init__(
             name="YOLONet",
             input_shape=input_shape,
             num_classes=num_classes,
-            model_type=model_type)
+            model_lambda_loss_type=model_lambda_loss_type)
 
     def _build_model(self, inputs):
 

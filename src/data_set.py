@@ -194,7 +194,7 @@ class ImageSet(object):
         if self._file_list is not None:
             # Accelerate lookups by building a temporary set
             file_list_set = set(self._file_list)
-            self._image_files = [img_file for img_file in self._image_files if img_file.file_name in file_list_set]
+            self._image_files = [img_file for img_file in self._image_files if img_file.file_name.lower() in file_list_set]
 
             # Check that the ImageFiles match to the given file set are identical if not raise an exception
             if len(self._image_files) != len(self._file_list):

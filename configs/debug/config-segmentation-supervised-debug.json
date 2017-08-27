@@ -1,9 +1,20 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
     "path_to_data_set_information_file": "data/debug/512/data-set-information.json",
-    "path_to_labeled_photos": "data/debug/512/labeled/photos",
+    "path_to_labeled_photos": "data/minc/photos/1024",
     "path_to_labeled_masks": "data/debug/512/labeled/masks",
     "path_to_unlabeled_photos": "data/debug/512/unlabeled",
+
+    "minc_classification_data_set": {
+      "training_set_file_path": "data/minc/train.txt",
+      "validation_set_file_path": "data/minc/validate.txt",
+      "test_set_file_path": "data/minc/test.txt",
+      "labels_translation_file_path": "data/minc/minc_labels_to_custom_labels.csv",
+      "path_to_photos": "...",
+      "per_channel_mean": [0.041798265141623728, -0.059778711338833487, -0.17326070160306084],
+      "per_channel_stddev": [0.51881479558438071, 0.5214198070460776, 0.55102167242922051],
+      "num_classes": 24
+    },
 
     "log_file_path": "logs/{model_folder}/log.txt",
     "log_to_stdout": true,
@@ -13,10 +24,10 @@
     "keras_csv_log_file_path": "logs/{model_folder}/per-epoch-data.csv",
     "optimizer_checkpoint_file_path": "checkpoints/{model_folder}/optimizer/optimizer-checkpoint.json",
 
-    "loss_function": "pixelwise_crossentropy",
+    "loss_function": "categorical_crossentropy",
 
     "num_epochs": 100,
-    "input_shape": [null, null, 3],
+    "input_shape": [384, 384, 3],
     "crop_shape": [384, 384],
     "resize_shape": null,
 
@@ -47,22 +58,23 @@
     "use_superpixel_method": false,
 
     "superpixel_params": {
-        "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
-        "label_generation_function_name": "felzenszwalb"
+      "unlabeled_cost_coefficient_function": "lambda x: 7.5 * min(np.exp(-5.0*(1.0-((float(x)/10000.0)**2))), 1.0)",
+      "label_generation_function_name": "felzenszwalb"
     },
 
     "use_data_augmentation": true,
-    "use_material_samples": true,
+    "use_material_samples": false,
 
     "data_augmentation_params": {
-        "augmentation_probability": 0.5,
+        "augmentation_probability_function": "lambda x: 0.5 if x >= 100",
         "rotation_range": 40.0,
-        "zoom_range": 0.5,
-        "width_shift_range": 0.15,
-        "height_shift_range": 0.15,
+        "zoom_range": 0.15,
+        "width_shift_range": 0.00,
+        "height_shift_range": 0.00,
         "channel_shift_range": 0.10,
         "horizontal_flip": true,
-        "vertical_flip": false
+        "vertical_flip": false,
+        "gaussian_noise_stddev_function": "lambda x: 0.03"
     },
 
     "reduce_lr_on_plateau": {
@@ -94,5 +106,6 @@
     "continue_from_last_checkpoint": false,
     "transfer_weights": false,
     "use_class_weights": true,
+    "override_class_weights": [0.0, 1.1728044, 0.75470251, 2.689379, 1.8899297, 0.18916449, 0.62033534, 2.9675295, 0.34676987, 0.65628147, 2.5689297, 2.9056776, 0.8972621, 0.39793819, 1.0, 0.16096283, 3.1639278, 1.9225523, 2.1578624, 0.53173018, 0.5098989, 5.4119458, 1.3983128, 0.13292471],
     "save_values_on_early_exit": false
 }
