@@ -279,9 +279,16 @@ def dummy_loss(y_true, y_pred):
 def _segmentation_sparse_weighted_categorical_cross_entropy(class_weights):
 
     def get_per_sample_weights(i, weights, y_true):
-        class_i_weights = K.tf.where(K.tf.equal(y_true, i), K.tf.ones_like(y_true, dtype=K.tf.float32)*class_weights[i], K.tf.zeros_like(y_true, dtype=K.tf.float32))
+        class_weight_val = K.tf.ones_like(y_true, dtype=K.tf.float32) * class_weights[i]
+        zero = K.tf.zeros_like(y_true, dtype=K.tf.float32)
+        class_i_weights = K.tf.where(K.tf.equal(y_true, i), class_weight_val, zero)
+
+        # Add the class weights to the weights array
         weights = K.tf.add(weights, class_i_weights)
+
+        # Increase the loop variable
         i = K.tf.add(i, 1)
+
         return i, weights, y_true
 
     def loss(y_true, y_pred):
@@ -298,7 +305,7 @@ def _segmentation_sparse_weighted_categorical_cross_entropy(class_weights):
         weights = K.tf.stop_gradient(K.tf.zeros_like(y_true, dtype=K.tf.float32))
         i = K.tf.stop_gradient(K.tf.constant(0, dtype=K.tf.int32))
         cond = lambda i, _, __: K.tf.less(i, num_classes)
-        K.tf.while_loop(cond=cond, body=get_per_sample_weights, loop_vars=[i, weights, y_true], back_prop=False)
+        _, weights, __ = K.tf.while_loop(cond=cond, body=get_per_sample_weights, loop_vars=[i, weights, y_true], back_prop=False)
 
         # Returns cross-entropy loss for each pixel, i.e. B_SIZExHxW, multiply by weights
         xent = K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true)
@@ -306,6 +313,10 @@ def _segmentation_sparse_weighted_categorical_cross_entropy(class_weights):
 
         # Calculate the sum of pixel cross-entropies (HxW) for each image and take the mean of images in the batch
         loss = K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2)))
+
+        if settings.DEBUG:
+            loss = K.tf.Print(loss, [loss], message="costs: ", summarize=24)
+
         return loss
 
     return loss

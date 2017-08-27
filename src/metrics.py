@@ -10,6 +10,7 @@ import keras.backend as K
 
 def _get_ignore_mask(labels, ignore_classes):
     K.tf.assert_rank(ignore_classes, 1)
+
     ignore_mask = K.tf.foldl(fn=lambda a, v: a + K.tf.cast(K.tf.equal(labels, v), dtype=K.tf.int32),
                              initializer=K.tf.zeros_like(labels, dtype=K.tf.int32),
                              elems=ignore_classes)

@@ -86,7 +86,7 @@ class TrainerBase:
     __metaclass__ = ABCMeta
 
     def __init__(self, trainer_type, model_name, model_folder_name, config_file_path):
-        # type: (str, str, str, str, str) -> ()
+        # type: (str, str, str, str) -> None
 
         """
         Initializes the trainer i.e. seeds random, loads material class information and
@@ -114,7 +114,6 @@ class TrainerBase:
         ImageFile.LOAD_TRUNCATED_IMAGES = True
 
         self.config = self._load_config_json(config_file_path)
-        print 'Configuration file read successfully'
 
         # Setup the log file path to enable logging
         log_file_path = self.get_config_value('log_file_path').format(model_folder=self.model_folder_name)
@@ -373,25 +372,39 @@ class TrainerBase:
 
         return callbacks
 
-    def get_loss_function(self, loss_function_name, use_class_weights, class_weights, num_classes):
-        loss_function = None
+    @property
+    def model_checkpoint_directory(self):
+        keras_model_checkpoint = self.get_config_value('keras_model_checkpoint')
+        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
+        return keras_model_checkpoint_dir
 
-        if not use_class_weights:
-            if class_weights is not None:
-                print 'Provided class weights when use class weights is False. Ignoring class weights for loss function.'
-            class_weights = np.ones([num_classes], dtype=np.float32)
+    @property
+    def model_checkpoint_file_path(self):
+        keras_model_checkpoint = self.get_config_value('keras_model_checkpoint')
+        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
+        keras_model_checkpoint_file = os.path.basename(keras_model_checkpoint.get('checkpoint_file_path'))
+        keras_model_checkpoint_file_path = os.path.join(keras_model_checkpoint_dir, keras_model_checkpoint_file)
+        return keras_model_checkpoint_file_path
 
-        if loss_function_name == 'pixelwise_crossentropy':
-            loss_function = losses.pixelwise_crossentropy_loss(class_weights)
-        elif loss_function_name == 'dummy':
-            loss_function = losses.dummy_loss
-        elif loss_function_name == 'categorical_crossentropy':
-            loss_function = losses.categorical_crossentropy_loss(class_weights)
-        else:
-            raise ValueError('Unsupported loss function: {}'.format(loss_function_name))
-
-        self.logger.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, list(class_weights)))
-        return loss_function
+    # def get_loss_function(self, loss_function_name, use_class_weights, class_weights, num_classes):
+    #     loss_function = None
+    #
+    #     if not use_class_weights:
+    #         if class_weights is not None:
+    #             print 'Provided class weights when use class weights is False. Ignoring class weights for loss function.'
+    #         class_weights = np.ones([num_classes], dtype=np.float32)
+    #
+    #     if loss_function_name == 'pixelwise_crossentropy':
+    #         loss_function = losses.pixelwise_crossentropy_loss(class_weights)
+    #     elif loss_function_name == 'dummy':
+    #         loss_function = losses.dummy_loss
+    #     elif loss_function_name == 'categorical_crossentropy':
+    #         loss_function = losses.categorical_crossentropy_loss(class_weights)
+    #     else:
+    #         raise ValueError('Unsupported loss function: {}'.format(loss_function_name))
+    #
+    #     self.logger.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, list(class_weights)))
+    #     return loss_function
 
     def get_optimizer(self, continue_from_optimizer_checkpoint):
         optimizer_info = self.get_config_value('optimizer')
@@ -505,7 +518,7 @@ class TrainerBase:
         transfer_model_weights_file_path = transfer_weights_options['transfer_model_weights_file_path']
 
         self.logger.log('Creating transfer model: {} with input shape: {}, num classes: {}'
-            .format(transfer_model_name, transfer_model_input_shape, transfer_model_num_classes))
+                        .format(transfer_model_name, transfer_model_input_shape, transfer_model_num_classes))
         transfer_model_wrapper = get_model(transfer_model_name,
                                            transfer_model_input_shape,
                                            transfer_model_num_classes)
@@ -655,7 +668,6 @@ class SegmentationTrainer(TrainerBase):
 
         self.input_shape = self.get_config_value('input_shape')
         self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
-        self.weights_directory_path = os.path.dirname(self.get_config_value('keras_model_checkpoint_file_path')).format(model_folder=self.model_folder_name)
         self.use_transfer_weights = bool(self.get_config_value('transfer_weights'))
         self.transfer_options = self.get_config_value('transfer_options')
         self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
@@ -822,7 +834,7 @@ class SegmentationTrainer(TrainerBase):
         self.model.summary()
 
         if self.continue_from_last_checkpoint:
-            self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
+            self.initial_epoch = self.load_latest_weights_for_model(self.model, self.model_checkpoint_directory)
 
         if self.use_transfer_weights:
             if self.initial_epoch != 0:
@@ -837,17 +849,12 @@ class SegmentationTrainer(TrainerBase):
 
         optimizer = self.get_optimizer(self.continue_from_optimizer_checkpoint)
 
-        # TODO: REFACTOR THIS
         # Get the loss function for the student model
         if self.loss_function_name != 'dummy':
-            self.logger.warn('Semisupervised trainer should use \'dummy\' loss function, got: {}. Ignoring passed loss function.'.format(self.loss_function_name))
+            self.logger.warn('Semisupervised trainer should uses \'dummy\' loss function, got: {}. Ignoring passed loss function.'.format(self.loss_function_name))
             self.loss_function_name = 'dummy'
 
-        loss_function = self.get_loss_function(self.loss_function_name,
-                                               use_class_weights=self.use_class_weights,
-                                               class_weights=self.class_weights,
-                                               num_classes=self.num_classes)
-        # END OF: REFACTOR THIS
+        loss_function = losses.dummy_loss
 
         # Ignore all the classes which have zero weights in the metrics
         ignore_classes = np.squeeze(np.where(np.equal(self.class_weights, 0.0))).astype(dtype=np.int32)
@@ -1258,16 +1265,14 @@ class SegmentationTrainer(TrainerBase):
                     steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
                     workers=dataset_utils.get_number_of_parallel_jobs())
 
-                val_loss = val_outs[0]
-                self.logger.log('\nEpoch {}: Mean teacher validation loss {}'.format(epoch_index, val_loss))
+                self.logger.log('\nEpoch {}: Mean teacher validation loss {}'.format(epoch_index, val_outs[0]))
 
             self.logger.log('\nEpoch {}: EMA coefficient {}, consistency cost coefficient: {}'
                             .format(epoch_index, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))
             self.save_teacher_model_weights(epoch_index=epoch_index, val_loss=val_loss)
 
     def save_student_model_weights(self, epoch_index, val_loss, file_extension='.student'):
-        file_path = self.get_config_value('keras_model_checkpoint_file_path')\
-                        .format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
+        file_path = self.model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
 
         # Make sure the directory exists
         general_utils.create_path_if_not_existing(file_path)
@@ -1287,8 +1292,8 @@ class SegmentationTrainer(TrainerBase):
             # the student model
             if teacher_model_checkpoint_file_path is None:
                 self.logger.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to teacher folder under student directory')
-                file_name_format = os.path.basename(self.get_config_value('keras_model_checkpoint_file_path'))
-                teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.weights_directory_path, 'teacher/'), file_name_format)
+                file_name_format = os.path.basename(self.model_checkpoint_file_path)
+                teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
 
             file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
 
