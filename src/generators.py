@@ -1,6 +1,7 @@
 # coding=utf-8
 
 import random
+import math
 import numpy as np
 import threading
 from enum import Enum
@@ -19,12 +20,6 @@ import settings
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 import keras.backend as K
-
-
-#######################################
-# UTILITY FUNCTIONS
-#######################################
-
 
 
 #######################################
@@ -175,10 +170,6 @@ class DataGeneratorParameters(object):
 # ITERATOR
 #######################################
 
-class IterationMode(Enum):
-    UNIFORM = 0,  # Sample each material class uniformly wrt. number of samples within epoch
-    UNIQUE = 1   # Iterate through all the unique samples once within epoch
-
 
 class DataSetIterator(object):
 
@@ -205,6 +196,23 @@ class DataSetIterator(object):
     @abstractproperty
     def num_steps_per_epoch(self):
         pass
+
+    def _get_number_of_batches(self, data_set_size, batch_size):
+        # type: (int, int) -> int
+
+        """
+        Returns the number of batches for the given data set size and batch size.
+        The function assumes that all data will be used every epoch and the last batch size
+        can be smaller than the others.
+
+        # Arguments
+            :param data_set_size: data set size
+            :param batch_size: batch size
+        # Returns
+            :return: the number of batches from this dataset
+        """
+        num_batches = int(math.ceil(float(data_set_size) / float(batch_size)))
+        return num_batches
 
 
 class BasicDataSetIterator(DataSetIterator):
@@ -253,7 +261,14 @@ class BasicDataSetIterator(DataSetIterator):
 
     @property
     def num_steps_per_epoch(self):
-        return dataset_utils.get_number_of_batches(self.n, self.batch_size)
+        return self._get_number_of_batches(self.n, self.batch_size)
+
+
+class MaterialSampleIterationMode(Enum):
+    UNIFORM_MAX = 0     # Sample each material class uniformly. Set the number of steps per epoch according to max class num samples.
+    UNIFORM_MIN = 1     # Sample each material class uniformly. Set the number of steps per epoch according to min class num samples.
+    UNIFORM_MEAN = 2    # Sample each class uniformly. Set the number of steps per epoch according to mean samples per class.
+    UNIQUE = 3          # Iterate through all the unique samples once within epoch - means no balancing
 
 
 class MaterialSampleDataSetIterator(DataSetIterator):
@@ -261,8 +276,8 @@ class MaterialSampleDataSetIterator(DataSetIterator):
     A class for iterating randomly through MaterialSamples for a data set in batches.
     """
 
-    def __init__(self, material_samples, batch_size, shuffle, seed, logger, iter_mode=IterationMode.UNIFORM):
-        # type: (list[list[MaterialSample]], int, bool, int, Logger, IterationMode) -> None
+    def __init__(self, material_samples, batch_size, shuffle, seed, logger, iter_mode=MaterialSampleIterationMode.UNIFORM_MAX):
+        # type: (list[list[MaterialSample]], int, bool, int, Logger, MaterialSampleIterationMode) -> None
 
         self._num_unique_material_samples = sum(len(material_category) for material_category in material_samples)
         super(MaterialSampleDataSetIterator, self).__init__(n=self._num_unique_material_samples, batch_size=batch_size, shuffle=shuffle, seed=seed, logger=logger)
@@ -271,8 +286,17 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         self.iter_mode = iter_mode
         self._class_probabilities = [0.0] * len(material_samples)
         self._num_non_zero_classes = sum(1 for material_category in material_samples if len(material_category) > 0)
-        self._num_samples_in_biggest_material_category = max(len(material_category) for material_category in material_samples)
-        self._num_samples_in_smallest_material_category = min(len(material_category) for material_category in material_samples)
+
+        if self.iter_mode == MaterialSampleIterationMode.UNIQUE:
+            self._samples_per_material_category_per_epoch = None
+        elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MAX:
+            self._samples_per_material_category_per_epoch = max([len(material_category) for material_category in material_samples])
+        elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MIN:
+            self._samples_per_material_category_per_epoch = min([len(material_category) for material_category in material_samples])
+        elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MEAN:
+            self._samples_per_material_category_per_epoch = int(np.mean(np.array([len(material_category) for material_category in material_samples])))
+        else:
+            raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
 
         # Build index lists for the different material samples
         self._material_samples = []
@@ -321,9 +345,9 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         super(MaterialSampleDataSetIterator, self).get_next_batch()
 
-        if self.iter_mode == IterationMode.UNIQUE:
+        if self.iter_mode == MaterialSampleIterationMode.UNIQUE:
             return self._get_next_batch_unique()
-        elif self.iter_mode == IterationMode.UNIFORM:
+        elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MAX or self.iter_mode == MaterialSampleIterationMode.UNIFORM_MIN or self.iter_mode == MaterialSampleIterationMode.UNIFORM_MEAN:
             return self._get_next_batch_uniform()
 
         raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
@@ -351,8 +375,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
                 else:
                     self._material_samples[sample_category_idx] = np.arange(len(self._material_samples[sample_category_idx]))
 
-        # Keep track of how many times we have gone "through all the samples"
-        n_samples = self._num_samples_in_biggest_material_category*self._num_non_zero_classes
+        n_samples = self._samples_per_material_category_per_epoch * self._num_non_zero_classes
         current_index = (self.batch_index * self.batch_size) % n_samples
         current_batch_size = len(ret)
 
@@ -384,14 +407,13 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
     @property
     def num_steps_per_epoch(self):
-        if self.iter_mode == IterationMode.UNIQUE:
-            return dataset_utils.get_number_of_batches(self._num_unique_material_samples, self.batch_size)
-        elif self.iter_mode == IterationMode.UNIFORM:
-            # If all classes are sampled uniformly, we have been through all the samples in the data
-            # on average after we have gone through all the samples in the largest class
-            return dataset_utils.get_number_of_batches(self._num_samples_in_biggest_material_category * self._num_non_zero_classes, self.batch_size)
+        if self.iter_mode == MaterialSampleIterationMode.UNIQUE:
+            return self._get_number_of_batches(self._num_unique_material_samples, self.batch_size)
+        # If all classes are sampled uniformly, we have been through all the samples in the data
+        # On average after we have gone through all the samples in the largest class, but min and mean are also valid
+        else:
+            return self._get_number_of_batches(self._samples_per_material_category_per_epoch * self._num_non_zero_classes, self.batch_size)
 
-        raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
 
 #######################################
 # DATA GENERATOR
@@ -631,7 +653,8 @@ class SegmentationDataGenerator(DataGenerator):
                 batch_size=num_labeled_per_batch,
                 shuffle=self.shuffle_data_after_epoch,
                 seed=self.random_seed,
-                logger=self.logger)
+                logger=self.logger,
+                iter_mode=MaterialSampleIterationMode.UNIFORM_MEAN)
 
         else:
             self.labeled_data_iterator = BasicDataSetIterator(

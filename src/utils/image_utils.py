@@ -26,6 +26,22 @@ class ImageInterpolation(Enum):
     BIQUINTIC = 5
 
 
+class ImageValidationErrorType(Enum):
+    NONE = 0
+    INF_VALUES = 1
+    OUT_OF_RANGE_VALUES = 2
+    DIMENSION = 3
+    DTYPE= 4
+
+
+class ImageValidationError(Exception):
+    def __init__(self, message, error):
+
+        # Call the base class constructor with the parameters it needs
+        super(ImageValidationError, self).__init__(message)
+        self.error = error
+
+
 class ImageTransform:
 
     def __init__(self,
@@ -117,6 +133,53 @@ class ImageTransform:
         return p
 
 
+def np_check_image_properties(np_img, min_val=0.0, max_val=255.0, height=None, width=None, dtype=None):
+    """
+    Checks the image properties and raises ImageValidationError if assumptions do not match the image.
+    The exact problem can be found by examining the error field of the raised ImageValidationError.
+
+    # Arguments
+        :param np_img: the image
+        :param min_val: assumed minimum value found in the image
+        :param max_val: assumed maximum value found in the image
+        :param height: assumed height of the image, None if not checking
+        :param width: assumed width of the image, None if not checking
+        :param dtype: assumed dtype of the image, None if not checking
+
+    # Returns
+        :return: ImagePropertyError describing the error or ImagePropertyError.NONE if no error
+    """
+    if dtype is not None:
+        if np_img.dtype != dtype:
+            raise ImageValidationError('Found invalid dtype in image, assumed {}, got: {}'
+                                       .format(dtype, np_img.dtype), ImageValidationErrorType.DTYPE)
+
+    if height is not None:
+        if np_img.shape[0] != height:
+            raise ImageValidationError('Found invalid height in image, assumed {}, got: {}'
+                                       .format(height, np_img.shape[0]), ImageValidationErrorType.DIMENSION)
+
+    if width is not None:
+        if np_img.shape[1] != width:
+            raise ImageValidationError('Found invalid width in image, assumed {}, got: {}'
+                                       .format(width, np_img.shape[1]), ImageValidationErrorType.DIMENSION)
+
+    if np.any(np.invert(np.isfinite(np_img))):
+        raise ImageValidationError('Found inf values in image', ImageValidationErrorType.INF_VALUES)
+
+    if min_val is not None:
+        if np.min(np_img) < min_val:
+            raise ImageValidationError('Found invalid min values in image, assumed: {}, got: {}'
+                                       .format(min_val, np.min(np_img)), ImageValidationErrorType.OUT_OF_RANGE_VALUES)
+
+    if max_val is not None:
+        if np.max(np_img) > max_val:
+            raise ImageValidationError('Found invalid max values in image, assumed: {}, got: {}'
+                                       .format(max_val, np.max(np_img)), ImageValidationErrorType.OUT_OF_RANGE_VALUES)
+
+    return ImageValidationErrorType.NONE
+
+
 def np_apply_random_transform(images,
                               cvals,
                               fill_mode='constant',
@@ -176,17 +239,16 @@ def np_apply_random_transform(images,
 
     for i in range(0, len(images)):
         if len(cvals[i]) != images[i].shape[img_channel_axis]:
-            raise ValueError('Unmatching fill value dimensions for image element {}: {} vs {}'
-                             .format(i, len(cvals[i]), images[i].shape[img_channel_axis]))
+            raise ValueError('Unmatching fill value dimensions for image element {}: {} vs {}'.format(i, len(cvals[i]), images[i].shape[img_channel_axis]))
 
     # Make sure the images have the same dimensions HxW
     img_width = images[0].shape[img_col_axis]
     img_height = images[0].shape[img_row_axis]
+    img_dtype = images[0].dtype
 
-    for i in range(1, len(images)):
-        if img_height != images[i].shape[img_row_axis] or img_width != images[i].shape[img_col_axis]:
-            raise ValueError('Unmatching image dimensions - cannot apply same transformations: {} vs {}'
-                             .format(images[0].shape, images[i].shape))
+    # Make sure the dimensions match and the values are in the expected initial range [0, 255]
+    for i in range(0, len(images)):
+        np_check_image_properties(images[0], min_val=0.0, max_val=255.0, height=img_height, width=img_width, dtype=img_dtype)
 
     # Apply gamma adjustment to the image
     # Note: apply before transform to keep the possible cvalue always constant in the transformed images
@@ -198,8 +260,9 @@ def np_apply_random_transform(images,
             if gamma_adjust_ranges[i] is None:
                 continue
 
+            # We need to give the images as type uin8 to maintain the range [0, 255] transform to uint8 and back
             gamma = np.random.uniform(gamma_adjust_ranges[i][0], gamma_adjust_ranges[i][1])
-            images[i] = adjust_gamma(images[i], gamma=gamma)
+            images[i] = adjust_gamma(images[i].astype(np.uint8), gamma=gamma).astype(img_dtype)
 
     # Apply random channel shifts
     # Note: apply before transform to keep the possible cvalue always constant in the transformed images
@@ -278,7 +341,7 @@ def np_apply_random_transform(images,
                                           order=order,
                                           mode=fill_mode,
                                           cval=temp_cval,
-                                          preserve_range=True)
+                                          preserve_range=True).astype(img_dtype)
 
             # Fix the temporary cvalue to the real cvalue
             if img_data_format == 'channels_first':
@@ -304,17 +367,18 @@ def np_apply_random_transform(images,
                 images[i] = flip_axis(images[i], img_row_axis)
             img_transform.vertical_flip = True
 
-    # Check that we don't have any NaN values and all values are in range [0, 255]
+    # Check that the image properties are as assumed, same dtype as coming in, values in correct range etc
     for i in range(0, len(images)):
-        if np.any(np.invert(np.isfinite(images[i]))):
-            raise ValueError('NaN/inifinite values found after applying random transform')
-
-        min_val = np.min(images[i])
-        max_val = np.max(images[i])
-
-        if min_val < 0.0 or max_val > 255.0:
-            print 'WARNING: Found values outside of range [0, 255] after augmentation: [{}, {}] - clipping'.format(min_val, max_val)
-            images[i] = np.clip(images[i], 0.0, 255.0)
+        try:
+            np_check_image_properties(images[0], min_val=0.0, max_val=255.0, height=img_height, width=img_width, dtype=img_dtype)
+        except ImageValidationError as e:
+            if e.error == ImageValidationErrorType.OUT_OF_RANGE_VALUES:
+                min_val = np.min(images[i])
+                max_val = np.max(images[i])
+                print 'WARNING: Found values outside of range [0, 255] after augmentation: [{}, {}] - clipping'.format(min_val, max_val)
+                images[i] = np.clip(images[i], 0.0, 255.0)
+            else:
+                raise e
 
     return images, img_transform
 
