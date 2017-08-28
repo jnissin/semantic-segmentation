@@ -92,9 +92,9 @@
     },
 
     "stepwise_learning_rate_scheduler": {
-      "lr_schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/20000.0)**2))), 1.0)",
-      "b2_schedule": "lambda x: 0.999 if x >= 20000 else 0.99",
-      "last_scheduled_step": 20000,
+      "lr_schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/200.0)**2))), 1.0)",
+      "b2_schedule": "lambda x: 0.999 if x >= 200 else 0.99",
+      "last_scheduled_step": 200,
       "verbose": false
     },
 
