@@ -1251,7 +1251,8 @@ class SegmentationTrainer(TrainerBase):
                     steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
                     workers=dataset_utils.get_number_of_parallel_jobs())
 
-                self.logger.log('Epoch {}: Teacher model val_loss: {}'.format(epoch_index, val_outs[0]))
+                val_loss = val_outs[0]
+                self.logger.log('Epoch {}: Teacher model val_loss: {}'.format(epoch_index, val_loss))
 
             self.logger.log('Epoch {}: EMA coefficient {}, consistency cost coefficient: {}'
                             .format(epoch_index, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))

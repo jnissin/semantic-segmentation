@@ -251,6 +251,9 @@ def np_apply_random_transform(images,
     img_height = images[0].shape[img_row_axis]
     img_dtype = images[0].dtype
 
+    # Store the ImageTranform for return value
+    img_transform = ImageTransform(image_height=img_height, image_width=img_width, transform=None, horizontal_flip=False, vertical_flip=False)
+
     # Make sure the dimensions match and the values are in the expected initial range [0, 255]
     for i in range(0, len(images)):
         np_check_image_properties(images[0], min_val=0.0, max_val=255.0, height=img_height, width=img_width, dtype=img_dtype)
@@ -281,6 +284,20 @@ def np_apply_random_transform(images,
 
             # Images are [0,255] color encoded, multiply intensity [0,1] by 255 to get the real shift intensity
             images[i] = np_random_channel_shift(images[i], intensity=channel_shift_ranges[i] * 255.0, min_c=0, max_c=255.0, channel_axis=img_channel_axis)
+
+    # Apply at random a horizontal flip to the image
+    if horizontal_flip:
+        if np.random.random() < 0.5:
+            for i in range(0, len(images)):
+                images[i] = flip_axis(images[i], img_col_axis)
+            img_transform.horizontal_flip = True
+
+    # Apply at random a vertical flip to the image
+    if vertical_flip:
+        if np.random.random() < 0.5:
+            for i in range(0, len(images)):
+                images[i] = flip_axis(images[i], img_row_axis)
+            img_transform.vertical_flip = True
 
     # Rotation
     if rotation_range:
@@ -327,9 +344,7 @@ def np_apply_random_transform(images,
 
     # Build the final transform: (SHIFT)*S*R*T*(SHIFT_INV)
     tf_final = (tf_shift + (tf_scale + tf_rotate + tf_translate + tf_shift_inv))
-
-    # Store the ImageTranform for return value
-    img_transform = ImageTransform(image_height=img_height, image_width=img_width, transform=tf_final, horizontal_flip=False, vertical_flip=False)
+    img_transform.transform = tf_final
 
     if tf_final is not None:
         # The function apply_transform only accepts float for cval,
@@ -357,20 +372,6 @@ def np_apply_random_transform(images,
                 raise ValueError('Invalid img_data_format: {}'.format(img_data_format))
 
             images[i][mask] = cvals[i]
-
-    # Apply at random a horizontal flip to the image
-    if horizontal_flip:
-        if np.random.random() < 0.5:
-            for i in range(0, len(images)):
-                images[i] = flip_axis(images[i], img_col_axis)
-            img_transform.horizontal_flip = True
-
-    # Apply at random a vertical flip to the image
-    if vertical_flip:
-        if np.random.random() < 0.5:
-            for i in range(0, len(images)):
-                images[i] = flip_axis(images[i], img_row_axis)
-            img_transform.vertical_flip = True
 
     # Check that the image properties are as assumed, same dtype as coming in, values in correct range etc
     for i in range(0, len(images)):
