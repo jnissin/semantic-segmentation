@@ -14,8 +14,6 @@ from skimage.transform import SimilarityTransform
 
 from keras.preprocessing.image import array_to_img, img_to_array, flip_axis
 
-import dataset_utils
-
 
 class ImageInterpolation(Enum):
     NEAREST = 0
@@ -567,6 +565,20 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
     return np_img
 
 
+def np_from_255_to_normalized(val):
+    # type: (np.ndarray) -> np.ndarray
+
+    # From [0,255] to [0,1] to [-0.5,0.5] and then to [-1,1]
+    return ((val/255.0) - 0.5) * 2.0
+
+
+def np_from_normalized_to_255(val):
+    # type: (np.ndarray) -> np.ndarray
+
+    # Move to range [0,2] to [0,1] and then to [0,255]
+    return ((val+1.0)/2.0) * 255.0
+
+
 def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None, clamp_to_range=False, inplace=False):
     # type: (np.array, np.array, np.array, bool, bool) -> np.array
 
@@ -606,7 +618,7 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
             normalized_img_array -= _per_channel_mean
         # Per channel mean is in range [0, 255]
         elif (_per_channel_mean >= 0.0).all() and (_per_channel_mean <= 255.0).all():
-            normalized_img_array -= dataset_utils.np_from_255_to_normalized(_per_channel_mean)
+            normalized_img_array -= np_from_255_to_normalized(_per_channel_mean)
         else:
             raise ValueError('Per channel mean is in unknown range: {}'.format(_per_channel_mean))
 
@@ -621,7 +633,7 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
             normalized_img_array /= _per_channel_stddev
         # Per channel stddev is in range [0, 255]
         elif (_per_channel_stddev >= 0.0).all() and (_per_channel_stddev <= 255.0).all():
-            normalized_img_array /= dataset_utils.np_from_255_to_normalized(_per_channel_stddev)
+            normalized_img_array /= np_from_255_to_normalized(_per_channel_stddev)
         else:
             raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
 

@@ -3,7 +3,6 @@
 import os
 import random
 import multiprocessing
-import math
 import jsonpickle
 import itertools
 from collections import deque
@@ -770,73 +769,6 @@ def index_encode_mask(np_mask_img, material_class_information, verbose=False):
     return index_mask
 
 
-def get_number_of_batches(data_set_size, batch_size):
-    # type: (int, int) -> int
-
-    """
-    Returns the number of batches for the given dataset size and batch size.
-    The function assumes that all data will be used every epoch and the last batch size
-    can be smaller than the others.
-
-    # Arguments
-        :param data_set_size: data set size
-        :param batch_size: batch size
-    # Returns
-        :return: the number of batches from this dataset
-    """
-    num_batches = int(math.ceil(float(data_set_size) / float(batch_size)))
-    return num_batches
-
-
-def get_batch_index_range(data_set_size, batch_size, batch_index):
-    # type: (int, int, int) -> (int, int)
-
-    """
-    Returns the start and end indices to the data for the given dataset size,
-    batch size and batch index. The function assumes that all data will be used
-    every epoch and the last batch size can be smaller than the others.
-
-    # Arguments
-        :param data_set_size: size of the data set
-        :param batch_size: size of a single batch
-        :param batch_index: index of the current batch
-    # Returns
-        :return: a tuple of integers describing the (start, end) indices to the dataset
-    """
-
-    start = batch_index * batch_size
-    end = min(data_set_size, (batch_index + 1) * batch_size)
-    return start, end
-
-
-def get_batch_from_data_set(data_set, batch_size, batch_index, loop=False):
-    # type: (list, int, int, bool) -> list
-
-    """
-    Returns the start and end indices to the data for the given data set size,
-    batch size and batch index. The function assumes that all data will be used every
-    epoch and, if looping is not True, that the last batch size can be smaller
-    than the others.
-
-    # Arguments
-        :param data_set: the data set as a list of entries e.g. pairs (x,y)
-        :param batch_size: size of a single batch
-        :param batch_index: index of the current batch
-        :param loop: whether to loop to the beginning of the data if index goes over.
-    # Returns
-        :return: a slice of the list with the elements in the batch
-    """
-
-    data_set_size = len(data_set)
-    start = batch_index * batch_size
-    end = min(data_set_size, (batch_index + 1) * batch_size)
-
-    if loop and end - start < batch_size:
-        return data_set[start:end] + data_set[:batch_size - (end-start)]
-
-    return data_set[start:end]
-
-
 def split_labeled_dataset(photo_files, mask_files, split):
     # type: (list[str], list[str], list[float]) -> (list[str], list[str], list[str])
 
@@ -985,74 +917,3 @@ def count_trailing_zeroes(num):
     while ((num >> zeroes) & 1) == 0:
         zeroes = zeroes + 1
     return zeroes
-
-
-def np_from_255_to_normalized(val):
-    # type: (np.array) -> np.array
-
-    # From [0,255] to [0,1] to [-0.5,0.5] and then to [-1,1]
-    return ((val/255.0) - 0.5) * 2.0
-
-
-def np_from_normalized_to_255(val):
-    # type: (np.array) -> np.array
-
-    # Move to range [0,2] to [0,1] and then to [0,255]
-    return ((val+1.0)/2.0) * 255.0
-
-
-def normalize_batch(batch, per_channel_mean=None, per_channel_stddev=None):
-    # type: (np.array, np.array, np.array) -> np.array
-
-    """
-    Standardizes the color channels from the given image batch to zero-centered
-    range [-1, 1] from the original [0, 255] range. In case a parameter is not supplied
-    that normalization is not applied.
-
-    # Arguments
-        :param batch: numpy array with a batch of images to normalize
-        :param per_channel_mean: per channel mean in range [-1,1]
-        :param per_channel_stddev: per channel standard deviation in range [-1,1]
-        :param clamp_to_range: should the values be clamped to range [-1,1]
-    # Returns
-        :return: The parameter batch normalized with the given values
-    """
-
-    # Make sure the batch data type is correct
-    batch = batch.astype(np.float32)
-
-    if np.min(batch) < 0 or np.max(batch) > 255:
-        raise ValueError('Batch image values are not between [0, 255], got [{}, {}]'.format(np.min(batch), np.max(batch)))
-
-    # Map the values from [0, 255] to [-1, 1]
-    batch = ((batch / 255.0) - 0.5) * 2.0
-
-    # Subtract the per-channel-mean from the batch to "center" the data.
-    if per_channel_mean is not None:
-        _per_channel_mean = np.array(per_channel_mean).astype(np.float32)
-
-        # Per channel mean is in range [-1,1]
-        if (_per_channel_mean >= -1.0 - 1e-7).all() and (_per_channel_mean <= 1.0 + 1e-7).all():
-            batch -= _per_channel_mean
-        # Per channel mean is in range [0, 255]
-        elif (_per_channel_mean >= 0.0).all() and (_per_channel_mean <= 255.0).all():
-            batch -= np_from_255_to_normalized(_per_channel_mean)
-        else:
-            raise ValueError('Per channel mean is in unknown range: {}'.format(_per_channel_mean))
-
-    # Additionally, you ideally would like to divide by the sttdev of
-    # that feature or pixel as well if you want to normalize each feature
-    # value to a z-score.
-    if per_channel_stddev is not None:
-        _per_channel_stddev = np.array(per_channel_stddev).astype(np.float32)
-
-        # Per channel stddev is in range [-1, 1]
-        if (_per_channel_stddev >= -1.0 - 1e-7).all() and (_per_channel_stddev <= 1.0 + 1e-7).all():
-            batch /= _per_channel_stddev
-        # Per channel stddev is in range [0, 255]
-        elif (_per_channel_stddev >= 0.0).all() and (_per_channel_stddev <= 255.0).all():
-            batch /= np_from_255_to_normalized(_per_channel_stddev)
-        else:
-            raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
-
-    return batch

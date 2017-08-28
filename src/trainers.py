@@ -1117,7 +1117,7 @@ class SegmentationTrainer(TrainerBase):
             x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, validation=validation) + self._get_superpixel_extra_batch_data(img_batch, step_index=step_index, validation=validation)
 
         # Apply possible Gaussian Noise to batch data last e.g. teacher model Gaussian Noise requires unnoised data
-        if self.using_gaussian_noise is not None:
+        if self.using_gaussian_noise and not validation:
             x[0] = img_batch + self._get_batch_gaussian_noise(noise_shape=img_batch.shape, step_index=step_index)
 
         # If we are in debug mode, save the batch images - this is right before the images enter
@@ -1138,6 +1138,7 @@ class SegmentationTrainer(TrainerBase):
     def _get_batch_gaussian_noise(self, noise_shape, step_index):
         if self.using_gaussian_noise:
             stddev = self.data_augmentation_parameters.gaussian_noise_stddev_function(step_index)
+            self.logger.debug_log('Generating gaussian noise with stddev: {}'.format(stddev))
             gnoise = np.random.normal(loc=0.0, scale=stddev, size=noise_shape)
             return gnoise
         else:
@@ -1256,16 +1257,14 @@ class SegmentationTrainer(TrainerBase):
 
             if self.teacher_validation_data_generator is not None:
                 # Evaluate the mean teacher on the validation data
-                validation_steps_per_epoch = dataset_utils.get_number_of_batches(
-                    self.validation_set.size,
-                    self.validation_num_labeled_per_batch)
+                validation_steps_per_epoch = self.teacher_validation_data_generator.num_steps_per_epoch
 
                 val_outs = self.teacher_model.evaluate_generator(
                     generator=self.teacher_validation_data_generator,
                     steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
                     workers=dataset_utils.get_number_of_parallel_jobs())
 
-                self.logger.log('Epoch {}: Mean teacher validation loss {}'.format(epoch_index, val_outs[0]))
+                self.logger.log('Epoch {}: Teacher model val_loss: {}'.format(epoch_index, val_outs[0]))
 
             self.logger.log('Epoch {}: EMA coefficient {}, consistency cost coefficient: {}'
                             .format(epoch_index, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))

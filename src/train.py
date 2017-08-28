@@ -64,10 +64,10 @@ def main():
         settings.MAX_NUMBER_OF_JOBS = max_jobs
 
     if settings.DEBUG:
-        print 'Running in debug mode'
+        print 'RUNNING IN DEBUG MODE'
 
     if settings.PROFILE:
-        print 'Running in profile mode'
+        print 'RUNNING IN PROFILE MODE'
 
     if trainer_super_type == 'segmentation':
         trainer = SegmentationTrainer(trainer_type=trainer_type,

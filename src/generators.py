@@ -10,7 +10,6 @@ from typing import Callable
 from keras.preprocessing.image import img_to_array
 from PIL import Image
 
-from utils import general_utils
 from utils import dataset_utils
 from utils import image_utils
 from utils.image_utils import ImageInterpolation, ImageTransform
@@ -469,11 +468,11 @@ class DataGenerator(object):
 
         # Ensure the per_channel_mean is a numpy tensor
         if self.per_channel_mean is not None:
-            self.per_channel_mean = np.array(self.per_channel_mean)
+            self.per_channel_mean = np.array(self.per_channel_mean, dtype=np.float32)
 
         # Ensure per_channel_stddev is a numpy tensor
         if self.per_channel_stddev is not None:
-            self.per_channel_stddev = np.array(self.per_channel_stddev)
+            self.per_channel_stddev = np.array(self.per_channel_stddev, dtype=np.float32)
 
         # Calculate missing per-channel mean if necessary
         if self.use_per_channel_mean_normalization and (self.per_channel_mean is None or len(self.per_channel_mean) != self.num_color_channels):
@@ -490,15 +489,15 @@ class DataGenerator(object):
         # the images are not in range [-1,1] before transformations.
         if self.photo_cval is None:
             if self.per_channel_mean is None:
-                self.photo_cval = np.array([0.0] * 3)
+                self.photo_cval = np.array([0.0] * 3, dtype=np.float32)
             else:
-                self.photo_cval = dataset_utils.np_from_normalized_to_255(np.array(self.per_channel_mean))
-            self.logger.log('DataGenerator: Using photo cval: {}'.format(self.photo_cval))
+                self.photo_cval = image_utils.np_from_normalized_to_255(self.per_channel_mean).astype(np.float32)
+            self.logger.log('DataGenerator: Using photo cval: {}'.format(list(self.photo_cval)))
 
         # Use black (background)
         if self.mask_cval is None:
-            self.mask_cval = np.array([0.0] * 3)
-            self.logger.log('DataGenerator: Using mask cval: {}'.format(self.mask_cval))
+            self.mask_cval = np.array([0.0] * 3, dtype=np.float32)
+            self.logger.log('DataGenerator: Using mask cval: {}'.format(list(self.mask_cval)))
 
         # Use the given random seed for reproducibility
         if self.random_seed is not None:
@@ -582,7 +581,7 @@ class DataGenerator(object):
                 batch -= _per_channel_mean
             # Per channel mean is in range [0, 255]
             elif (_per_channel_mean >= 0.0).all() and (_per_channel_mean <= 255.0).all():
-                batch -= dataset_utils.np_from_255_to_normalized(_per_channel_mean)
+                batch -= image_utils.np_from_255_to_normalized(_per_channel_mean)
             else:
                 raise ValueError('Per channel mean is in unknown range: {}'.format(_per_channel_mean))
 
@@ -600,7 +599,7 @@ class DataGenerator(object):
                 batch /= _per_channel_stddev
             # Per channel stddev is in range [0, 255]
             elif (_per_channel_stddev >= 0.0).all() and (_per_channel_stddev <= 255.0).all():
-                batch /= dataset_utils.np_from_255_to_normalized(_per_channel_stddev)
+                batch /= image_utils.np_from_255_to_normalized(_per_channel_stddev)
             else:
                 raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
 
@@ -904,7 +903,7 @@ class SegmentationDataGenerator(DataGenerator):
         return np_photo, np_mask
 
     def process_segmentation_photo_mask_pair(self, step_idx, np_photo, np_mask, photo_cval, mask_cval, material_sample=None, retry_crops=True):
-        # type: (int, np.array, np.array, tuple[float, float, float], tuple[float, float, float], MaterialSample, bool) -> (np.array, np.array)
+        # type: (int, np.ndarray, np.ndarray, np.ndarray, np.ndarray, MaterialSample, bool) -> (np.ndarray, np.ndarray)
 
         """
         Applies crop and data augmentation to two numpy arrays representing the photo and
@@ -1107,7 +1106,7 @@ class SegmentationDataGenerator(DataGenerator):
         return tlc, trc, brc, blc
 
     def next(self):
-        # type: (int, int, tuple[int]) -> (list[np.array], np.array)
+        # type: (int, int, tuple[int]) -> (list[np.ndarray], list[np.ndarray])
 
         """
         Generates batches of data for semi supervised mean teacher training.
@@ -1175,6 +1174,8 @@ class SegmentationDataGenerator(DataGenerator):
 
     @property
     def num_steps_per_epoch(self):
+        # type: () -> int
+
         """
         Returns the number of batches (steps) per epoch.
 
@@ -1187,6 +1188,8 @@ class SegmentationDataGenerator(DataGenerator):
 
     @staticmethod
     def default_label_generator_for_unlabeled_photos(np_image):
+        # type: (np.ndarray) -> np.ndarray
+
         """
         Default label generator function for unlabeled photos. The label generator should
         encode the information in the form HxW.
@@ -1276,15 +1279,12 @@ class MINCClassificationDataGenerator(DataGenerator):
         Y = np.array(Y)
 
         # Normalize the photo batch data
-        X = dataset_utils \
-            .normalize_batch(X,
-                             self.per_channel_mean if self.use_per_channel_mean_normalization else None,
-                             self.per_channel_stddev if self.use_per_channel_stddev_normalization else None)
+        X = self._normalize_photo_batch(X)
 
         return [X], Y
 
     def _get_sample(self, step_idx, minc_sample):
-        # type: (int, MINCSample) -> (np.array[np.float32], np.array[np.float32])
+        # type: (int, MINCSample) -> (np.ndarray[np.float32], np.ndarray[np.float32])
 
         # Read the photo file from the photos ImageSet
         image_file = self.minc_photos_image_set.get_image_file_by_file_name(minc_sample.photo_id)
