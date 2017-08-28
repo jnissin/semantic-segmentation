@@ -69,7 +69,7 @@
       "channel_shift_range": 0.05,
       "horizontal_flip": true,
       "vertical_flip": false,
-      "gaussian_noise_stddev_function": "lambda x: 0.15 if x <= 60000 else max(0.15 * (1.0 - float(x-60000)/10000.0, 0.0))",
+      "gaussian_noise_stddev_function": "lambda x: 0.15 if x <= 60000 else max(0.15 * (1.0 - float(x-60000)/10000.0), 0.0)",
       "gamma_adjust_range": 0.5
     },
 
