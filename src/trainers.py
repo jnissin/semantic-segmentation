@@ -69,11 +69,12 @@ class TimeLiner:
 
 class TrainerType(Enum):
     SEGMENTATION_SUPERVISED = 0
-    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER = 1
-    SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL = 2
-    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL = 3
-    CLASSIFICATION_SUPERVISED = 4
-    CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 5
+    SEGMENTATION_SUPERVISED_MEAN_TEACHER = 1
+    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER = 2
+    SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL = 3
+    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL = 4
+    CLASSIFICATION_SUPERVISED = 5
+    CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 6
 
 
 class TrainerBase:
@@ -386,26 +387,6 @@ class TrainerBase:
         keras_model_checkpoint_file_path = os.path.join(keras_model_checkpoint_dir, keras_model_checkpoint_file)
         return keras_model_checkpoint_file_path
 
-    # def get_loss_function(self, loss_function_name, use_class_weights, class_weights, num_classes):
-    #     loss_function = None
-    #
-    #     if not use_class_weights:
-    #         if class_weights is not None:
-    #             print 'Provided class weights when use class weights is False. Ignoring class weights for loss function.'
-    #         class_weights = np.ones([num_classes], dtype=np.float32)
-    #
-    #     if loss_function_name == 'pixelwise_crossentropy':
-    #         loss_function = losses.pixelwise_crossentropy_loss(class_weights)
-    #     elif loss_function_name == 'dummy':
-    #         loss_function = losses.dummy_loss
-    #     elif loss_function_name == 'categorical_crossentropy':
-    #         loss_function = losses.categorical_crossentropy_loss(class_weights)
-    #     else:
-    #         raise ValueError('Unsupported loss function: {}'.format(loss_function_name))
-    #
-    #     self.logger.log('Using {} loss function, using class weights: {}, class weights: {}'.format(loss_function_name, use_class_weights, list(class_weights)))
-    #     return loss_function
-
     def get_optimizer(self, continue_from_optimizer_checkpoint):
         optimizer_info = self.get_config_value('optimizer')
         optimizer_configuration = None
@@ -697,7 +678,7 @@ class SegmentationTrainer(TrainerBase):
         self.validation_resize_shape = self.get_config_value('validation_resize_shape')
 
         # Sanity check for number of unlabeled per batch
-        if self.num_unlabeled_per_batch > 0 and self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED:
+        if self.num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
             self.logger.warn('Trainer type is marked as {} with unlabeled per batch {} - assuming 0 unlabeled per batch'.format(self.trainer_type, self.num_unlabeled_per_batch))
             self.num_unlabeled_per_batch = 0
 
@@ -986,8 +967,14 @@ class SegmentationTrainer(TrainerBase):
         self.logger.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
 
     @property
+    def is_supervised_only_trainer(self):
+        return self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED or \
+               self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER
+
+    @property
     def using_mean_teacher_method(self):
-        return self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER or \
+        return self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER or \
+               self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER or \
                self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
 
     @property
@@ -997,7 +984,7 @@ class SegmentationTrainer(TrainerBase):
 
     @property
     def using_unlabeled_training_data(self):
-        return self.trainer_type != TrainerType.SEGMENTATION_SUPERVISED and \
+        return not self.is_supervised_only_trainer and \
                self.training_set_unlabeled is not None and \
                self.training_set_unlabeled.size > 0 and \
                self.num_unlabeled_per_batch > 0
@@ -1305,6 +1292,8 @@ class SegmentationTrainer(TrainerBase):
     def get_model_lambda_loss_type(self):
         if self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED:
             return ModelLambdaLossType.SEGMENTATION_CATEGORICAL_CROSS_ENTROPY
+        if self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER:
+            return ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER            # Same lambda loss as semi-supervised but only with 0 unlabeled data
         elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
             return ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER
         elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL:

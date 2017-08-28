@@ -35,6 +35,7 @@ def main():
     ap = argparse.ArgumentParser(description='Training function for material segmentation.')
     ap.add_argument('-t', '--trainer', required=True, type=str,
                     choices=['segmentation_supervised',
+                             'segmentation_supervised_mean_teacher',
                              'segmentation_semi_supervised_mean_teacher',
                              'segmentation_semi_supervised_superpixel',
                              'segmentation_semi_supervised_mean_teacher_superpixel',

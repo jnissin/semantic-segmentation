@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_data_set_information_file": "data/debug/512/data-set-information.json",
-    "path_to_labeled_photos": "data/debug/512/labeled/photos",
-    "path_to_labeled_masks": "data/debug/512/labeled/masks",
-    "path_to_unlabeled_photos": "data/debug/512/unlabeled",
+    "path_to_data_set_information_file": "data/512/data-set-information.json",
+    "path_to_labeled_photos": "data/512/labeled/photos.tar.gz",
+    "path_to_labeled_masks": "data/512/labeled/masks.tar.gz",
+    "path_to_unlabeled_photos": "data/512/unlabeled.tar.gz",
 
     "log_file_path": "model-data/{model_folder}/logs/log.txt",
     "log_to_stdout": true,
@@ -61,8 +61,7 @@
     "use_material_samples": true,
 
     "data_augmentation_params": {
-      "_augmentation_probability_function": "lambda x: 0.8 * min(np.exp(-5.0*(1.0-((float(x)/20000.0)**2))), 1.0)",
-      "augmentation_probability_function": "lambda x: 0.8",
+      "augmentation_probability_function": "lambda x: 0.8 * min(np.exp(-5.0*(1.0-((float(x)/20000.0)**2))), 1.0)",
       "rotation_range": 40.0,
       "zoom_range": 0.25,
       "width_shift_range": 0.15,
@@ -103,5 +102,6 @@
     "continue_from_last_checkpoint": false,
     "transfer_weights": false,
     "use_class_weights": true,
+    "override_class_weights": [0.0, 1.0, 0.95233443019187014, 1.0084894598124294, 1.0876336820859942, 0.93513416972375907, 1.3562841644539163, 0.88087027961984254, 0.72744505982135144, 1.1964130410283282, 0.98093916451035346, 1.199377305308204, 1.0086550427731433, 1.0997899973865224, 0.66508626724156616, 1.0516009875177081, 0.86601989283840231, 0.91591412305333431, 1.1624688349949956, 1.3514328500987325, 0.98490163629706184, 0.96256977621705386, 0.90765780461628853, 1.0521964621543587],
     "save_values_on_early_exit": false
 }

@@ -360,6 +360,7 @@ class LabeledImageDataSet(DataSet):
         return zip(photos, masks)
 
     def get_files(self, file_names):
+        # type: (list[str]) -> list[tuple[ImageFile, ImageFile]]
         photos = []
         masks = []
 
@@ -380,6 +381,20 @@ class LabeledImageDataSet(DataSet):
         return zip(photos, masks)
 
     def get_files_and_material_samples(self, index_array):
+        # type: (list[tuple[int, int]]) -> (list[tuple[ImageFile, ImageFile]], list[MaterialSample])
+
+        """
+        Takes an index array describing the material samples as an argument. The indexing is expected to
+        be (material_category_idx, material_sample_idx) where the latter is the sample idx of the material
+        sample within the given material category.
+
+        The function returns a list of ImageFile pairs (photo_file, mask_file) and
+        # Arguments
+            :param index_array: The material sample index array.
+        # Returns
+            :return:
+        """
+
         material_samples = self.get_material_samples(index_array)
         file_names = [ms.file_name for ms in material_samples]
         photo_mask_pairs = self.get_files(file_names)
@@ -387,16 +402,20 @@ class LabeledImageDataSet(DataSet):
         return photo_mask_pairs, material_samples
 
     def get_material_samples(self, index_array):
-        ret = []
+        # type: (list[tuple[int, int]]) -> list[MaterialSample]
+
+        msamples = []
 
         for i in range(len(index_array)):
             material_category_index = index_array[i][0]
             material_sample_index = index_array[i][1]
-            ret.append(self.material_samples[material_category_index][material_sample_index])
+            msamples.append(self.material_samples[material_category_index][material_sample_index])
 
-        return ret
+        return msamples
 
     def get_range(self, start, end):
+        # type: (int, int) -> (tuple[list(ImageFile), list(ImageFile)])
+
         photos = self._photo_image_set.image_files[start:end]
         masks = self._mask_image_set.image_files[start:end]
         return zip(photos, masks)

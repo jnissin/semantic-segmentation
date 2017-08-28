@@ -10,6 +10,6 @@ MAX_NUMBER_OF_JOBS = 32
 DEBUG = True
 
 # Enables profiling information to be shown - runs a shorter run for profiling
-PROFILE = True
+PROFILE = False
 PROFILE_STEPS_PER_EPOCH = 3
 PROFILE_NUM_EPOCHS = 1

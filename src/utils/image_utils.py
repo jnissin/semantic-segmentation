@@ -57,6 +57,8 @@ class ImageTransform:
         self.vertical_flip = vertical_flip
 
     def transform_normalized_coordinates(self, coordinates):
+        # type: (np.ndarray) -> np.ndarray
+
         """
         Applies the same operations to the coordinate [x,y] as were applied in the ImageTransform,
         in the same order: transform, horizontal flip, vertical flip. The coordinates should be
@@ -67,7 +69,7 @@ class ImageTransform:
         # Returns
             :return: the transformed coordinate [x',y']
         """
-        # type: np.array -> np.array
+
         p = np.array(coordinates)
         p_rank = len(p.shape)
 
@@ -94,6 +96,8 @@ class ImageTransform:
         return p
 
     def transform_coordinates(self, coordinate):
+        # type: (np.ndarray) -> np.ndarray
+
         """
         Applies the same operations to the coordinate(s) [x,y] as were applied in the ImageTransform,
         in the same order: transform, horizontal flip, vertical flip. The coordinates should be
@@ -104,17 +108,18 @@ class ImageTransform:
         # Returns
             :return: the transformed coordinate [x',y']
         """
-        # type: np.array -> np.array
+
         p = np.array(coordinate).astype(np.float32)
         p_rank = len(p.shape)
 
         if not 1 <= p_rank <= 2:
-            raise ValueError('The coordinates must be either of rank 1 or 2')
+            raise ValueError('The coordinates must be either of rank 1 or 2: [2] or [N, 2]')
 
         p = skitransform.matrix_transform(p, self.transform.params)
 
+        # The matrix_transform always returns an ndarray of [N,2] if we had rank 1 squeeze the extra dimension
         if p_rank == 1:
-            p = p[-1]
+            p = np.squeeze(p)
 
         if self.horizontal_flip:
             if p_rank == 1:
@@ -132,6 +137,8 @@ class ImageTransform:
 
 
 def np_check_image_properties(np_img, min_val=0.0, max_val=255.0, height=None, width=None, dtype=None):
+    # type: (np.ndarray, float, float, int, int, np.dtype) -> None
+
     """
     Checks the image properties and raises ImageValidationError if assumptions do not match the image.
     The exact problem can be found by examining the error field of the raised ImageValidationError.
@@ -382,6 +389,8 @@ def np_apply_random_transform(images,
 
 
 def np_random_channel_shift(x, intensity, min_c=0.0, max_c=255.0, channel_axis=0):
+    # type: (np.ndarray, float, float, float, int) -> np.ndarray
+
     x = np.rollaxis(x, channel_axis, 0)
     channel_images = [np.clip(x_channel + np.random.uniform(-intensity, intensity), min_c, max_c) for x_channel in x]
     x = np.stack(channel_images, axis=0)
@@ -390,7 +399,7 @@ def np_random_channel_shift(x, intensity, min_c=0.0, max_c=255.0, channel_axis=0
 
 
 def np_crop_image(np_img, x1, y1, x2, y2):
-    # type: (np.array, int, int, int, int) -> np.array
+    # type: (np.ndarray, int, int, int, int) -> np.ndarray
 
     """
     Crops an image represented as a Numpy array. The function expects the numpy array
@@ -417,13 +426,14 @@ def np_crop_image(np_img, x1, y1, x2, y2):
         y2 > y_size or
         y1 < 0 or
         y2 < 0):
-        raise ValueError('Invalid crop parameters for image shape: {}, ({}, {}), ({}, {})'
-                         .format(np_img.shape, x1, y1, x2, y2))
+        raise ValueError('Invalid crop parameters for image shape: {}, ({}, {}), ({}, {})'.format(np_img.shape, x1, y1, x2, y2))
 
     return np_img[y1:y2, x1:x2]
 
 
 def np_crop_image_with_fill(np_img, x1, y1, x2, y2, cval):
+    # type: (np.ndarray, int, int, int, int, np.ndarray) -> np.ndarray
+
     """
     Crops an image represented as a Numpy array. Fills the over reaching values with cval.
     The function expects the numpy array in dimensions: HxWxC
@@ -469,7 +479,7 @@ def np_crop_image_with_fill(np_img, x1, y1, x2, y2, cval):
 
 
 def np_scale_image_with_padding(np_img, shape, cval, interp='bilinear'):
-    # type: (np.array, tuple[int], np.array, str) -> np.array
+    # type: (np.ndarray, tuple[int], np.ndarray, str) -> np.ndarray
 
     """
     Scales the image to the desired shape filling the overflowing area with the provided constant
@@ -506,7 +516,7 @@ def np_scale_image_with_padding(np_img, shape, cval, interp='bilinear'):
 
 
 def np_pad_image_to_shape(np_img, shape, cval):
-    # type: (np.array, (int,int), np.array) -> np.array
+    # type: (np.ndarray, (int,int), np.ndarray) -> np.ndarray
 
     """
     Pads the image evenly on every side until it matches the dimensions given in
@@ -580,7 +590,7 @@ def np_from_normalized_to_255(val):
 
 
 def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_stddev=None, clamp_to_range=False, inplace=False):
-    # type: (np.array, np.array, np.array, bool, bool) -> np.array
+    # type: (np.ndarray, np.ndarray, np.ndarray, bool, bool) -> np.ndarray
 
     """
     Normalizes the color channels from the given image to zero-centered
@@ -638,7 +648,12 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
             raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
 
     if clamp_to_range:
-        normalized_img_array = np.clip(normalized_img_array, -1.0, 1.0, out=normalized_img_array)
+        min_val = np.min(normalized_img_array)
+        max_val = np.max(normalized_img_array)
+
+        if min_val < -1.0 or max_val > 1.0:
+            print 'WARNING: Values outside of range [-1.0, 1.0] were found after normalization - clipping: [{}, {}]'.format(min_val, max_val)
+            normalized_img_array = np.clip(normalized_img_array, -1.0, 1.0, out=normalized_img_array)
 
     # Sanity check for the image values, we shouldn't have any NaN or inf values
     if np.any(np.isnan(normalized_img_array)):
@@ -651,7 +666,7 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
 
 
 def np_get_random_crop_area(np_image, crop_width, crop_height):
-    # type: (np.array, int, int) -> ((int, int), (int, int))
+    # type: (np.ndarray, int, int) -> ((int, int), (int, int))
 
     """
     The function returns a random crop from the image as (x1, y1), (x2, y2).
@@ -677,7 +692,7 @@ def np_get_random_crop_area(np_image, crop_width, crop_height):
 
 
 def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_iter=20, normalize_img=False, borders_only=False):
-    # type: (np.array, int, int, float) -> np.array
+    # type: (np.ndarray, int, int, float) -> np.ndarray
 
     """
     Returns the SLIC superpixel segmentation for the parameter image as a numpy array.
@@ -707,7 +722,7 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
 
 
 def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False, borders_only=False):
-    # type: (np.array, float, float, int, bool) -> np.array
+    # type: (np.ndarray, float, float, int, bool) -> np.ndarray
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
@@ -722,7 +737,7 @@ def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, mul
 
 
 def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_img=False, borders_only=False):
-    # type: (np.array, int, float) -> np.array
+    # type: (np.ndarray, int, float) -> np.ndarray
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
@@ -739,7 +754,7 @@ def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_
 
 
 def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5, normalize_img=False, borders_only=False):
-    # type: (np.array, float, float, float, float) -> np.array
+    # type: (np.ndarray, float, float, float, float) -> np.ndarray
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)

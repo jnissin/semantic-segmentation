@@ -283,8 +283,10 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         # Calculate uniform probabilities for all classes that have non zero samples
         self.iter_mode = iter_mode
-        self._class_probabilities = [0.0] * len(material_samples)
+        self._material_category_sampling_probabilities = [0.0] * len(material_samples)
         self._num_non_zero_classes = sum(1 for material_category in material_samples if len(material_category) > 0)
+
+        self.logger.debug_log('Samples per material category: {}'.format([len(material_category) for material_category in material_samples]))
 
         if self.iter_mode == MaterialSampleIterationMode.UNIQUE:
             self._samples_per_material_category_per_epoch = None
@@ -306,26 +308,32 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             else:
                 self._material_samples.append(np.random.permutation(len(material_category)))
 
-        # Build a flattened list of all the material samples (for regular iteration)
+        # Build a flattened list of all the material samples (for unique iteration)
         self._material_samples_flattened = []
 
         for i in range(len(self._material_samples)):
             for j in range(len(self._material_samples[i])):
                 self._material_samples_flattened.append((i, j))
 
+        # Calculate the sampling probabilities for each class - for uniform sampling all non-zero material
+        # categories should have the same probabilities
+        material_category_sampling_probability = 1.0 / self._num_non_zero_classes
+
         for i in range(len(material_samples)):
             num_samples_in_category = len(material_samples[i])
 
             if num_samples_in_category > 0:
-                self._class_probabilities[i] = 1.0 / self._num_non_zero_classes
+                self._material_category_sampling_probabilities[i] = material_category_sampling_probability
             else:
                 # Zero is assumed as the background class and should/can have zero instances
                 if i != 0:
                     self.logger.warn('Material class {} has 0 material samples'.format(i))
 
-                self._class_probabilities[i] = 0.0
+                self._material_category_sampling_probabilities[i] = 0.0
 
-        # Keep track of the current sample in each material category
+        self.logger.debug_log('Material category sampling probabilities: {}'.format(self._material_category_sampling_probabilities))
+
+        # Keep track of the current sample (next sample to be given) in each material category
         self.num_material_classes = len(material_samples)
         self._current_samples = [0] * self.num_material_classes
 
@@ -352,14 +360,13 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
 
     def _get_next_batch_uniform(self):
-        # Class 0 is assumed to be background so classes will be [1,num_classes-1]
-        sample_classes = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self._class_probabilities)
-        ret = []
+        sample_categories = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self._material_category_sampling_probabilities)
+        batch = []
 
-        for sample_category_idx in sample_classes:
+        for sample_category_idx in sample_categories:
             internal_sample_idx = self._current_samples[sample_category_idx]
             sample_idx = self._material_samples[sample_category_idx][internal_sample_idx]
-            ret.append((sample_category_idx, sample_idx))
+            batch.append((sample_category_idx, sample_idx))
 
             # Keep track of the used samples in each category
             self._current_samples[sample_category_idx] += 1
@@ -370,13 +377,15 @@ class MaterialSampleDataSetIterator(DataSetIterator):
                 self._current_samples[sample_category_idx] = 0
 
                 if self.shuffle:
+                    self.logger.debug_log('Shuffling material sample category {} with {} samples'
+                                          .format(sample_category_idx, len(self._material_samples[sample_category_idx])))
                     self._material_samples[sample_category_idx] = np.random.permutation(len(self._material_samples[sample_category_idx]))
                 else:
                     self._material_samples[sample_category_idx] = np.arange(len(self._material_samples[sample_category_idx]))
 
         n_samples = self._samples_per_material_category_per_epoch * self._num_non_zero_classes
         current_index = (self.batch_index * self.batch_size) % n_samples
-        current_batch_size = len(ret)
+        current_batch_size = len(batch)
 
         if n_samples > current_index + self.batch_size:
             self.batch_index += 1
@@ -385,7 +394,8 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         self.step_index += 1
 
-        return ret, current_index, current_batch_size, self.step_index
+        self.logger.debug_log('Batch {}: {}'.format(self.step_index, batch))
+        return batch, current_index, current_batch_size, self.step_index
 
     def _get_next_batch_unique(self):
         if self.batch_index == 0 and self.shuffle:
@@ -402,7 +412,9 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         self.step_index += 1
 
-        return self._material_samples_flattened[current_index: current_index + current_batch_size], current_index, current_batch_size, self.step_index
+        batch = self._material_samples_flattened[current_index: current_index + current_batch_size]
+        self.logger.debug_log('Batch {}: {}'.format(self.step_index, list(batch)))
+        return batch, current_index, current_batch_size, self.step_index
 
     @property
     def num_steps_per_epoch(self):
@@ -1094,7 +1106,7 @@ class SegmentationDataGenerator(DataGenerator):
         y_diff = y_max - y_min
         x_diff = x_max - x_min
 
-        if y_diff < 2 or x_diff < 2:
+        if y_diff <= 3 or x_diff <= 3:
             return None
 
         # Rebuild the bounding box and represent in yx
