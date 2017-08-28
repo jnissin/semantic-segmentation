@@ -48,12 +48,12 @@
 
     "mean_teacher_params": {
       "teacher_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-      "ema_smoothing_coefficient_function": "lambda x: 0.999 if x >= 20000 else 0.99",
-      "consistency_cost_coefficient_function": "lambda x: 1.0 * min(np.exp(-5.0*(1.0-((float(x)/20000.0)**2))), 1.0)"
+      "ema_smoothing_coefficient_function": "lambda x: 0.999 if x >= 200 else 0.99",
+      "consistency_cost_coefficient_function": "lambda x: 1.0 * min(np.exp(-5.0*(1.0-((float(x)/200.0)**2))), 1.0)"
     },
 
     "superpixel_params": {
-      "unlabeled_cost_coefficient_function": "lambda x: 5.0 * min(np.exp(-5.0*(1.0-((float(x)/30000.0)**2))), 1.0) if x >= 10000 else 0.0",
+      "unlabeled_cost_coefficient_function": "lambda x: 5.0 * min(np.exp(-5.0*(1.0-((float(x)/300.0)**2))), 1.0) if x >= 100 else 0.0",
       "label_generation_function_name": "felzenszwalb"
     },
 
@@ -61,7 +61,7 @@
     "use_material_samples": true,
 
     "data_augmentation_params": {
-      "augmentation_probability_function": "lambda x: 0.8 * min(np.exp(-5.0*(1.0-((float(x)/20000.0)**2))), 1.0)",
+      "augmentation_probability_function": "lambda x: 0.8 * min(np.exp(-5.0*(1.0-((float(x)/200.0)**2))), 1.0)",
       "rotation_range": 40.0,
       "zoom_range": 0.25,
       "width_shift_range": 0.15,
@@ -69,7 +69,7 @@
       "channel_shift_range": 0.05,
       "horizontal_flip": true,
       "vertical_flip": false,
-      "gaussian_noise_stddev_function": "lambda x: 0.15 if x <= 60000 else max(0.15 * (1.0 - float(x-60000)/10000.0, 0.0))",
+      "gaussian_noise_stddev_function": "lambda x: 0.15 if x <= 600 else max(0.15 * (1.0 - float(x-600)/100.0, 0.0))",
       "gamma_adjust_range": 0.5
     },
 
