@@ -126,6 +126,7 @@ def main():
     per_channel_mean = []
     per_channel_stddev = []
     class_weights = []
+    material_samples_class_weights = []
     labeled_per_channel_mean = []
     labeled_per_channel_stddev = []
 
@@ -158,11 +159,19 @@ def main():
         labeled_per_channel_stddev = dataset_utils.calculate_per_channel_stddev(training_labeled_photos, labeled_per_channel_mean, 3).tolist()
         print 'Labeled only per-channel stddev calculation for {} files finished in {} seconds'.format(len(training_labeled_photos), time.time()-start_time)
 
-        # Median frequency balancing weights
-        print 'Starting median frequency balancing weights calculation for {} masks with {} jobs. Ignoring calsses: {}'.format(len(if_masks), n_jobs, ignored_classes)
+        # Median frequency balancing weights for full images
+        print 'Starting median frequency balancing weights calculation for {} masks with {} jobs. Ignoring classes: {}'.format(len(if_masks), n_jobs, ignored_classes)
         start_time = time.time()
         class_weights = dataset_utils.calculate_median_frequency_balancing_weights(if_masks, material_class_information=materials, ignored_classes=ignored_classes).tolist()
         print 'Median frequency balancing weight calculation for {} files finished in {} seconds'.format(len(if_masks), time.time()-start_time)
+
+        if calculate_material_samples:
+            num_material_samples = sum([len(material_sample_category) for material_sample_category in training_material_samples])
+            # Median frequency balancing weights for material samples only
+            print 'Starting median frequency balancing weights calculation for {} material samples.'.format(num_material_samples)
+            start_time = time.time()
+            material_samples_class_weights = dataset_utils.calculate_material_samples_mfb_class_weights(training_material_samples)
+            print 'Median frequency balancing weight calculation for {} material samples finished in {} seconds'.format(num_material_samples, time.time()-start_time)
 
     data_set = SegmentationDataSetInformation(training_set,
                                               validation_set,
@@ -171,6 +180,7 @@ def main():
                                               per_channel_mean,
                                               per_channel_stddev,
                                               class_weights,
+                                              material_samples_class_weights,
                                               labeled_per_channel_mean,
                                               labeled_per_channel_stddev)
 

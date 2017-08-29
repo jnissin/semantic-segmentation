@@ -994,6 +994,7 @@ class SegmentationDataGenerator(DataGenerator):
                     bbox = material_sample.get_bbox_abs()
                     np_photo = np_orig_photo
                     np_mask = np_orig_mask
+                    self.logger.debug_log('Could not recover a valid bbox - reverting to original input and material sample')
 
         # If a crop size is given: take a random crop of both the image and the mask
         if self.crop_shape is not None:
@@ -1033,6 +1034,8 @@ class SegmentationDataGenerator(DataGenerator):
                 bbox_width = bbox_xmax - bbox_xmin
                 height_diff = abs(bbox_height - crop_height)
                 width_diff = abs(bbox_width - crop_width)
+
+                self.logger.debug_log('Bbox width: {}, height: {}'.format(bbox_width, bbox_height))
 
                 # If the crop can fit the whole material sample within it
                 if bbox_height < crop_height and bbox_width < crop_width:

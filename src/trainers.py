@@ -128,9 +128,10 @@ class TrainerBase:
 
         # Seed the random in order to be able to reproduce the results
         # Note: both random and np.random
-        self.logger.log('Initializing random and np.random with random seed: {}'.format(self.get_config_value('random_seed')))
-        random.seed(self.get_config_value('random_seed'))
-        np.random.seed(self.get_config_value('random_seed'))
+        self.random_seed = int(self.get_config_value('random_seed'))
+        self.logger.log('Initializing random and np.random with random seed: {}'.format(self.random_seed))
+        random.seed(self.random_seed)
+        np.random.seed(self.random_seed)
 
         # Set image data format
         self.logger.log('Setting Keras image data format to: {}'.format(self.get_config_value('image_data_format')))
@@ -217,34 +218,6 @@ class TrainerBase:
 
     def set_config_value(self, key, value):
         self.config[key] = value
-
-    def get_class_weights(self, data_set_information, material_class_information):
-        # type: (SegmentationDataSetInformation, list[MaterialClassInformation]) -> np.array[float]
-        use_class_weights = bool(self.get_config_value('use_class_weights'))
-        num_classes = len(material_class_information)
-
-        # Calculate class weights for the data if necessary
-        if use_class_weights:
-            class_weights = data_set_information.class_weights
-            override_class_weights = self.get_config_value('override_class_weights')
-
-            if override_class_weights is not None:
-                self.logger.log('Found override class weights: {}'.format(override_class_weights))
-                self.logger.log('Using override class weights instead of data set information class weights')
-                class_weights = override_class_weights
-
-            if class_weights is None or (len(class_weights) != num_classes):
-                raise ValueError('Existing class weights were not found')
-            if len(class_weights) != num_classes:
-                raise ValueError('Number of classes in class weights did not match number of material classes: {} vs {}'
-                                 .format(len(class_weights), num_classes))
-
-            self.logger.log('Using class weights: {}'.format(class_weights))
-            class_weights = np.array(class_weights)
-
-            return class_weights
-        else:
-            return np.ones([num_classes], dtype=np.float32)
 
     def get_callbacks(self):
         keras_model_checkpoint = self.get_config_value('keras_model_checkpoint')
@@ -644,8 +617,8 @@ class SegmentationTrainer(TrainerBase):
         self.path_to_labeled_photos = self.get_config_value('path_to_labeled_photos')
         self.path_to_labeled_masks = self.get_config_value('path_to_labeled_masks')
         self.path_to_unlabeled_photos = self.get_config_value('path_to_unlabeled_photos')
-        self.use_class_weights = self.get_config_value('use_class_weights')
-        self.use_material_samples = self.get_config_value('use_material_samples')
+        self.use_class_weights = bool(self.get_config_value('use_class_weights'))
+        self.use_material_samples = bool(self.get_config_value('use_material_samples'))
 
         self.input_shape = self.get_config_value('input_shape')
         self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
@@ -666,7 +639,6 @@ class SegmentationTrainer(TrainerBase):
 
         self.use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
         self.num_color_channels = self.get_config_value('num_color_channels')
-        self.random_seed = self.get_config_value('random_seed')
 
         self.num_epochs = self.get_config_value('num_epochs')
         self.num_labeled_per_batch = self.get_config_value('num_labeled_per_batch')
@@ -791,8 +763,7 @@ class SegmentationTrainer(TrainerBase):
         self.logger.log('Total data set size: {}'.format(total_data_set_size))
 
         # Class weights
-        self.class_weights = self.get_class_weights(data_set_information=self.data_set_information,
-                                                    material_class_information=self.material_class_information)
+        self.class_weights = self.get_class_weights(data_set_information=self.data_set_information)
 
     def _init_models(self):
         super(SegmentationTrainer, self)._init_models()
@@ -965,6 +936,43 @@ class SegmentationTrainer(TrainerBase):
         self.logger.log('Using material samples: {}'.format(self.training_data_generator.use_material_samples))
         self.logger.log('Using per-channel mean: {}'.format(self.training_data_generator.per_channel_mean))
         self.logger.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
+
+    def get_class_weights(self, data_set_information):
+        # type: (SegmentationDataSetInformation) -> np.ndarray[np.float32]
+
+        # Calculate class weights for the data if necessary
+        if self.use_class_weights:
+
+            class_weights = data_set_information.class_weights
+            override_class_weights = self.get_config_value('override_class_weights')
+
+            # Legacy support for data sets without material_samples_class_weights
+            if self.use_material_samples and hasattr(data_set_information, 'material_samples_class_weights'):
+                if data_set_information.material_samples_class_weights is not None and len(data_set_information.material_samples_class_weights) > 0:
+                    class_weights = data_set_information.material_samples_class_weights
+                else:
+                    self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
+                                     'could be found - use override class weights or recreate the dataset.')
+            elif self.use_material_samples and not hasattr(data_set_information, 'material_samples_class_weights'):
+                self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
+                                 'could be found - use override class weights or recreate the dataset.')
+
+            if override_class_weights is not None:
+                self.logger.log('Found override class weights: {}'.format(override_class_weights))
+                self.logger.log('Using override class weights instead of data set information class weights')
+                class_weights = override_class_weights
+
+            if class_weights is None or (len(class_weights) != self.num_classes):
+                raise ValueError('Existing class weights were not found')
+            if len(class_weights) != self.num_classes:
+                raise ValueError('Number of classes in class weights did not match number of material classes: {} vs {}'
+                                 .format(len(class_weights), self.num_classes))
+
+            self.logger.log('Using class weights: {}'.format(class_weights))
+            class_weights = np.array(class_weights, dtype=np.float32)
+            return class_weights
+        else:
+            return np.ones([self.num_classes], dtype=np.float32)
 
     @property
     def is_supervised_only_trainer(self):

@@ -161,6 +161,7 @@ class SegmentationDataSetInformation(object):
                  per_channel_mean=[],
                  per_channel_stddev=[],
                  class_weights=[],
+                 material_samples_class_weights=[],
                  labeled_per_channel_mean=[],
                  labeled_per_channel_stddev=[]):
         # type: (SegmentationTrainingSetInformation, SegmentationSetInformation, SegmentationSetInformation, int, list[float], list[float], list[float], list[float]) -> None
@@ -173,6 +174,7 @@ class SegmentationDataSetInformation(object):
         self.per_channel_mean = per_channel_mean
         self.per_channel_stddev = per_channel_stddev
         self.class_weights = class_weights
+        self.material_samples_class_weights = material_samples_class_weights
 
         self.labeled_per_channel_mean = labeled_per_channel_mean
         self.labeled_per_channel_stddev = labeled_per_channel_stddev
@@ -550,6 +552,59 @@ def _calculate_mask_class_frequencies(image_file, material_class_information):
     img_pixels = (class_pixels > 0.0) * num_pixels
 
     return class_pixels, img_pixels
+
+
+def calculate_material_samples_class_probabilities(material_samples):
+    # type: (list[list[MaterialSample]]) -> list[float]
+
+    class_probabilities = []
+
+    for class_samples in material_samples:
+        class_bbox_pixels = 0.0
+        class_mat_pixels = 0.0
+
+        for material_sample in class_samples:
+            class_bbox_pixels += material_sample.bbox_size
+            class_mat_pixels += material_sample.num_material_pixels
+
+        class_probabilities.append(class_mat_pixels/max(class_bbox_pixels, 1.0))
+
+    return class_probabilities
+
+
+def calculate_material_samples_mfb_class_weights(material_samples):
+    class_probabilities = np.array(calculate_material_samples_class_probabilities(material_samples))
+    non_zero_class_probabilities = np.array([p for p in class_probabilities if p > 0.0])
+    median_probability = np.median(non_zero_class_probabilities)
+
+    # Calculate class weights and avoid division by zero for ignored classes such as
+    # the background
+    class_weights = []
+
+    for p in class_probabilities:
+        if p > 0.0:
+            class_weights.append(median_probability/p)
+        else:
+            class_weights.append(0.0)
+
+    return class_weights
+
+
+def calculate_material_samples_enet_class_weights(material_samples):
+    c = 1.02
+    class_probabilities = np.array(calculate_material_samples_class_probabilities(material_samples))
+
+    # Calculate class weights and avoid division by zero for ignored classes such as
+    # the background
+    class_weights = []
+
+    for p in class_probabilities:
+        if p > 0.0:
+            class_weights.append(1.0/np.log(c+p))
+        else:
+            class_weights.append(0.0)
+
+    return class_weights
 
 
 def get_material_samples(mask_files, material_class_information, background_class=0, min_sample_size=5):

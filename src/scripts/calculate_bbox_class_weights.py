@@ -6,59 +6,6 @@ import numpy as np
 from ..utils import dataset_utils
 
 
-def calculate_class_probabilities(material_samples):
-    # type: (list[list[MaterialSample]]) -> list[float]
-
-    class_probabilities = []
-
-    for class_samples in material_samples:
-        class_bbox_pixels = 0.0
-        class_mat_pixels = 0.0
-
-        for material_sample in class_samples:
-            class_bbox_pixels += material_sample.bbox_size
-            class_mat_pixels += material_sample.num_material_pixels
-
-        class_probabilities.append(class_mat_pixels/max(class_bbox_pixels, 1.0))
-
-    return class_probabilities
-
-
-def calculate_mfb_class_weights(material_samples):
-    class_probabilities = np.array(calculate_class_probabilities(material_samples))
-    non_zero_class_probabilities = np.array([p for p in class_probabilities if p > 0.0])
-    median_probability = np.median(non_zero_class_probabilities)
-
-    # Calculate class weights and avoid division by zero for ignored classes such as
-    # the background
-    class_weights = []
-
-    for p in class_probabilities:
-        if p > 0.0:
-            class_weights.append(median_probability/p)
-        else:
-            class_weights.append(0.0)
-
-    return class_weights
-
-
-def calculate_enet_class_weights(material_samples):
-    c = 1.02
-    class_probabilities = np.array(calculate_class_probabilities(material_samples))
-
-    # Calculate class weights and avoid division by zero for ignored classes such as
-    # the background
-    class_weights = []
-
-    for p in class_probabilities:
-        if p > 0.0:
-            class_weights.append(1.0/np.log(c+p))
-        else:
-            class_weights.append(0.0)
-
-    return class_weights
-
-
 def main():
 
     ap = argparse.ArgumentParser(description="Calculates class weights from the bbox data of a data set information file")
@@ -83,9 +30,9 @@ def main():
     print 'Calculating {} weights from {} material samples in {} material classes from the training set'.format(mode, num_material_samples, num_material_classes)
 
     if mode == 'mfb':
-        class_weights = calculate_mfb_class_weights(material_samples)
+        class_weights = dataset_utils.calculate_material_samples_mfb_class_weights(material_samples)
     elif mode == 'enet':
-        class_weights = calculate_enet_class_weights(material_samples)
+        class_weights = dataset_utils.calculate_material_samples_enet_class_weights(material_samples)
     else:
         raise ValueError('Uknown mode: {}'.format(mode))
 
