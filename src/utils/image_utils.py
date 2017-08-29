@@ -110,27 +110,26 @@ class ImageTransform:
         """
 
         p = np.array(coordinate).astype(np.float32)
-        p_rank = len(p.shape)
 
-        if not 1 <= p_rank <= 2:
+        if not 1 <= p.ndim <= 2:
             raise ValueError('The coordinates must be either of rank 1 or 2: [2] or [N, 2]')
 
         if self.horizontal_flip:
-            if p_rank == 1:
+            if p.ndim == 1:
                 p[0] = self.image_width - p[0]
-            elif p_rank == 2:
+            elif p.ndim == 2:
                 p[:, 0] = self.image_width - p[:, 0]
 
         if self.vertical_flip:
-            if p_rank == 1:
+            if p.ndim == 1:
                 p[1] = self.image_height - p[1]
-            elif p_rank == 2:
+            elif p.ndim == 2:
                 p[:, 1] = self.image_height - p[:, 1]
 
         p = skitransform.matrix_transform(p, self.transform.params)
 
         # The matrix_transform always returns an ndarray of [N,2] if we had rank 1 squeeze the extra dimension
-        if p_rank == 1:
+        if p.ndim == 1:
             p = np.squeeze(p)
 
         return p

@@ -9,14 +9,14 @@ import settings
 from trainers import SegmentationTrainer, TrainerBase
 
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = False
-_EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGSTOP, signal.SIGQUIT]
+_EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
 
 
 def get_signal_handler(trainer):
     # type: (TrainerBase) -> ()
 
-    def signal_handler(signal, frame):
-        print 'Received signal: {}'.format(signal)
+    def signal_handler(s, f):
+        print 'Received signal: {}'.format(s)
 
         global _EARLY_EXIT_SIGNAL_HANDLER_CALLED
         if not _EARLY_EXIT_SIGNAL_HANDLER_CALLED:
@@ -59,6 +59,12 @@ def main():
     model_folder_name = args['mfolder']
     max_jobs = args['maxjobs']
 
+    if settings.DEBUG:
+        print 'RUNNING IN DEBUG MODE'
+
+    if settings.PROFILE:
+        print 'RUNNING IN PROFILE MODE'
+
     if wdir_path:
         print 'Setting working directory to: {}'.format(wdir_path)
         os.chdir(wdir_path)
@@ -66,12 +72,6 @@ def main():
     if max_jobs:
         print 'Setting maximum number of parallel jobs to: {}'.format(max_jobs)
         settings.MAX_NUMBER_OF_JOBS = max_jobs
-
-    if settings.DEBUG:
-        print 'RUNNING IN DEBUG MODE'
-
-    if settings.PROFILE:
-        print 'RUNNING IN PROFILE MODE'
 
     if trainer_super_type == 'segmentation':
         trainer = SegmentationTrainer(trainer_type=trainer_type,
