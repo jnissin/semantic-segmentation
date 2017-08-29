@@ -40,7 +40,7 @@ class MaterialSample(object):
         self.image_width = int(image_width)
         self.image_height = int(image_height)
 
-        # Note: pixel info list values are tuples of (pixel value, y coor, x coord)
+        # Note: pixel info list values are tuples of (pixel value, y coord, x coord)
         y_min = min(pixel_info_list, key=lambda t: t[1])[1]
         x_min = min(pixel_info_list, key=lambda t: t[2])[2]
         y_max = max(pixel_info_list, key=lambda t: t[1])[1]

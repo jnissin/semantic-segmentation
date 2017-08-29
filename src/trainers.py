@@ -1122,8 +1122,7 @@ class SegmentationTrainer(TrainerBase):
             b_max = np.max(img_batch)
 
             for i in range(0, len(img_batch)):
-                img = img_batch[i]
-                img = ((img - b_min) / (b_max - b_min)) * 255.0
+                img = ((img_batch[i] - b_min) / (b_max - b_min)) * 255.0
                 mask = mask_batch[i][:, :, np.newaxis]*255.0
                 self.logger.debug_log_image(img, '{}_{}_{}_photo.jpg'.format("val" if validation else "tr", step_index, i), scale=False)
                 self.logger.debug_log_image(mask, file_name='{}_{}_{}_mask.png'.format("val" if validation else "tr", step_index, i), format='PNG')
