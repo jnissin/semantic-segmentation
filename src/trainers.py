@@ -122,7 +122,7 @@ class TrainerBase:
         self.logger = Logger(log_file_path=log_file_path, use_timestamp=True, log_to_stdout_default=log_to_stdout)
 
         # Log the Keras and Tensorflow versions
-        self.logger.log('\n\n############################################################\n\n')
+        self.logger.log('############################################################\n\n')
         self.logger.log('Using Keras version: {}'.format(keras.__version__))
         self.logger.log('Using Tensorflow version: {}'.format(K.tf.__version__))
 
@@ -920,6 +920,8 @@ class SegmentationTrainer(TrainerBase):
         # Note: The teacher has a supervised batch data format for validation data generation
         # because it doesn't have the semi-supervised loss lambda layer since we need to predict with it
         if self.using_mean_teacher_method:
+            self.logger.log('Creating teacher validation data generator')
+
             self.teacher_validation_data_generator = SegmentationDataGenerator(
                 labeled_data_set=self.validation_set,
                 unlabeled_data_set=None,

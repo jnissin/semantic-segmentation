@@ -1047,20 +1047,20 @@ class SegmentationDataGenerator(DataGenerator):
 
                 # If the crop can fit the whole material sample within it
                 if bbox_height <= crop_height and bbox_width <= crop_width:
-                    crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff, bbox_ymin + 1))
-                    crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff, bbox_xmin + 1))
+                    crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff + 1, bbox_ymin + 1))
+                    crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff + 1, bbox_xmin + 1))
                 # If the bounding box is bigger than the crop in both width and height
                 elif bbox_height > crop_height and bbox_width > crop_width:
                     crop_ymin = bbox_ymin + np.random.randint(0, height_diff + 1)
                     crop_xmin = bbox_xmin + np.random.randint(0, width_diff + 1)
                 # If the crop width is smaller than the bbox width
                 elif bbox_width > crop_width:
-                    crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff, bbox_ymin + 1))
+                    crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff + 1, bbox_ymin + 1))
                     crop_xmin = bbox_xmin + np.random.randint(0, width_diff + 1)
                 # If the crop height is smaller than the bbox height
                 elif bbox_height > crop_height:
                     crop_ymin = bbox_ymin + np.random.randint(0, height_diff + 1)
-                    crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff, bbox_xmin + 1))
+                    crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff + 1, bbox_xmin + 1))
                 else:
                     raise ValueError('Unable to determine crop y_min and x_min')
 
