@@ -9,12 +9,15 @@ import settings
 from trainers import SegmentationTrainer, SegmentationTrainer, TrainerBase
 
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = False
+_EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT]
 
 
 def get_signal_handler(trainer):
     # type: (TrainerBase) -> ()
 
     def signal_handler(signal, frame):
+        print 'Received signal: {}'.format(signal)
+
         global _EARLY_EXIT_SIGNAL_HANDLER_CALLED
         if not _EARLY_EXIT_SIGNAL_HANDLER_CALLED:
 
@@ -84,8 +87,11 @@ def main():
     else:
         raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
 
-    signal.signal(signal.SIGINT, get_signal_handler(trainer))
-    signal.signal(signal.SIGTERM, get_signal_handler(trainer))
+    # Register early exit signal handlers
+    for sig in _EARLY_EXIT_SIGNALS:
+        print 'Registering early exit signal handler for signal: {}'.format(sig)
+        signal.signal(sig, get_signal_handler(trainer))
+
     history = trainer.train()
 
 
