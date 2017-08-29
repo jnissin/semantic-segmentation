@@ -377,8 +377,6 @@ class MaterialSampleDataSetIterator(DataSetIterator):
                 self._current_samples[sample_category_idx] = 0
 
                 if self.shuffle:
-                    self.logger.debug_log('Shuffling material sample category {} with {} samples'
-                                          .format(sample_category_idx, len(self._material_samples[sample_category_idx])))
                     self._material_samples[sample_category_idx] = np.random.permutation(len(self._material_samples[sample_category_idx]))
                 else:
                     self._material_samples[sample_category_idx] = np.arange(len(self._material_samples[sample_category_idx]))
@@ -993,8 +991,7 @@ class SegmentationDataGenerator(DataGenerator):
                     bbox = material_sample.get_bbox_abs()
                     np_photo = np_orig_photo
                     np_mask = np_orig_mask
-                    self.logger.warn('Mask does not contain material {} after augmentation - reverting to original input and bbox'
-                                     .format(material_sample.material_id))
+                    self.logger.debug_log('Mask does not contain material {} after augmentation - reverting to original input and bbox'.format(material_sample.material_id))
                 # If the material exists in the mask image
                 else:
                     # Transform the bounding box
@@ -1005,7 +1002,7 @@ class SegmentationDataGenerator(DataGenerator):
                         bbox = material_sample.get_bbox_abs()
                         np_photo = np_orig_photo
                         np_mask = np_orig_mask
-                        self.logger.warn('Could not rebuild a valid axis-aligned bbox after augmentation - reverting to original input and bbox')
+                        self.logger.debug_log('Could not rebuild a valid axis-aligned bbox after augmentation - reverting to original input and bbox')
 
         # If a crop size is given: take a random crop of both the image and the mask
         if self.crop_shape is not None:
@@ -1035,47 +1032,55 @@ class SegmentationDataGenerator(DataGenerator):
             # Use the bounding box information to take a targeted crop
             else:
                 tlc, trc, brc, blc = bbox
-                crop_height = self.crop_shape[0]
-                crop_width = self.crop_shape[1]
-                bbox_ymin = tlc[0]
-                bbox_ymax = blc[0]
-                bbox_xmin = tlc[1]
-                bbox_xmax = trc[1]
+                crop_height, crop_width = self.crop_shape
+                img_height, img_width = np_mask.shape[0], np_mask.shape[1]
+                bbox_ymin, bbox_ymax = tlc[0], blc[0]
+                bbox_xmin, bbox_xmax = tlc[1], trc[1]
                 bbox_height = bbox_ymax - bbox_ymin
                 bbox_width = bbox_xmax - bbox_xmin
-                height_diff = abs(bbox_height - crop_height)
-                width_diff = abs(bbox_width - crop_width)
 
-                self.logger.debug_log('Bbox width: {}, height: {}'.format(bbox_width, bbox_height))
+                if bbox_height <= 0 or bbox_width <= 0:
+                    raise ValueError('Invalid bounding box dimensions: {}'.format(bbox))
+
+                height_diff = abs(crop_height - bbox_height)
+                width_diff = abs(crop_width - bbox_width)
 
                 # If the crop can fit the whole material sample within it
-                if bbox_height < crop_height and bbox_width < crop_width:
+                if bbox_height <= crop_height and bbox_width <= crop_width:
                     crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff, bbox_ymin + 1))
-                    crop_ymax = crop_ymin + crop_height
                     crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff, bbox_xmin + 1))
-                    crop_xmax = crop_xmin + crop_width
-
-                # If the crop can't fit the whole material sample within it
-                else:
+                # If the bounding box is bigger than the crop in both width and height
+                elif bbox_height > crop_height and bbox_width > crop_width:
                     crop_ymin = bbox_ymin + np.random.randint(0, height_diff + 1)
-                    crop_ymax = crop_ymin + crop_height
                     crop_xmin = bbox_xmin + np.random.randint(0, width_diff + 1)
-                    crop_xmax = crop_xmin + crop_width
+                # If the crop width is smaller than the bbox width
+                elif bbox_width > crop_width:
+                    crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff, bbox_ymin + 1))
+                    crop_xmin = bbox_xmin + np.random.randint(0, width_diff + 1)
+                # If the crop height is smaller than the bbox height
+                elif bbox_height > crop_height:
+                    crop_ymin = bbox_ymin + np.random.randint(0, height_diff + 1)
+                    crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff, bbox_xmin + 1))
+                else:
+                    raise ValueError('Unable to determine crop y_min and x_min')
+
+                crop_ymax = crop_ymin + crop_height
+                crop_xmax = crop_xmin + crop_width
 
                 # Sanity check for y values
-                if crop_ymax > np_mask.shape[0]:
-                    diff = crop_ymax - np_mask.shape[0]
+                if crop_ymax > img_height:
+                    diff = crop_ymax - img_height
                     crop_ymin = crop_ymin - diff
                     crop_ymax = crop_ymax - diff
 
                 # Sanity check for x values
-                if crop_xmax > np_mask.shape[1]:
-                    diff = crop_xmax - np_mask.shape[1]
+                if crop_xmax > img_width:
+                    diff = crop_xmax - img_width
                     crop_xmin = crop_xmin - diff
                     crop_xmax = crop_xmax - diff
 
-                np_mask = image_utils.np_crop_image(np_mask, crop_xmin, crop_ymin, crop_xmax, crop_ymax)
-                np_photo = image_utils.np_crop_image(np_photo, crop_xmin, crop_ymin, crop_xmax, crop_ymax)
+                np_mask = image_utils.np_crop_image(np_mask, x1=crop_xmin, y1=crop_ymin, x2=crop_xmax, y2=crop_ymax)
+                np_photo = image_utils.np_crop_image(np_photo, x1=crop_xmin, y1=crop_ymin, x2=crop_xmax, y2=crop_ymax)
 
         # If a crop size is not given, make sure the image dimensions satisfy
         # the div2_constraint i.e. are n times divisible by 2 to work within

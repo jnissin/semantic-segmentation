@@ -1082,13 +1082,14 @@ class SegmentationTrainer(TrainerBase):
         Invoked by the ExtendedModel right before train_on_batch:
 
         If using the Mean Teacher method:
-
             Modifies the batch data by appending the mean teacher predictions as the last
             element of the input data X if we are using mean teacher training.
 
-        If using standard semi-supervised:
-
+        If using superpixel semi-supervised:
             Modifies the batch data by appending the unlabeled data cost coefficients.
+
+        If using both:
+            Appends first mean teacher then superpixel extra data
 
         # Arguments
             :param step_index: the training step index
@@ -1104,12 +1105,12 @@ class SegmentationTrainer(TrainerBase):
         img_batch = x[0]
         mask_batch = x[1]
 
-        if self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
+        # Append first mean teacher data and then superpixel data if using both methods
+        if self.using_mean_teacher_method:
             x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, validation=validation)
-        elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL:
+
+        if self.using_superpixel_method:
             x = x + self._get_superpixel_extra_batch_data(img_batch, step_index=step_index, validation=validation)
-        elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
-            x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, validation=validation) + self._get_superpixel_extra_batch_data(img_batch, step_index=step_index, validation=validation)
 
         # Apply possible Gaussian Noise to batch data last e.g. teacher model Gaussian Noise requires unnoised data
         if self.using_gaussian_noise and not validation:

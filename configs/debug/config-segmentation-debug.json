@@ -69,7 +69,7 @@
       "channel_shift_range": 0.05,
       "horizontal_flip": true,
       "vertical_flip": false,
-      "gaussian_noise_stddev_function": "lambda x: 0.05 if x <= 600 else max(0.05 * (1.0 - float(x-600)/100.0), 0.0)",
+      "gaussian_noise_stddev_function": "lambda x: 0.03 if x <= 400 else max(0.05 * (1.0 - float(x-400)/100.0), 0.0)",
       "gamma_adjust_range": 0.5
     },
 
@@ -92,9 +92,9 @@
     },
 
     "stepwise_learning_rate_scheduler": {
-      "lr_schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/200.0)**2))), 1.0)",
-      "b2_schedule": "lambda x: 0.999 if x >= 200 else 0.99",
-      "last_scheduled_step": 200,
+      "lr_schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/100.0)**2))), 1.0)",
+      "b2_schedule": "lambda x: 0.999 if x >= 100 else 0.99",
+      "last_scheduled_step": 100,
       "verbose": false
     },
 
