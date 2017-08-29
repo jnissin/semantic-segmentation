@@ -988,20 +988,24 @@ class SegmentationDataGenerator(DataGenerator):
             np_photo, np_mask = images
 
             if material_sample is not None:
-                bbox = self.transform_bbox(bbox, transform)
+                # If the material was lost during the random transform - revert to unaugmented values
+                if not np.any(np.equal(np_mask, material_sample.material_r_color)):
+                    bbox = material_sample.get_bbox_abs()
+                    np_photo = np_orig_photo
+                    np_mask = np_orig_mask
+                    self.logger.warn('Mask does not contain material {} after augmentation - reverting to original input and bbox'
+                                     .format(material_sample.material_id))
+                # If the material exists in the mask image
+                else:
+                    # Transform the bounding box
+                    bbox = self.transform_bbox(bbox, transform, np_mask, material_sample)
 
-                # If we could not decode from the augmented photo, skip the augmentation and
-                # default to the original bbox from the material sample
-                if bbox is None:
-                    bbox = material_sample.get_bbox_abs()
-                    np_photo = np_orig_photo
-                    np_mask = np_orig_mask
-                    self.logger.debug_log('Could not recover a valid bbox after augmentation - reverting to original input and material sample')
-                if not self.bbox_contains_material_sample(np_mask, bbox, material_sample):
-                    bbox = material_sample.get_bbox_abs()
-                    np_photo = np_orig_photo
-                    np_mask = np_orig_mask
-                    self.logger.warn('Bbox did not contain material sample after augmentation - reverting to original input and material sample')
+                    # If we cannot build a new valid axis-aligned bounding box - revert to unaugmented values
+                    if bbox is None:
+                        bbox = material_sample.get_bbox_abs()
+                        np_photo = np_orig_photo
+                        np_mask = np_orig_mask
+                        self.logger.warn('Could not rebuild a valid axis-aligned bbox after augmentation - reverting to original input and bbox')
 
         # If a crop size is given: take a random crop of both the image and the mask
         if self.crop_shape is not None:
@@ -1087,89 +1091,73 @@ class SegmentationDataGenerator(DataGenerator):
 
         return np_photo, np_mask
 
-    def transform_bbox(self, bbox, transform):
-        # type: (tuple[tuple[int, int]], ImageTransform) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]
+    def transform_bbox(self, bbox, transform, np_mask, material_sample):
+        # type: (tuple[tuple[int, int]], ImageTransform, np.ndarray) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]
 
         # Transform the bbox coords to ndarray
         # Bbox is: tlc, trc, brc, blc
-        bbox_coords = np.array(bbox, dtype=np.float32)
+        original_bbox_coords = np.array(bbox, dtype=np.float32)
 
-        # Sanity check the dimensions
-        if bbox_coords.shape[0] != 4 and bbox_coords.shape[1] != 2:
-            raise ValueError('Expected bounding box with dimensions [4,2] got shape: {}'.format(bbox_coords.shape))
+        # Sanity check the bbox dimensions
+        if original_bbox_coords.shape[0] != 4 and original_bbox_coords.shape[1] != 2:
+            raise ValueError('Expected bounding box with dimensions [4,2] got shape: {}'.format(original_bbox_coords.shape))
 
-        # The transform needs to get the coordinates in xy instead of yx, so flip the coordinates
-        bbox_coords = np.fliplr(bbox_coords)
+        # The transform needs to get the coordinates in (x,y) instead of (y,x), so flip the coordinates
+        original_bbox_coords = np.fliplr(original_bbox_coords)
+        transformed_bbox_coords = np.round(np.fliplr(transform.transform_coordinates(original_bbox_coords))).astype(dtype=np.int32)
 
-        # Transform the bounding box corner coordinates - cast to int32
-        corners = np.round(transform.transform_coordinates(bbox_coords)).astype(dtype=np.int32)
+        # Clamp the values of the corners into valid ranges [[0, img_height], [0, img_width]]
+        y_coords, x_coords = [], []
 
-        # Figure out which corners have gone out of image boundaries
-        out_of_bounds_corner_indices = [i for i in range(len(corners)) if not (0 <= corners[i][0] <= transform.image_width and 0 <= corners[i][1] <= transform.image_height)]
-        corners = [corner for i, corner in enumerate(corners) if i not in out_of_bounds_corner_indices]
+        for i in range(len(transformed_bbox_coords)):
+            y_coords.append(np.clip(transformed_bbox_coords[i][0], 0, transform.image_height))
+            x_coords.append(np.clip(transformed_bbox_coords[i][1], 0, transform.image_width))
 
-        # If we have less than two corners we cannot rebuild the bounding box
-        if len(out_of_bounds_corner_indices) > 2 or len(corners) < 2:
-            return None
-        # tlc and brc out of bounds
-        if 0 in out_of_bounds_corner_indices and 2 in out_of_bounds_corner_indices:
-            return None
-        # trc and blc out of bounds
-        if 1 in out_of_bounds_corner_indices and 3 in out_of_bounds_corner_indices:
+        tf_y_min, tf_y_max = min(y_coords), max(y_coords)
+        tf_x_min, tf_x_max = min(x_coords), max(x_coords)
+
+        # If the area is less than 4 pixels return None
+        if tf_y_max - tf_y_min <= 2 or tf_x_max - tf_x_min <= 2:
             return None
 
-        # If we have two corners that were originally opposite corners we can rebuild
-        # the axis-aligned bounding box
-        x_coords, y_coords = zip(*corners)
-
-        y_min = min(y_coords)
-        y_max = max(y_coords)
-        x_min = min(x_coords)
-        x_max = max(x_coords)
-
-        y_diff = y_max - y_min
-        x_diff = x_max - x_min
-
-        # It is possible that the interpolation has produced additional
-        # corner color values. Check that the difference is at least three
-        # pixels between the minimum and maximum values.
-        if y_diff <= 3 or x_diff <= 3:
+        # Sanity check that the material is found within the bounding box
+        # Note: it is possible that there are other instances of the same material present in the image unrelated to this bbox
+        if not np.any(np.equal(np_mask[tf_y_min:tf_y_max, tf_x_min:tf_x_max, 0], material_sample.material_r_color)):
+            material_img_instances = np.transpose(np.where(np.equal(np_mask[:, :, 0], material_sample.material_r_color)))
+            self.logger.debug_log('Transformed bbox did not contain material {}. Original bbox: ({}, {}). Transformed bbox: ({}, {}). Image shape: {}. Image material instances: {}'
+                                  .format(material_sample.material_id, bbox[0], bbox[2], (tf_y_min, tf_x_min), (tf_y_max, tf_x_max), np_mask.shape, material_img_instances))
             return None
 
-        # Rebuild the bounding box and represent in (y,x)
-        tlc = (y_min, x_min)
-        trc = (y_min, x_max)
-        brc = (y_max, x_max)
-        blc = (y_max, x_min)
+        # Refine the values - find the area within the bounding box that actually contains the material
+        # Note: the coordinates returned by np.where are from within the transformed bounding box so add tf_y_min and tf_x_min
+        tf_material_y_coords, tf_material_x_coords = np.where(np.equal(np_mask[tf_y_min:tf_y_max, tf_x_min:tf_x_max, 0], material_sample.material_r_color))
+        tf_material_y_coords += tf_y_min
+        tf_material_x_coords += tf_x_min
+
+        rf_y_min = np.min(tf_material_y_coords)
+        rf_y_max = min(np.max(tf_material_y_coords)+1, transform.image_height)
+        rf_x_min = np.min(tf_material_x_coords)
+        rf_x_max = min(np.max(tf_material_x_coords)+1, transform.image_width)
+
+        # If the area is less than 4 pixels return None
+        if rf_y_max - rf_y_min <= 2 or rf_x_max - rf_x_min <= 2:
+            return None
+
+        # Final sanity check that the material is found within the bounding box
+        # This shouldn't be possible without a bug in the refinement code because the material was already in the transformed bbox
+        if not np.any(np.equal(np_mask[rf_y_min:rf_y_max, rf_x_min:rf_x_max, 0], material_sample.material_r_color)):
+            material_img_instances = np.transpose(np.where(np.equal(np_mask[:, :, 0], material_sample.material_r_color)))
+            self.logger.warn('Refined bbox did not contain material {}. Original bbox: ({}, {}). Transformed bbox: ({}, {}). Refined bbox: ({}, {}). Image shape: {}. Image material instances: {}'
+                             .format(material_sample.material_id, bbox[0], bbox[2], (tf_y_min, tf_x_min), (tf_y_max, tf_x_max), (rf_y_min, rf_x_min), (rf_y_max, rf_x_max), np_mask.shape, material_img_instances))
+            return None
+
+        # Rebuild the bounding box and represent in (y, x)
+        tlc = (rf_y_min, rf_x_min)
+        trc = (rf_y_min, rf_x_max)
+        brc = (rf_y_max, rf_x_max)
+        blc = (rf_y_max, rf_x_min)
 
         return tlc, trc, brc, blc
-
-    def bbox_contains_material_sample(self, np_img, bbox, material_sample):
-        # type: (np.ndarray, tuple[tuple[int, int]], MaterialSample) -> bool
-
-        # Transform the bbox coords to ndarray
-        # Bbox is: tlc, trc, brc, blc
-        bbox_coords = np.array(bbox, dtype=np.int32)
-
-        # Sanity check the dimensions
-        if bbox_coords.shape[0] != 4 and bbox_coords.shape[1] != 2:
-            raise ValueError('Expected bounding box with dimensions [4,2] got shape: {}'.format(bbox_coords.shape))
-
-        if np_img.ndim != 3:
-            raise ValueError('Expected a segmentation mask image with shape [H,W,C] got ndim: {}'.format(np_img.ndim))
-
-        y_min = bbox[0][0]
-        y_max = bbox[2][0]
-        x_min = bbox[0][1]
-        x_max = bbox[1][1]
-
-        # One-hot encoded: select the red channel from the bounding box area
-        np_bbox_img_area = np_img[y_min:y_max, x_min:x_max, 0]
-
-        if np.any(np.equal(np_bbox_img_area, material_sample.material_r_color)):
-            return True
-
-        return False
 
     def next(self):
         # type: (int, int, tuple[int]) -> (list[np.ndarray], list[np.ndarray])
