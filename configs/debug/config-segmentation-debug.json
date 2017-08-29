@@ -64,8 +64,8 @@
       "augmentation_probability_function": "lambda x: 0.8 * min(np.exp(-5.0*(1.0-((float(x)/200.0)**2))), 1.0)",
       "rotation_range": 40.0,
       "zoom_range": 0.25,
-      "width_shift_range": 0.15,
-      "height_shift_range": 0.15,
+      "width_shift_range": 0.05,
+      "height_shift_range": 0.05,
       "channel_shift_range": 0.05,
       "horizontal_flip": true,
       "vertical_flip": false,
@@ -80,11 +80,11 @@
       "epsilon": 0.0001,
       "cooldown": 5,
       "min_lr": 0,
-      "monitor": "val_loss"
+      "monitor": "loss"
     },
 
     "_early_stopping": {
-      "monitor": "loss_loss",
+      "monitor": "loss",
       "min_delta": 0,
       "patience": 2,
       "verbose": 0,
@@ -102,5 +102,6 @@
     "continue_from_last_checkpoint": false,
     "transfer_weights": false,
     "use_class_weights": true,
+    "override_class_weights": [0.0, 0.7386141910270192, 1.1840046803490438, 0.97006299986923794, 0.91720643604011876, 1.0277399393210132, 0.0, 0.0, 0.85180914748899506, 0.88734945143950239, 0.0, 0.0, 1.1336130626170875, 2.1720728136575631, 0.0, 1.4200010027451655, 1.1573493121679481, 0.77252137940291588, 0.0, 0.0, 0.97514121474240345, 0.0, 0.0, 1.0261593653489667],
     "save_values_on_early_exit": false
 }
