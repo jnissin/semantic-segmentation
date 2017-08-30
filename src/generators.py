@@ -291,11 +291,11 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         if self.iter_mode == MaterialSampleIterationMode.UNIQUE:
             self._samples_per_material_category_per_epoch = None
         elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MAX:
-            self._samples_per_material_category_per_epoch = max([len(material_category) for material_category in material_samples])
+            self._samples_per_material_category_per_epoch = max([len(material_category) for material_category in material_samples if len(material_category) > 0])
         elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MIN:
-            self._samples_per_material_category_per_epoch = min([len(material_category) for material_category in material_samples])
+            self._samples_per_material_category_per_epoch = min([len(material_category) for material_category in material_samples if len(material_category) > 0])
         elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MEAN:
-            self._samples_per_material_category_per_epoch = int(np.mean(np.array([len(material_category) for material_category in material_samples])))
+            self._samples_per_material_category_per_epoch = int(np.mean(np.array([len(material_category) for material_category in material_samples if len(material_category) > 0])))
         else:
             raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
 
