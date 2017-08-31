@@ -765,6 +765,9 @@ class SegmentationTrainer(TrainerBase):
         # Class weights
         self.class_weights = self.get_class_weights(data_set_information=self.data_set_information)
 
+        # Ignored classes
+        self.ignore_classes = self.get_ignore_classes(self.class_weights)
+
     def _init_models(self):
         super(SegmentationTrainer, self)._init_models()
 
@@ -809,18 +812,16 @@ class SegmentationTrainer(TrainerBase):
         loss_function = losses.dummy_loss
 
         # Ignore all the classes which have zero weights in the metrics
-        ignore_classes = np.squeeze(np.where(np.equal(self.class_weights, 0.0))).astype(dtype=np.int32)
-
-        if len(ignore_classes) > 0:
-            self.logger.log('Ignoring classes: {}'.format(list(ignore_classes)))
+        if len(self.ignore_classes) > 0:
+            self.logger.log('Ignoring classes with zero weights (in metrics): {}'.format(list(self.ignore_classes)))
 
         # Compile the student model
         self.model.compile(optimizer=optimizer,
                            loss={'loss': loss_function, 'logits': lambda _, y_pred: 0.0*y_pred},
                            loss_weights={'loss': 1., 'logits': 0.},
-                           metrics={'logits': [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=ignore_classes),
-                                               metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=ignore_classes),
-                                               metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=ignore_classes)]},
+                           metrics={'logits': [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                                               metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                                               metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]},
                            **self.get_compile_kwargs())
 
         # If we are using the mean teacher method create the teacher model
@@ -844,9 +845,9 @@ class SegmentationTrainer(TrainerBase):
             # Note: Teacher model can use the regular metrics
             self.teacher_model.compile(optimizer=optimizer,
                                        loss=losses.segmentation_sparse_weighted_categorical_cross_entropy(self.class_weights),
-                                       metrics=[metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=ignore_classes),
-                                                metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=ignore_classes),
-                                                metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=ignore_classes)],
+                                       metrics=[metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                                                metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                                                metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)],
                                        **self.get_compile_kwargs())
 
     def _init_data_generators(self):
@@ -975,6 +976,15 @@ class SegmentationTrainer(TrainerBase):
             return class_weights
         else:
             return np.ones([self.num_classes], dtype=np.float32)
+
+    def get_ignore_classes(self, class_weights):
+        ignore_classes = np.squeeze(np.where(np.equal(class_weights, 0.0))).astype(dtype=np.int32)
+
+        # If there is only a single ignored class the shape will be empty - expand to dim 1
+        if ignore_classes.shape == ():
+            ignore_classes = np.expand_dims(ignore_classes, axis=-1)
+
+        return ignore_classes
 
     @property
     def is_supervised_only_trainer(self):
