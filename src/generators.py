@@ -1039,9 +1039,25 @@ class SegmentationDataGenerator(DataGenerator):
                 bbox_height = bbox_ymax - bbox_ymin
                 bbox_width = bbox_xmax - bbox_xmin
 
-                if bbox_height <= 0 or bbox_width <= 0:
-                    raise ValueError('Invalid bounding box dimensions: {}'.format(bbox))
+                # Apparently the material sample data can have single pixel height/width bounding boxes
+                # expand the bounding box a bit to avoid errors
+                if bbox_height <= 0:
+                    bbox_ymin = max(bbox_ymin - 1, 0)
+                    bbox_ymax = min(bbox_ymax + 1, img_height)
+                    bbox_height = bbox_ymax - bbox_ymin
+                    self.logger.warn('Invalid bounding box height: bbox: {}, original bbox: {}'.format(bbox, material_sample.get_bbox_abs()))
 
+                if bbox_width <= 0:
+                    bbox_xmin = max(bbox_xmin - 1, 0)
+                    bbox_xmax = min(bbox_xmax + 1, img_width)
+                    bbox_width = bbox_xmax - bbox_xmin
+                    self.logger.warn('Invalid bounding box width: bbox: {}, original bbox: {}'.format(bbox, material_sample.get_bbox_abs()))
+
+                # If after the fix bounding box is still of invalid size throw an error
+                if bbox_height <= 0 or bbox_width <= 0:
+                    raise ValueError('Invalid bounding box dimensions: bbox: {}, original bbox: {}'.format(bbox, material_sample.get_bbox_abs()))
+
+                # Calculate the difference in height and width between the bbox and crop
                 height_diff = abs(crop_height - bbox_height)
                 width_diff = abs(crop_width - bbox_width)
 
