@@ -964,7 +964,7 @@ class SegmentationTrainer(TrainerBase):
                 self.logger.log('Using override class weights instead of data set information class weights')
                 class_weights = override_class_weights
 
-            if class_weights is None or (len(class_weights) != self.num_classes):
+            if class_weights is None:
                 raise ValueError('Existing class weights were not found')
             if len(class_weights) != self.num_classes:
                 raise ValueError('Number of classes in class weights did not match number of material classes: {} vs {}'

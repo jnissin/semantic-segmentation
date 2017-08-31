@@ -2,7 +2,6 @@
 
 import json
 import os
-import sys
 import time
 import argparse
 
@@ -23,6 +22,8 @@ from models.models import get_model
 ##############################################
 
 CONFIG = None
+DPI = 120
+FIGURE_INDEX = 0
 
 
 ##############################################
@@ -68,7 +69,8 @@ def np_softmax(X, theta=1.0, axis=None):
     p = y / ax_sum
 
     # flatten if X was 1D
-    if len(X.shape) == 1: p = p.flatten()
+    if X.ndim == 1:
+        p = p.flatten()
 
     return p
 
@@ -81,6 +83,7 @@ class PredictionImage(object):
     def __init__(self, image_path, data_set_information):
         print 'Loading image from: {}'.format(image_path)
         self.pil_image = load_img(image_path)
+        self.file_name = os.path.basename(image_path)
 
         print 'Loaded image of size: {}'.format(self.pil_image.size)
         self.np_image = img_to_array(self.pil_image)
@@ -109,11 +112,6 @@ def read_config_json(path):
 def get_config_value(key):
     global CONFIG
     return CONFIG[key] if key in CONFIG else None
-
-
-def set_config_value(key, value):
-    global CONFIG
-    CONFIG[key] = value
 
 
 def get_latest_weights_file_path(weights_folder_path):
@@ -154,44 +152,151 @@ def pad_image(image_array, div2_constraint, cval):
     return padded_image_array, v_pad_before, v_pad_after, h_pad_before, h_pad_after
 
 
-def show_segmentation_plot(figure_ind,
-                           title,
-                           segmented_img,
-                           found_materials,
-                           original_image=None):
+def get_new_figure(target_width, target_height, window_title):
 
-    colors = [np.array(m[0].color, dtype='float32')/255.0 for m in found_materials]
-    labels = ['{0} / {1:.4f}%'.format(m[0].name, m[1]) for m in found_materials]
-    cmap = mpl.colors.ListedColormap(colors, name='material_colors', N=len(colors))
+    global FIGURE_INDEX
+
+    max_width = 3840.0/DPI
+    max_height = 2160.0/DPI
+    labelsize = 6
+
+    fig_width = min(target_width, max_width)
+    fig_height = min(target_height, max_height)
 
     # Create figure
-    fig_width = max(float(segmented_img.width)/100.0, 8.0)
-    fig_height = max(float(segmented_img.height)/100.0, 8.0)
-    f = plt.figure(figure_ind, figsize=(fig_width, fig_height), dpi=100)
-    f.suptitle(title)
+    plt.rc('xtick', labelsize=labelsize)
+    plt.rc('ytick', labelsize=labelsize)
 
-    # Create the original image as background
-    if original_image:
-        orig_img = plt.imshow(original_image, interpolation='bilinear', origin='upper')
+    figure = plt.figure(FIGURE_INDEX, figsize=(fig_width, fig_height), dpi=DPI)
+    figure.canvas.set_window_title(window_title)
+    FIGURE_INDEX += 1
+    return figure
 
-    # Create the color bar
-    height = float(segmented_img.size[1])
-    num_materials = len(found_materials)
-    step = (float(height) / float(num_materials))
-    bounds = np.arange(num_materials+1) * step
-    ticks = bounds - step*0.5
-    norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
-    # Create the plt img
-    alpha = 1.0 if not original_image else 0.65
-    plt_img = plt.imshow(segmented_img, alpha=alpha, interpolation='bilinear', origin='upper', cmap=cmap, norm=norm)
+def build_topk_segmentation_plot(flattened_masks, prediction_image):
+    # type: (list[np.ndarray], PredictionImage) -> None
 
-    # Create the color bar
-    cbar = plt.colorbar(plt_img, cmap=cmap, boundaries=bounds, ticks=ticks, norm=norm)
-    cbar.set_ticklabels(labels)
+    top_k = len(flattened_masks)
+    cbar_shrink = 0.75
+    max_images_per_row = 3
+    segmentation_map_alpha = 0.65
 
-    # Show the segmentation
-    f.show()
+    # Columns of 3 images (side-by-side)
+    cols = min(top_k, max_images_per_row)
+    rows = (top_k/max_images_per_row) + 1 if top_k%max_images_per_row != 0 else (top_k/max_images_per_row)
+    target_width = (float(prediction_image.pil_image.width)/DPI) * cols
+    target_height = (float(prediction_image.pil_image.height)/DPI) * rows
+
+    figure = get_new_figure(target_width, target_height, 'Top {} segmentation of {}'.format(top_k, prediction_image.file_name))
+
+    for i in range(0, top_k):
+        flattened_mask = flattened_masks[i][0]
+        found_materials = flattened_masks[i][1]
+        segmented_img = array_to_img(flattened_mask, scale=False)
+
+        # Add a new subplot
+        figure.add_subplot(rows, cols, i+1, title='Top {}'.format(i+1))
+
+        # Create the color map for the color bar
+        colors = [np.array(m[0].color, dtype='float32') / 255.0 for m in found_materials]
+        labels = ['{0} / {1:.2f}%'.format(m[0].name, m[1]) for m in found_materials]
+        cmap = mpl.colors.ListedColormap(colors, name='material_colors', N=len(colors))
+
+        # Create the color bar
+        num_found_materials = len(found_materials)
+        step_size = (1.0 / num_found_materials)
+        bounds = np.arange(num_found_materials + 1) * step_size
+        ticks = bounds - step_size * 0.5
+        norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
+
+        # Create the original image as background and combine with the segmentation mask
+        plt_img = plt.imshow(prediction_image.pil_image, interpolation='bilinear', origin='upper')
+        plt_img = plt.imshow(segmented_img, alpha=segmentation_map_alpha, interpolation='bilinear', origin='upper', cmap=cmap, norm=norm)
+
+        # Set the color bar to the
+        cbar = plt.colorbar(plt_img, cmap=cmap, boundaries=bounds, ticks=ticks, norm=norm, shrink=cbar_shrink)
+        cbar.set_ticklabels(labels)
+
+    plt.tight_layout()
+
+
+def build_topk_accuracy_plot(flattened_masks, prediction_image, ground_truth_mask):
+    # Provide accuracy correct / num unignored pixels
+
+    top_k = len(flattened_masks)
+    cbar_shrink = 0.75
+    max_images_per_row = 3
+    segmentation_map_alpha = 0.80
+    image_height = prediction_image.pil_image.height
+    image_width = prediction_image.pil_image.width
+
+    # Encode values and colors for the different classes: ignored, incorrect and correct pixels
+    ignored_val = 0
+    incorrect_val = 1
+    correct_val = 2
+
+    ignored_color = np.array([0, 0, 0], dtype=np.uint8)
+    incorrect_color = np.array([255, 0, 0], dtype=np.uint8)
+    correct_color = np.array([0, 255, 0], dtype=np.uint8)
+
+    # Columns of 3 images (side-by-side)
+    cols = min(top_k, max_images_per_row)
+    rows = (top_k/max_images_per_row) + 1 if top_k%max_images_per_row != 0 else (top_k/max_images_per_row)
+    target_width = (float(image_width)/DPI) * cols
+    target_height = (float(image_height)/DPI) * rows
+
+    figure = get_new_figure(target_width, target_height, 'Top {} segmentation accuracy of {}'.format(top_k, prediction_image.file_name))
+    num_non_ignored_pixels = np.count_nonzero(ground_truth_mask)
+    num_total_pixels = image_width*image_height
+    ignore_mask = ground_truth_mask == 0
+
+    # Accumulate the top k correct results to this mask
+    correct_in_topk_mask = np.zeros(ground_truth_mask.shape, dtype=np.bool)
+
+    # Create a mask with three classes: 0: ignored (bg), 2: incorrect, 1: correct
+    for i in range(0, top_k):
+        # The material id's are encoded in the red channel of the flattened mask
+        flattened_mask = flattened_masks[i][0][:, :, 0]
+        correct_in_mask = flattened_mask == ground_truth_mask
+
+        # Accumulate the results from the i first layers i.e. check whether the correct answer is in the top k guesses
+        correct_in_topk_mask = np.logical_or(correct_in_mask, correct_in_topk_mask)
+
+        # Calculate the number of correct and incorrect pixels
+        num_correct_pixels = np.count_nonzero(correct_in_topk_mask)
+        num_incorrect_pixels = num_non_ignored_pixels - num_correct_pixels
+        topk_accuracy = (float(num_correct_pixels)/float(num_non_ignored_pixels))*100.0
+        np_vals = np.where(correct_in_topk_mask, correct_val, incorrect_val) * np.invert(ignore_mask).astype(np.int32)
+        print 'Top {}: num_correct: {}, num incorrect: {}, num non-ignored: {}, num total pixels: {}'.format(i+1, num_correct_pixels, num_incorrect_pixels, num_non_ignored_pixels, num_total_pixels)
+
+        topk_accuracy_np_img = np.zeros((image_height, image_width, 3), dtype=np.uint8)
+        topk_accuracy_np_img[np_vals == incorrect_val] = incorrect_color
+        topk_accuracy_np_img[np_vals == correct_val] = correct_color
+        topk_accuracy_np_img[np_vals == ignored_val] = ignored_color
+
+        topk_img = array_to_img(topk_accuracy_np_img)
+
+        # Add a new subplot
+        figure.add_subplot(rows, cols, i+1, title='Top {} accuracy {:.2f}%'.format(i+1, topk_accuracy))
+
+        # Create the original image as background and combine with the segmentation mask
+        plt_img = plt.imshow(prediction_image.pil_image, interpolation='bilinear', origin='upper')
+        plt_img = plt.imshow(topk_img, alpha=segmentation_map_alpha, interpolation='bilinear', origin='upper')
+
+    plt.tight_layout()
+
+
+def save_topk_segmentations(flattened_masks, output_path):
+
+    if output_path is None:
+        return
+
+    for i, flattened_mask in enumerate(flattened_masks):
+        segmented_img = array_to_img(flattened_mask, scale=False)
+        save_file = '{}_top_{}.png'.format(os.path.basename(output_path).split('.')[0], i + 1)
+        save_path = os.path.join(os.path.dirname(output_path), save_file)
+        print 'Saving top {} predicted segmentation to: {}'.format(i + 1, save_path)
+        segmented_img.save(save_path, format='PNG')
 
 
 ##############################################
@@ -206,6 +311,7 @@ def main():
     ap.add_argument('-c', '--config', required=True, type=str, help='Path to trainer configuration JSON file')
     ap.add_argument('-w', '--weights', required=True, type=str, help="Path to weights directory or weights file")
     ap.add_argument('-i', '--input', required=True, type=str, help="Path to input image")
+    ap.add_argument('-t', '--gtruth', required=False, type=str, help="Path to ground truth segmentation mask")
     ap.add_argument('-o', '--output', required=False, type=str, help="Path to output image")
     ap.add_argument('--crf', required=False, type=int, default=0, help="Number of CRF iterations to use")
     ap.add_argument('-k', '--topk', required=False, type=int, default=1, help="Number of top K predictions to show")
@@ -215,6 +321,7 @@ def main():
     model_name = args['model']
     config_file_path = args['config']
     input_image_path = args['input']
+    ground_truth_image_path = args['gtruth']
     weights_path = args['weights']
     output_path = args['output']
     crf_iterations = args['crf']
@@ -313,23 +420,22 @@ def main():
         expanded_mask = np.transpose(expanded_mask, (2, 1, 0))
 
     flattened_masks = prediction_utils.top_k_flattened_masks(expanded_mask, top_k, material_class_information, True)
+    print 'Building top k segmentation plot'
+    build_topk_segmentation_plot(flattened_masks, prediction_image)
 
-    for i in range(0, top_k):
-        flattened_mask = flattened_masks[i][0]
-        found_materials = flattened_masks[i][1]
-        segmented_img = array_to_img(flattened_mask, scale=False)
-        title = 'Top {} segmentation of {}'.format(i+1, os.path.basename(input_image_path))
-        show_segmentation_plot(i+1, title, segmented_img, found_materials, prediction_image.pil_image)
+    if ground_truth_image_path:
+        print 'Reading ground truth image from: {}'.format(ground_truth_image_path)
+        ground_truth_pil_image = load_img(ground_truth_image_path)
+        ground_truth_np_img = img_to_array(ground_truth_pil_image)
+        ground_truth_mask = dataset_utils.index_encode_mask(np_mask_img=ground_truth_np_img, material_class_information=material_class_information)
+        print 'Building top k segmentation accuracy plot'
+        build_topk_accuracy_plot(flattened_masks, prediction_image, ground_truth_mask)
 
-        if output_path is not None:
-            save_file = '{}_top_{}.png'.format(os.path.basename(output_path).split('.')[0], i+1)
-            save_path = os.path.join(os.path.dirname(output_path), save_file)
-            print 'Saving top {} predicted segmentation to: {}'.format(i+1, save_path)
-            segmented_img.save(save_path, format='PNG')
+    # Show all the plots
+    plt.show()
 
-    # Keep figures alive until user input from console
-    raw_input()
-    print 'Done'
+    if output_path is not None:
+        save_topk_segmentations(flattened_masks, output_path)
 
 
 if __name__ == '__main__':
