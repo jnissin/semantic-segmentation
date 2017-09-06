@@ -40,6 +40,9 @@ class ModelLambdaLossType(Enum):
     SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER = 2
     SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL = 3
     SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL = 4
+    CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY = 5
+    CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 6
+
 
 #############################################
 # UTILITY FUNCTIONS
@@ -125,10 +128,10 @@ def get_lambda_loss_function(model_lambda_loss_type):
         return losses.segmentation_mean_teacher_lambda_loss
     elif model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
         return losses.segmentation_mean_teacher_superpixel_lambda_loss
-    #elif model_type == ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY:
-    #    return losses.classification_categorical_cross_entropy
-    #elif model_type == ModelLambdaLossType.CLASSIFICATION_MEAN_TEACHER_TEACHER:
-    #    return losses.classification_mean_teacher_lambda_loss
+    elif model_lambda_loss_type == ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY:
+        return losses.classification_categorical_cross_entropy
+    elif model_lambda_loss_type == ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER:
+        return losses.classification_mean_teacher_lambda_loss
 
     raise ValueError('Unknown model lambda loss type: {}'.format(model_lambda_loss_type))
 
@@ -173,11 +176,17 @@ class ModelBase(object):
             self.name = self.name + '-MT'
             self._model = self._get_segmentation_semi_supervised_mean_teacher_lambda_loss_model()
         elif self.model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL:
-            self.name = self.name + '-SS'
+            self.name = self.name + '-SP'
             self._model = self._get_segmentation_semi_supervised_superpixel_lambda_loss_model()
         elif self.model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
             self.name = self.name + '-MT-SP'
             self._model = self._get_segmentation_semi_supervised_mean_teacher_superpixel_lambda_loss_model()
+        elif self.model_lambda_loss_type == ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY:
+            self.name = self.name + '-CCE'
+            self._model = self._get_classification_categorical_cross_entropy_lambda_loss_model()
+        elif self.model_lambda_loss_type == ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER:
+            self.name = self.name + '-MT'
+            self._model = self._get_classification_semi_supervised_mean_teacher_lambda_loss_model()
         else:
             # Otherwise just return the model
             self._model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
@@ -358,6 +367,65 @@ class ModelBase(object):
         # Note: assumes there is only a single output, which is the last layer
         logits = self.outputs[0]
         lambda_inputs = [logits, labels, class_weights, num_unlabeled, mt_predictions, consistency_cost, unlabeled_cost_coeff]
+        loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+        self.outputs = [loss_layer, logits]
+
+        model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
+        return model
+
+    def _get_classification_categorical_cross_entropy_lambda_loss_model(self):
+        if self.inputs is None or self.outputs is None:
+            raise RuntimeError('The model must be built by calling _build_model() first')
+        if self.lambda_loss_function is None:
+            raise ValueError('Categorical cross entropy models must be given a lambda loss function')
+
+        labels_shape = [self.num_classes]
+        labels = Input(name="labels", shape=labels_shape, dtype='float32')
+        self.inputs.append(labels)
+
+        class_weights = Input(name="class_weights", shape=labels_shape, dtype='float32')
+        self.inputs.append(class_weights)
+
+        num_unlabeled = Input(name='num_unlabeled', shape=[1], dtype='int32')
+        self.inputs.append(num_unlabeled)
+
+        # Note: assumes there is only a single output, which is the last layer
+        logits = self.outputs[0]
+        lambda_inputs = [logits, labels, class_weights, num_unlabeled]
+        loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
+        self.outputs = [loss_layer, logits]
+
+        model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
+        return model
+
+    def _get_classification_semi_supervised_mean_teacher_lambda_loss_model(self):
+
+        if self.inputs is None or self.outputs is None:
+            raise RuntimeError('The model must be built by calling _build_model() first')
+        if self.lambda_loss_function is None:
+            raise ValueError('Mean teacher models must be given a lambda loss function')
+
+        labels_shape = [self.num_classes]
+        logits_shape = [self.num_classes]
+
+        labels = Input(name="labels", shape=labels_shape, dtype='float32')
+        self.inputs.append(labels)
+
+        class_weights = Input(name="class_weights", shape=labels_shape, dtype='float32')
+        self.inputs.append(class_weights)
+
+        num_unlabeled = Input(name='num_unlabeled', shape=[1], dtype='int32')
+        self.inputs.append(num_unlabeled)
+
+        mt_predictions = Input(name="mt_predictions", shape=logits_shape, dtype='float32')
+        self.inputs.append(mt_predictions)
+
+        consistency_cost = Input(name="consistency_cost", shape=[1], dtype='float32')
+        self.inputs.append(consistency_cost)
+
+        # Note: assumes there is only a single output, which is the last layer
+        logits = self.outputs[0]
+        lambda_inputs = [logits, labels, class_weights, num_unlabeled, mt_predictions, consistency_cost]
         loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
         self.outputs = [loss_layer, logits]
 
@@ -662,7 +730,7 @@ class ENetNaiveUpsampling(ModelBase):
 
             enet = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(enet)
             enet = Flatten(name='flatten')(enet)
-            enet = Dense(self.num_classes, activation='softmax', name='logits')(enet)
+            enet = Dense(self.num_classes, name='logits')(enet)
         else:
             enet = ENetNaiveUpsampling.decoder_build(enet, nc=self.num_classes)
 
@@ -933,7 +1001,7 @@ class ENetMaxUnpooling(ModelBase):
 
             enet = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(enet)
             enet = Flatten(name='flatten')(enet)
-            enet = Dense(self.num_classes, activation='softmax', name='logits')(enet)
+            enet = Dense(self.num_classes, name='logits')(enet)
         else:
             enet = ENetMaxUnpooling.decoder_build(enet, index_stack=pooling_indices, nc=self.num_classes)
 

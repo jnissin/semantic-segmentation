@@ -6,7 +6,7 @@ import signal
 import sys
 
 import settings
-from trainers import SegmentationTrainer, TrainerBase
+from trainers import SegmentationTrainer, ClassificationTrainer, TrainerBase
 
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = False
 _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
@@ -43,6 +43,7 @@ def main():
                              'segmentation_semi_supervised_superpixel',
                              'segmentation_semi_supervised_mean_teacher_superpixel',
                              'classification_supervised',
+                             'classification_supervised_mean_teacher',
                              'classification_semi_supervised_mean_teacher'], help='Type of the trainer')
     ap.add_argument('-c', '--config', required=True, type=str, help='Path to trainer configuration JSON file')
     ap.add_argument('-m', '--model', required=True, type=str, help='Name of the neural network model to use')
@@ -79,11 +80,10 @@ def main():
                                       model_folder_name=model_folder_name,
                                       config_file_path=trainer_config_file_path)
     elif trainer_super_type == 'classification':
-        raise ValueError('Classification trainer is disabled for the time of refactoring')
-#        trainer = ClassificationTrainer(trainer_type=trainer_type,
-#                                        model_name=model_name,
-#                                        model_folder_name=model_folder_name,
-#                                        config_file_path=trainer_config_file_path)
+        trainer = ClassificationTrainer(trainer_type=trainer_type,
+                                        model_name=model_name,
+                                        model_folder_name=model_folder_name,
+                                        config_file_path=trainer_config_file_path)
     else:
         raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
 

@@ -104,7 +104,6 @@ class DataGeneratorParameters(object):
     """
 
     def __init__(self,
-                 material_class_information,
                  num_color_channels,
                  logger,
                  random_seed=None,
@@ -115,17 +114,14 @@ class DataGeneratorParameters(object):
                  use_per_channel_stddev_normalization=True,
                  per_channel_stddev=None,
                  photo_cval=None,
-                 mask_cval=None,
                  use_data_augmentation=False,
                  data_augmentation_params=None,
                  shuffle_data_after_epoch=True,
-                 use_material_samples=False,
                  div2_constraint=4):
         """
         Builds a wrapper for DataGenerator parameters
 
         # Arguments
-            :param material_class_information:
             :param num_color_channels: number of channels in the photos; 1, 3 or 4
             :param logger: a Logger instance for logging text and images
             :param random_seed: an integer random seed
@@ -136,17 +132,14 @@ class DataGeneratorParameters(object):
             :param use_per_channel_stddev_normalization: whether per-channel stddev normalizaiton should be applied
             :param per_channel_stddev: per-channel stddev in range [-1, 1]
             :param photo_cval: fill color value for photos [0,255], otherwise per-channel mean used
-            :param mask_cval: fill color value for masks [0,255], otherwise [0,0,0] used
             :param use_data_augmentation: should data augmentation be used
             :param data_augmentation_params: parameters for data augmentation
             :param shuffle_data_after_epoch: should the data be shuffled after every epoch
-            :param use_material_samples: should material samples be used
             :param div2_constraint: how many times does the image/crop need to be divisible by two
         # Returns
             Nothing
         """
 
-        self.material_class_information = material_class_information
         self.num_color_channels = num_color_channels
         self.logger = logger
         self.random_seed = random_seed
@@ -157,12 +150,37 @@ class DataGeneratorParameters(object):
         self.use_per_channel_stddev_normalization = use_per_channel_stddev_normalization
         self.per_channel_stddev = per_channel_stddev
         self.photo_cval = photo_cval
-        self.mask_cval = mask_cval
         self.use_data_augmentation = use_data_augmentation
         self.data_augmentation_params = data_augmentation_params
         self.shuffle_data_after_epoch = shuffle_data_after_epoch
-        self.use_material_samples = use_material_samples
         self.div2_constraint = div2_constraint
+
+
+class SegmentationDataGeneratorParameters(DataGeneratorParameters):
+    """
+    Helps to maintain parameters of the segmentation data generator
+    """
+
+    def __init__(self,
+                 material_class_information,
+                 mask_cval=None,
+                 use_material_samples=False,
+                 **kwargs):
+        """
+        Builds a wrapper for SegmentationDataGenerator parameters
+
+        # Arguments
+            :param material_class_information: material class information list
+            :param mask_cval: fill color value for masks [0,255], otherwise zeros matching mask encoding are used
+            :param use_material_samples: should material samples be used
+        # Returns
+            Nothing
+        """
+        super(SegmentationDataGeneratorParameters, self).__init__(**kwargs)
+
+        self.material_class_information = material_class_information
+        self.mask_cval = mask_cval
+        self.use_material_samples = use_material_samples
 
 
 #######################################
@@ -455,7 +473,6 @@ class DataGenerator(object):
         self.batch_data_format = batch_data_format
 
         # Unwrap DataGeneratorParameters to member variables
-        self.material_class_information = params.material_class_information
         self.num_color_channels = params.num_color_channels
         self.logger = params.logger
         self.random_seed = params.random_seed
@@ -466,15 +483,18 @@ class DataGenerator(object):
         self.use_per_channel_stddev_normalization = params.use_per_channel_stddev_normalization
         self.per_channel_stddev = params.per_channel_stddev
         self.photo_cval = params.photo_cval
-        self.mask_cval =params.mask_cval
         self.use_data_augmentation = params.use_data_augmentation
         self.data_augmentation_params = params.data_augmentation_params
         self.shuffle_data_after_epoch = params.shuffle_data_after_epoch
-        self.use_material_samples = params.use_material_samples
         self.div2_constraint = params.div2_constraint
 
         # Other member variables
         self.img_data_format = K.image_data_format()
+
+        # Use the given random seed for reproducibility
+        if self.random_seed is not None:
+            np.random.seed(self.random_seed)
+            random.seed(self.random_seed)
 
         # Ensure the per_channel_mean is a numpy tensor
         if self.per_channel_mean is not None:
@@ -503,16 +523,6 @@ class DataGenerator(object):
             else:
                 self.photo_cval = image_utils.np_from_normalized_to_255(self.per_channel_mean).astype(np.float32)
             self.logger.log('DataGenerator: Using photo cval: {}'.format(list(self.photo_cval)))
-
-        # Use black (background)
-        if self.mask_cval is None:
-            self.mask_cval = np.array([0.0] * 3, dtype=np.float32)
-            self.logger.log('DataGenerator: Using mask cval: {}'.format(list(self.mask_cval)))
-
-        # Use the given random seed for reproducibility
-        if self.random_seed is not None:
-            np.random.seed(self.random_seed)
-            random.seed(self.random_seed)
 
     @abstractmethod
     def get_all_photos(self):
@@ -631,7 +641,7 @@ class SegmentationDataGenerator(DataGenerator):
                  params,
                  class_weights=None,
                  label_generation_function=None):
-        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, BatchDataFormat, DataGeneratorParameters, np.array[np.float32], Callable) -> None
+        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, BatchDataFormat, SegmentationDataGeneratorParameters, np.array[np.float32], Callable) -> None
 
         """
         # Arguments
@@ -640,7 +650,7 @@ class SegmentationDataGenerator(DataGenerator):
             :param num_labeled_per_batch: number of labeled images per batch
             :param num_unlabeled_per_batch: number of unlabeled images per batch
             :param batch_data_format: format of the data batches
-            :param params: DataGeneratorParameters object
+            :param params: SegmentationDataGeneratorParameters object
             :param class_weights: class weights
             :param label_generation_function: function for label generation for unlabeled data
         """
@@ -651,7 +661,17 @@ class SegmentationDataGenerator(DataGenerator):
         self.num_labeled_per_batch = num_labeled_per_batch
         self.num_unlabeled_per_batch = num_unlabeled_per_batch
 
+        # Unwrap segmentation data generator specific parameters
+        self.material_class_information = params.material_class_information
+        self.use_material_samples = params.use_material_samples
+        self.mask_cval = params.mask_cval
+
         super(SegmentationDataGenerator, self).__init__(batch_data_format, params)
+
+        # Use black (background)
+        if self.mask_cval is None:
+            self.mask_cval = np.array([0.0] * 3, dtype=np.float32)
+            self.logger.log('SegmentationDataGenerator: Using mask cval: {}'.format(list(self.mask_cval)))
 
         if self.use_material_samples:
             if self.labeled_data_set.material_samples is None or len(self.labeled_data_set.material_samples) == 0:
@@ -963,7 +983,7 @@ class SegmentationDataGenerator(DataGenerator):
 
         if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_idx):
 
-            orig_vals, np_orig_photo, np_orig_mask = None, None, None
+            np_orig_photo, np_orig_mask = None, None
 
             if material_sample is not None:
                 np_orig_photo = np.array(np_photo, copy=True)
@@ -1034,28 +1054,31 @@ class SegmentationDataGenerator(DataGenerator):
                 tlc, trc, brc, blc = bbox
                 crop_height, crop_width = self.crop_shape
                 img_height, img_width = np_mask.shape[0], np_mask.shape[1]
-                bbox_ymin, bbox_ymax = tlc[0], blc[0]
-                bbox_xmin, bbox_xmax = tlc[1], trc[1]
+                bbox_ymin, bbox_ymax = tlc[0], min(blc[0]+1, img_height)    # +1 because the bbox ymax is inclusive
+                bbox_xmin, bbox_xmax = tlc[1], min(trc[1]+1, img_width)     # +1 because the bbox xmax is inclusive
                 bbox_height = bbox_ymax - bbox_ymin
                 bbox_width = bbox_xmax - bbox_xmin
 
                 # Apparently the material sample data can have single pixel height/width bounding boxes
                 # expand the bounding box a bit to avoid errors
                 if bbox_height <= 0:
+                    self.logger.debug_log('Invalid bounding box height: mat id: {}, file name: {}, bbox: {}, original bbox: {} - inflating'
+                                          .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_abs()))
                     bbox_ymin = max(bbox_ymin - 1, 0)
                     bbox_ymax = min(bbox_ymax + 1, img_height)
                     bbox_height = bbox_ymax - bbox_ymin
-                    self.logger.warn('Invalid bounding box height: bbox: {}, original bbox: {}'.format(bbox, material_sample.get_bbox_abs()))
 
                 if bbox_width <= 0:
+                    self.logger.debug_log('Invalid bounding box width: mat id: {}, file name: {}, bbox: {}, original bbox: {} - inflating'
+                                          .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_abs()))
                     bbox_xmin = max(bbox_xmin - 1, 0)
                     bbox_xmax = min(bbox_xmax + 1, img_width)
                     bbox_width = bbox_xmax - bbox_xmin
-                    self.logger.warn('Invalid bounding box width: bbox: {}, original bbox: {}'.format(bbox, material_sample.get_bbox_abs()))
 
                 # If after the fix bounding box is still of invalid size throw an error
                 if bbox_height <= 0 or bbox_width <= 0:
-                    raise ValueError('Invalid bounding box dimensions: bbox: {}, original bbox: {}'.format(bbox, material_sample.get_bbox_abs()))
+                    raise ValueError('Invalid bounding box dimensions: mat id: {}, file name: {}, bbox: {}, original bbox: {}'
+                                     .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_abs()))
 
                 # Calculate the difference in height and width between the bbox and crop
                 height_diff = abs(crop_height - bbox_height)
@@ -1098,8 +1121,8 @@ class SegmentationDataGenerator(DataGenerator):
                 np_mask = image_utils.np_crop_image(np_mask, x1=crop_xmin, y1=crop_ymin, x2=crop_xmax, y2=crop_ymax)
                 np_photo = image_utils.np_crop_image(np_photo, x1=crop_xmin, y1=crop_ymin, x2=crop_xmax, y2=crop_ymax)
 
-        # If a crop size is not given, make sure the image dimensions satisfy
-        # the div2_constraint i.e. are n times divisible by 2 to work within
+        # Mke sure the image dimensions satisfy the div2_constraint
+        # i.e. are n times divisible by 2 to work with
         # the network. If the dimensions are not ok pad the images.
         img_height_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[0])
         img_width_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[1])
@@ -1281,105 +1304,318 @@ class SegmentationDataGenerator(DataGenerator):
 # CLASSIFICATION DATA GENERATOR
 ################################################
 
+class MINCDataSetType(Enum):
+    MINC = 0
+    MINC_2500 = 1
 
-class MINCClassificationDataGenerator(DataGenerator):
+
+class MINCDataSet(object):
+
+    def __init__(self, name, path_to_photo_archive, label_mappings_file_path, data_set_file_path):
+        self.label_mappings_file_path = label_mappings_file_path
+        self.data_set_file_path = data_set_file_path
+
+        # Read label mappings
+        self.minc_class_to_minc_label, self.minc_label_to_custom_label = self._load_label_mappings(label_mappings_file_path)
+
+        # Read data set
+        self.samples = self._load_samples(data_set_file_path, self.minc_class_to_minc_label)
+
+        # Create the ImageSet
+        file_list = [s.file_name for s in self.samples]
+        self._image_set = ImageSet(name=name, path_to_archive=path_to_photo_archive, file_list=file_list)
+
+    @property
+    def num_classes(self):
+        return len(self.minc_class_to_minc_label)
+
+    @property
+    def size(self):
+        # type: () -> int
+        return len(self.samples)
+
+    @property
+    def photo_image_set(self):
+        return self._image_set
+
+    def _load_samples(self, file_path, minc_class_to_minc_label):
+        samples = list()
+
+        with open(file_path, 'r') as f:
+            lines = f.readlines()
+
+        # Sniff whether this is a MINC-2500 file or MINC file
+        # MINC-2500: images/<class name>/<class name>_<photo id>.jpg
+        # MINC: label,photo_id,x,y
+        is_minc = len(lines[0].split(',')) == 4
+        is_minc_2500 = not is_minc
+
+        if is_minc:
+            self.data_set_type = MINCDataSetType.MINC
+
+            for line in lines:
+                line = line.strip()
+                # Each line of the file is: 4-tuple list of (label,photo_id,x,y)
+                minc_label, photo_id, x, y = line.split(',')
+                samples.append(MINCSample(minc_label=int(minc_label), file_name=photo_id.strip(), x=float(x), y=float(y)))
+        elif is_minc_2500:
+            self.data_set_type = MINCDataSetType.MINC_2500
+
+            for line in lines:
+                line = line.strip()
+                file_name = line.split('/')[-1]
+                class_name = file_name.split('_')[0]
+                minc_label = minc_class_to_minc_label[class_name]
+                samples.append(MINCSample(minc_label=int(minc_label), file_name=file_name, x=-1.0, y=-1.0))
+
+        return samples
+
+    def _load_label_mappings(self, file_path):
+        minc_label_to_custom_label = dict()
+        minc_class_to_minc_label = dict()
+
+        with open(file_path, 'r') as f:
+            # The first line should be skipped because it describes the data, which is
+            # in the format of substance_name,minc_class_idx,custom_class_idx
+            lines = f.readlines()
+
+            for idx, line in enumerate(lines):
+                # Skip the first line
+                if idx == 0:
+                    continue
+
+                line = line.strip()
+                substance_name, minc_class_idx, custom_class_idx = line.split(',')
+
+                # Check that there are no duplicate entries for MINC class ids
+                if minc_label_to_custom_label.has_key(int(minc_class_idx)):
+                    raise ValueError('Label mapping already contains entry for MINC class id: {}'.format(int(minc_class_idx)))
+
+                # Check that there are no duplicate entries for custom class ids
+                if int(custom_class_idx) in minc_label_to_custom_label.values():
+                    raise ValueError('Label mapping already contains entry for custom class id: {}'.format(int(custom_class_idx)))
+
+                minc_label_to_custom_label[int(minc_class_idx)] = int(custom_class_idx)
+
+                if minc_class_to_minc_label.has_key(substance_name):
+                    raise ValueError('Label mapping already contains entry for MINC class name: {}'.format(substance_name))
+
+                if int(minc_class_idx) in minc_class_to_minc_label.values():
+                    raise ValueError('Label mapping already contains entry for MINC class id: {}'.format(minc_class_idx))
+
+                minc_class_to_minc_label[substance_name] = int(minc_class_idx)
+
+        return minc_class_to_minc_label, minc_label_to_custom_label
+
+
+class ClassificationDataGenerator(DataGenerator):
 
     def __init__(self,
-                 minc_data_set_file_path,
-                 minc_labels_translation_file_path,
-                 minc_photos_folder_path,
+                 labeled_data_set,
+                 unlabeled_data_set,
                  num_labeled_per_batch,
+                 num_unlabeled_per_batch,
+                 class_weights,
+                 batch_data_format,
                  params):
-        # type: (str, str, str, int, DataGeneratorParameters) -> None
+        # type: (MINCDataSet, UnlabeledImageDataSet, int, int, np.ndarray, BatchDataFormat, DataGeneratorParameters) -> None
 
-        print 'Loading MINC data set from file: {}'.format(minc_data_set_file_path)
-        self.minc_data_set_file_path = minc_data_set_file_path
-        self.data_set = self._read_minc_data_set_file(minc_data_set_file_path)
-        print 'Loaded MINC data set with {} samples'.format(len(self.data_set))
+        self.labeled_data_set = labeled_data_set
+        self.unlabeled_data_set = unlabeled_data_set
+        self.num_labeled_per_batch = num_labeled_per_batch
+        self.num_unlabeled_per_batch = num_unlabeled_per_batch
+        self.class_weights = np.array(class_weights, dtype=np.float32)
 
-        print 'Reading MINC labels translation file: {}'.format(minc_labels_translation_file_path)
-        self.minc_labels_translation_file_path = minc_data_set_file_path
-        self.minc_to_custom_label_mapping = self._read_minc_labels_translation_file(minc_labels_translation_file_path)
-        self.num_labels = len(self.minc_to_custom_label_mapping)
-        print 'Loaded {} label mappings'.format(self.num_labels)
+        super(ClassificationDataGenerator, self).__init__(batch_data_format, params)
 
-        print 'Reading MINC photos to ImageSet from: {}'.format(minc_photos_folder_path)
-        self.minc_photos_folder_path = minc_photos_folder_path
-        self.minc_photos_image_set = ImageSet('photos', minc_photos_folder_path)
-        print 'Constructed ImageSet with {} images'.format(self.minc_photos_image_set.size)
-
-        if self.minc_photos_image_set is None or self.minc_photos_image_set.size <= 0:
-            raise ValueError('Could not find MINC photos from: {}'.format(self.minc_photos_folder_path))
-
-        super(MINCClassificationDataGenerator, self).__init__(params)
-
-        self.data_iterator = BasicDataSetIterator(
-            n=len(self.data_set),
-            batch_size=num_labeled_per_batch,
+        self.labeled_data_set_iterator = BasicDataSetIterator(
+            n=self.labeled_data_set.size,
+            batch_size=self.num_labeled_per_batch,
             shuffle=self.shuffle_data_after_epoch,
-            seed=self.random_seed)
+            seed=self.random_seed,
+            logger=self.logger)
+
+        if self.unlabeled_data_set is not None and self.unlabeled_data_set.size > 0 and self.num_unlabeled_per_batch > 0:
+            self.unlabeled_data_set_iterator = BasicDataSetIterator(
+                n=self.unlabeled_data_set.size,
+                batch_size=self.num_unlabeled_per_batch,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed,
+                logger=self.logger)
+
+        # Sanity checks
+        if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500 and self.crop_shape is not None:
+            self.logger.warn('Using MINC-2500 data set with cropping - cropping is not applied to MINC-2500 data'.format(self.crop_shape))
+
+        if self.labeled_data_set.data_set_type == MINCDataSetType.MINC and self.crop_shape is None:
+            self.logger.warn('Using MINC data set without cropping - is this intended?')
 
     def get_all_photos(self):
-        # type: () -> list[ImageFile]
+        photos = []
+        photos += self.labeled_data_set.photo_image_set.image_files
+
+        if self.using_unlabeled_data:
+            photos += self.unlabeled_data_set.photo_image_set.image_files
+
+        return photos
+
+    @property
+    def num_steps_per_epoch(self):
+        return self.labeled_data_set_iterator.num_steps_per_epoch
+
+    @property
+    def using_unlabeled_data(self):
+        # type: () -> bool
 
         """
-        Returns all the photo ImageFile instances as a list
+        Returns whether the generator is using unlabeled data.
 
         # Arguments
             None
         # Returns
-            :return: all the photo ImageFiles as a list
+            :return: true if there is unlabeled data otherwise false
         """
-        return self.minc_photos_image_set.image_files
-
-    @property
-    def num_steps_per_epoch(self):
-        return self.data_iterator.num_steps_per_epoch
+        return self.unlabeled_data_set is not None and \
+               self.unlabeled_data_set.size > 0 and \
+               self.unlabeled_data_set_iterator is not None and \
+               self.num_unlabeled_per_batch > 0 and \
+               self.batch_data_format != BatchDataFormat.SUPERVISED
 
     def next(self):
         with self.lock:
-            index_array, current_index, current_batch_size, step_index = self.data_iterator.get_next_batch()
+            labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_set_iterator.get_next_batch()
+            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
 
-        # Get the samples
-        data = [self._get_sample(step_index, self.data_set[sample_idx]) for sample_idx in index_array]
-        X, Y = zip(*data)
+            if self.using_unlabeled_data:
+                unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_set_iterator.get_next_batch()
 
-        # Debug: Write images
-        if settings.DEBUG:
-            for i in range(len(X)):
-                self.logger.save_debug_image(X[i], file_name='{}_{}_{}_photo.jpg'.format(step_index, i, np.argmax(Y[i])), format='JPEG')
-        # End of: debug
+        X, Y, W = self.get_labeled_batch_data(labeled_step_index, labeled_index_array)
+        X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(unlabeled_step_index, unlabeled_index_array)
+        X = X + X_unlabeled
+        Y = Y + Y_unlabeled
+        W = W + W_unlabeled
 
-        X = np.array(X)
-        Y = np.array(Y)
+        num_unlabeled_samples_in_batch = len(X_unlabeled)
+        num_samples_in_batch = len(X)
+
+        # Cast the lists to numpy arrays
+        X, Y, W = np.array(X, dtype=np.float32, copy=False), np.array(Y, dtype=np.float32, copy=False), np.array(W, dtype=np.float32, copy=False)
 
         # Normalize the photo batch data
         X = self._normalize_photo_batch(X)
 
-        return [X], Y
+        if self.batch_data_format == BatchDataFormat.SUPERVISED:
+            batch_input_data = [X]
+            batch_output_data = [Y]
+        elif self.batch_data_format == BatchDataFormat.SEMI_SUPERVISED:
+            # The dimensions of the number of unlabeled in the batch must match with batch dimension
+            num_unlabeled = np.ones(shape=[num_samples_in_batch], dtype=np.int32) * num_unlabeled_samples_in_batch
 
-    def _get_sample(self, step_idx, minc_sample):
-        # type: (int, MINCSample) -> (np.ndarray[np.float32], np.ndarray[np.float32])
+            # Generate a dummy output for the dummy loss function and yield a batch of data
+            dummy_output = np.zeros(shape=[num_samples_in_batch], dtype=np.int32)
 
-        # Read the photo file from the photos ImageSet
-        image_file = self.minc_photos_image_set.get_image_file_by_file_name(minc_sample.photo_id)
+            batch_input_data = [X, Y, W, num_unlabeled]
 
-        if image_file is None:
-            raise ValueError('Could not find image from ImageSet with file name: {}'.format(minc_sample.photo_id))
+            if X.shape[0] != Y.shape[0] or X.shape[0] != W.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
+                self.logger.warn('Unmatching input first (batch) dimensions: {}, {}, {}, {}'.format(X.shape[0], Y.shape[0], W.shape[0], num_unlabeled.shape[0]))
 
-        if self.crop_shape is None:
-            raise ValueError('MINCClassificationDataGenerator cannot be used without setting a crop shape')
+            logits_output = Y
+            batch_output_data = [dummy_output, logits_output]
+        else:
+            raise ValueError('Unknown batch data format: {}'.format(self.batch_data_format))
 
-        np_photo = img_to_array(image_file.get_image(self.num_color_channels))
-        image_height, image_width = np_photo.shape[0], np_photo.shape[1]
-        crop_height, crop_width = self.crop_shape[0], self.crop_shape[1]
-        crop_center_y = minc_sample.y
-        crop_center_x = minc_sample.x
+        return batch_input_data, batch_output_data
+
+    def get_labeled_batch_data(self, step_index, index_array):
+
+        if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500:
+            data = [self.get_labeled_sample_minc_2500(step_index, sample_index) for sample_index in index_array]
+        elif self.labeled_data_set.data_set_type == MINCDataSetType.MINC:
+            data = [self.get_labeled_sample_minc(step_index, sample_index) for sample_index in index_array]
+        else:
+            raise ValueError('Unknown data set type: {}'.format(self.labeled_data_set.data_set_type))
+
+        X, Y, W = zip(*data)
+
+        return list(X), list(Y), list(W)
+
+    def get_labeled_sample_minc_2500(self, step_index, sample_index):
+        minc_sample = self.labeled_data_set.samples[sample_index]
+        img_file = self.labeled_data_set.photo_image_set.get_image_file_by_file_name(minc_sample.file_name)
+        pil_image = img_file.get_image(self.num_color_channels)
+        np_image = img_to_array(pil_image)
+
+        if img_file is None:
+            raise ValueError('Could not find image from ImageSet with file name: {}'.format(minc_sample.file_name))
+
+        # Check whether we need to resize the photo to a constant size
+        if self.resize_shape is not None:
+            np_image = image_utils.np_scale_image_with_padding(np_image, shape=self.resize_shape, cval=self.photo_cval, interp='bilinear')
 
         # Apply data augmentation
-        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_idx):
-            np_photo_orig = np.array(np_photo, copy=True)
-            images, transform = image_utils.np_apply_random_transform(images=[np_photo],
+        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_index):
+            images, _ = image_utils.np_apply_random_transform(images=[np_image],
+                                                              cvals=[self.photo_cval],
+                                                              fill_mode=self.data_augmentation_params.fill_mode,
+                                                              interpolations=[ImageInterpolation.BICUBIC],
+                                                              img_data_format=self.img_data_format,
+                                                              rotation_range=self.data_augmentation_params.rotation_range,
+                                                              zoom_range=self.data_augmentation_params.zoom_range,
+                                                              width_shift_range=self.data_augmentation_params.width_shift_range,
+                                                              height_shift_range=self.data_augmentation_params.height_shift_range,
+                                                              channel_shift_ranges=[self.data_augmentation_params.channel_shift_range],
+                                                              horizontal_flip=self.data_augmentation_params.horizontal_flip,
+                                                              vertical_flip=self.data_augmentation_params.vertical_flip,
+                                                              gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
+
+            # Unpack the photo
+            np_image, = images
+
+        # Make sure the image dimensions satisfy the div2_constraint
+        # i.e. are n times divisible by 2 to work with
+        # the network. If the dimensions are not ok pad the images.
+        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
+        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
+
+        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
+            # The photo needs to be filled with the photo_cval color and masks with the mask cval color
+            padded_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
+            np_image = image_utils.np_pad_image_to_shape(np_image, padded_shape, self.photo_cval)
+
+        # Construct label vector (one-hot)
+        custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
+        y = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
+        y[custom_label] = 1.0
+
+        # Construct weight vector
+        w = np.array(self.class_weights, dtype=np.float32)
+
+        return np_image, y, w
+
+    def get_labeled_sample_minc(self, step_index, sample_index):
+        minc_sample = self.labeled_data_set.samples[sample_index]
+        img_file = self.labeled_data_set.photo_image_set.get_image_file_by_file_name(minc_sample.file_name)
+        pil_image = img_file.get_image(self.num_color_channels)
+        np_image = img_to_array(pil_image)
+
+        if img_file is None:
+            raise ValueError('Could not find image from ImageSet with file name: {}'.format(minc_sample.file_name))
+
+        if self.crop_shape is None:
+            raise ValueError('MINC data set images cannot be used without setting a crop shape')
+
+        # Check whether we need to resize the photo to a constant size
+        if self.resize_shape is not None:
+            np_image = image_utils.np_scale_image_with_padding(np_image, shape=self.resize_shape, cval=self.photo_cval, interp='bilinear')
+
+        img_height, img_width = np_image.shape[0], np_image.shape[1]
+        crop_height, crop_width = self.crop_shape[0], self.crop_shape[1]
+        crop_center_y, crop_center_x = minc_sample.y, minc_sample.x
+
+        # Apply data augmentation
+        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_index):
+            np_image_orig = np.array(np_image, copy=True)
+            images, transform = image_utils.np_apply_random_transform(images=[np_image],
                                                                       cvals=[self.photo_cval],
                                                                       fill_mode=self.data_augmentation_params.fill_mode,
                                                                       interpolations=[ImageInterpolation.BICUBIC],
@@ -1395,72 +1631,120 @@ class MINCClassificationDataGenerator(DataGenerator):
                                                                       gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
 
             # Unpack the photo
-            np_photo, = images
+            np_image, = images
 
-            crop_center = transform.transform_normalized_coordinates(np.array([minc_sample.x, minc_sample.y]))
+            crop_center = transform.transform_normalized_coordinates(np.array([crop_center_x, crop_center_y]))
             crop_center_x_new, crop_center_y_new = crop_center[0], crop_center[1]
 
             # If the center has gone out of bounds abandon the augmentation - otherwise, update the crop center values
-            if (not 0.0 < crop_center_y_new < 1.0) or (not 0.0 < crop_center_x_new < 1.0):
-                np_photo = np_photo_orig
+            if (not 0.0 <= crop_center_y_new <= 1.0) or (not 0.0 <= crop_center_x_new <= 1.0):
+                np_image = np_image_orig
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
 
         # Crop the image with the specified crop center. Regions going out of bounds are padded with a
         # constant value.
-        y_c = crop_center_y*image_height
-        x_c = crop_center_x*image_width
-        y_0 = int(round(y_c - crop_height*0.5))
-        x_0 = int(round(x_c - crop_width*0.5))
-        y_1 = int(round(y_c + crop_height*0.5))
-        x_1 = int(round(x_c + crop_width*0.5))
+        y_c = crop_center_y*img_height
+        x_c = crop_center_x*img_width
+        y_0 = np.clip(int(round(y_c - crop_height*0.5)), 0, img_height)
+        x_0 = np.clip(int(round(x_c - crop_width*0.5)), 0, img_width)
+        y_1 = np.clip(int(round(y_c + crop_height*0.5)), 0, img_height)
+        x_1 = np.clip(int(round(x_c + crop_width*0.5)), 0, img_width)
 
-        np_photo = image_utils.np_crop_image_with_fill(np_photo, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
+        np_image = image_utils.np_crop_image_with_fill(np_image, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
 
-        # Construct the one-hot vector
-        custom_label = self.minc_to_custom_label_mapping[minc_sample.minc_label]
-        y = np.zeros(self.num_labels)
+        # Make sure the image dimensions satisfy the div2_constraint
+        # i.e. are n times divisible by 2 to work with
+        # the network. If the dimensions are not ok pad the images.
+        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
+        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
+
+        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
+            # The photo needs to be filled with the photo_cval color and masks with the mask cval color
+            padded_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
+            np_image = image_utils.np_pad_image_to_shape(np_image, padded_shape, self.photo_cval)
+
+        # Construct label vector (one-hot)
+        custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
+        y = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
         y[custom_label] = 1.0
 
-        return np_photo, y
+        # Construct weight vector
+        w = np.array(self.class_weights, dtype=np.float32)
 
-    def _read_minc_data_set_file(self, file_path):
-        data_set = list()
+        return np_image, y, w
 
-        with open(file_path, 'r') as f:
-            lines = f.readlines()
+    def get_unlabeled_batch_data(self, step_index, index_array):
+        if not self.using_unlabeled_data:
+            return [], [], []
 
-            for line in lines:
-                # Each line of the file is: 4-tuple list of (label, photo id, x, y)
-                label, photo_id, x, y = line.split(',')
-                data_set.append(MINCSample(label=int(label), photo_id=photo_id.strip(), x=float(x), y=float(y)))
+        # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
+        unlabeled_data = [self.get_unlabeled_sample(step_index=step_index, sample_index=sample_index) for sample_index in index_array]
+        X_unlabeled, Y_unlabeled, W_unlabeled = zip(*unlabeled_data)
 
-        return data_set
+        return list(X_unlabeled), list(Y_unlabeled), list(W_unlabeled)
 
-    def _read_minc_labels_translation_file(self, file_path):
-        minc_to_custom_label_mapping = dict()
+    def get_unlabeled_sample(self, step_index, sample_index):
+        img_file = self.unlabeled_data_set.get_index(sample_index)
+        pil_image = img_file.get_image(self.num_color_channels)
+        np_image = img_to_array(pil_image)
 
-        with open(file_path, 'r') as f:
-            # The first line should be skipped because it describes the data, which is
-            # in the format of substance_name,minc_class_idx,custom_class_idx
-            lines = f.readlines()
+        # Check whether we need to resize the photo and the mask to a constant size
+        if self.resize_shape is not None:
+            np_image = image_utils.np_scale_image_with_padding(np_image, shape=self.resize_shape, cval=self.photo_cval, interp='bilinear')
 
-            for idx, line in enumerate(lines):
-                # Skip the first line
-                if idx == 0:
-                    continue
+        # Check whether any of the image dimensions is smaller than the crop,
+        # if so pad with the assigned fill colors
+        if self.crop_shape is not None and (np_image.shape[0] < self.crop_shape[0] or np_image.shape[1] < self.crop_shape[1]):
+            # Image dimensions must be at minimum the same as the crop dimension
+            # on each axis. The photo needs to be filled with the photo_cval
+            min_img_shape = (max(self.crop_shape[0], np_image.shape[0]), max(self.crop_shape[1], np_image.shape[1]))
+            np_image = image_utils.np_pad_image_to_shape(np_image, min_img_shape, self.photo_cval)
 
-                substance_name, minc_class_idx, custom_class_idx = line.split(',')
+        # Apply data augmentation
+        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_index):
+            images, _ = image_utils.np_apply_random_transform(images=[np_image],
+                                                              cvals=[self.photo_cval],
+                                                              fill_mode=self.data_augmentation_params.fill_mode,
+                                                              interpolations=[ImageInterpolation.BICUBIC],
+                                                              img_data_format=self.img_data_format,
+                                                              rotation_range=self.data_augmentation_params.rotation_range,
+                                                              zoom_range=self.data_augmentation_params.zoom_range,
+                                                              width_shift_range=self.data_augmentation_params.width_shift_range,
+                                                              height_shift_range=self.data_augmentation_params.height_shift_range,
+                                                              channel_shift_ranges=[self.data_augmentation_params.channel_shift_range],
+                                                              horizontal_flip=self.data_augmentation_params.horizontal_flip,
+                                                              vertical_flip=self.data_augmentation_params.vertical_flip,
+                                                              gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
 
-                # Check that there are no duplicate entries for MINC class ids
-                if minc_to_custom_label_mapping.has_key(int(minc_class_idx)):
-                    raise ValueError('Label mapping already contains entry for MINC class id: {}'.format(int(minc_class_idx)))
+            # Unpack the photo
+            np_image, = images
 
-                # Check that there are no duplicate entries for custom class ids
-                if int(custom_class_idx) in minc_to_custom_label_mapping.values():
-                    raise ValueError('Label mapping already contains entry for custom class id: {}'.format(int(custom_class_idx)))
+        # If a crop size is given: take a random crop of the image
+        if self.crop_shape is not None:
+            if dataset_utils.count_trailing_zeroes(self.crop_shape[0]) < self.div2_constraint or \
+                            dataset_utils.count_trailing_zeroes(self.crop_shape[1]) < self.div2_constraint:
+                raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(self.div2_constraint))
 
-                minc_to_custom_label_mapping[int(minc_class_idx)] = int(custom_class_idx)
+            x1y1, x2y2 = image_utils.np_get_random_crop_area(np_image, self.crop_shape[1], self.crop_shape[0])
+            np_image = image_utils.np_crop_image(np_image, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
 
-        return minc_to_custom_label_mapping
+        # Make sure the image dimensions satisfy the div2_constraint
+        # i.e. are n times divisible by 2 to work with
+        # the network. If the dimensions are not ok pad the images.
+        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
+        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
+
+        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
+            # The photo needs to be filled with the photo_cval color and masks with the mask cval color
+            padded_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
+            np_image = image_utils.np_pad_image_to_shape(np_image, padded_shape, self.photo_cval)
+
+        # Create a dummy label vector (one-hot) all zeros
+        y = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
+
+        # Create a dummy weight vector
+        w = np.ones(self.class_weights, dtype=np.float32)
+
+        return np_image, y, w

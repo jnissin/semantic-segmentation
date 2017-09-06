@@ -90,7 +90,7 @@ if __name__ == '__main__':
         .format(get_config_value('optimizer')['name'], get_config_value('loss_function')))
 
     # Get the optimizer
-    optimizer = training_utils._get_optimizer(get_config_value('optimizer'))
+    optimizer = training_utils._get_model_optimizer(get_config_value('optimizer'))
 
     model.compile(
         optimizer=optimizer,
@@ -106,7 +106,7 @@ if __name__ == '__main__':
             model)
 
     # Get callbacks
-    callbacks = training_utils._get_callbacks(
+    callbacks = training_utils._get_training_callbacks(
         keras_model_checkpoint_file_path=get_config_value('keras_model_checkpoint_file_path'),
         keras_tensorboard_log_path=get_config_value('keras_tensorboard_log_path'),
         keras_csv_log_file_path=get_config_value('keras_csv_log_file_path'),

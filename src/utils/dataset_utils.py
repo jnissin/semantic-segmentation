@@ -93,11 +93,11 @@ class MaterialSample(object):
 
 class MINCSample(object):
 
-    def __init__(self, label, photo_id, x, y):
+    def __init__(self, minc_label, file_name, x, y):
         # type: (int, str, float, float) -> None
 
-        self.minc_label = int(label)
-        self.photo_id = photo_id
+        self.minc_label = int(minc_label)
+        self.file_name = file_name
         self.x = float(x)
         self.y = float(y)
 

@@ -9,7 +9,7 @@ import numpy as np
 
 from enum import Enum
 from PIL import ImageFile
-from abc import ABCMeta, abstractmethod
+from abc import ABCMeta, abstractmethod, abstractproperty
 
 import keras
 import keras.backend as K
@@ -21,8 +21,8 @@ from tensorflow.python.client import timeline
 from callbacks.optimizer_checkpoint import OptimizerCheckpoint
 from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
 from models.extended_model import ExtendedModel
-from generators import SegmentationDataGenerator, MINCClassificationDataGenerator
-from generators import DataGeneratorParameters, DataAugmentationParameters, BatchDataFormat
+from generators import DataGenerator, SegmentationDataGenerator, MINCDataSet, ClassificationDataGenerator
+from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters, BatchDataFormat
 
 from utils import dataset_utils
 from models.models import ModelLambdaLossType, get_model
@@ -37,8 +37,9 @@ import settings
 from logger import Logger, LogLevel
 
 #############################################
-# TIME LINER
+# TIMELINER (PROFILING)
 #############################################
+
 
 class TimeLiner:
 
@@ -74,7 +75,8 @@ class TrainerType(Enum):
     SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL = 3
     SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL = 4
     CLASSIFICATION_SUPERVISED = 5
-    CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 6
+    CLASSIFICATION_SUPERVISED_MEAN_TEACHER = 6
+    CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 7
 
 
 class TrainerBase:
@@ -101,9 +103,22 @@ class TrainerBase:
         # Returns
             Nothing
         """
+        # Declare instance variables
         self.trainer_type = TrainerType[trainer_type.upper()]
         self.model_name = model_name
         self.model_folder_name = model_folder_name
+        self.config = None
+        self.logger = None
+
+        self.training_set_labeled = None
+        self.training_set_unlabeled = None
+        self.validation_set = None
+        self.test_set = None
+        self.training_data_generator = None
+        self.validation_data_generator = None
+        self.model_wrapper = None
+
+        self.initial_epoch = 0
         self.last_completed_epoch = -1
 
         # Profiling related variables
@@ -115,10 +130,11 @@ class TrainerBase:
         ImageFile.LOAD_TRUNCATED_IMAGES = True
 
         self.config = self._load_config_json(config_file_path)
+        self.save_values_on_early_exit = self._get_config_value('save_values_on_early_exit')
 
         # Setup the log file path to enable logging
-        log_file_path = self.get_config_value('log_file_path').format(model_folder=self.model_folder_name)
-        log_to_stdout = self.get_config_value('log_to_stdout')
+        log_file_path = self._get_config_value('log_file_path').format(model_folder=self.model_folder_name)
+        log_to_stdout = self._get_config_value('log_to_stdout')
         self.logger = Logger(log_file_path=log_file_path, use_timestamp=True, log_to_stdout_default=log_to_stdout)
 
         # Log the Keras and Tensorflow versions
@@ -128,20 +144,232 @@ class TrainerBase:
 
         # Seed the random in order to be able to reproduce the results
         # Note: both random and np.random
-        self.random_seed = int(self.get_config_value('random_seed'))
         self.logger.log('Initializing random and np.random with random seed: {}'.format(self.random_seed))
         random.seed(self.random_seed)
         np.random.seed(self.random_seed)
 
         # Set image data format
-        self.logger.log('Setting Keras image data format to: {}'.format(self.get_config_value('image_data_format')))
-        K.set_image_data_format(self.get_config_value('image_data_format'))
+        self.logger.log('Setting Keras image data format to: {}'.format(self._get_config_value('image_data_format')))
+        K.set_image_data_format(self._get_config_value('image_data_format'))
 
-        # Parse data augmentation parameters
-        if self.get_config_value('use_data_augmentation'):
+        # Get data augmentation parameters
+        self.data_augmentation_parameters = self._get_data_augmentation_parameters()
+        self.training_set_labeled, self.training_set_unlabeled, self.validation_set, self.test_set = self._get_data_sets()
+        self.training_data_generator, self.validation_data_generator = self._get_data_generators()
+
+        # Initialize model
+        self._init_model()
+
+    def _init_model(self):
+        # type: () -> ModelBase
+
+        """
+        Initializes the models i.e. creates the model and initiali
+
+        # Arguments
+            None
+
+        # Returns
+            :return: The ModelBase instance of the model
+        """
+
+        self.logger.log('Initializing model')
+
+        # Model creation
+        model_lambda_loss_type = self._get_model_lambda_loss_type()
+
+        self.logger.log('Creating model {} instance with type: {}, input shape: {}, num classes: {}'
+                        .format(self.model_name, model_lambda_loss_type, self.input_shape, self.num_classes))
+
+        self.model_wrapper = get_model(self.model_name,
+                                       self.input_shape,
+                                       self.num_classes,
+                                       logger=self.logger,
+                                       model_lambda_loss_type=model_lambda_loss_type)
+
+        self.model.summary()
+
+        if self.continue_from_last_checkpoint:
+            self.initial_epoch = self._load_latest_weights_for_model(self.model, self.model_checkpoint_directory)
+
+        if self.use_transfer_weights:
+            if self.initial_epoch != 0:
+                self.logger.warn('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
+            else:
+                self._transfer_weights(self.model_wrapper, self.transfer_options)
+
+
+        # Get the necessary components to compile the model
+        model_optimizer = self._get_model_optimizer()
+        model_loss = self._get_model_loss()
+        model_loss_weights = self._get_model_loss_weights()
+        model_metrics = self._get_model_metrics()
+
+        # Compile the student model
+        self.model.compile(optimizer=model_optimizer,
+                           loss=model_loss,
+                           loss_weights=model_loss_weights,
+                           metrics=model_metrics,
+                           **self._get_compile_kwargs())
+
+    @abstractmethod
+    def _get_data_sets(self):
+        # type: () -> (object, object, object, object)
+
+        """
+        Creates and initializes the data sets and return a tuple of four data sets:
+        (training labeled, training unlabeled, validation and test)
+
+        # Arguments
+            None
+        # Returns
+            :return: A tuple of data sets (training labeled, training unlabeled, validation, test)
+        """
+        pass
+
+    @abstractmethod
+    def _get_data_generators(self):
+        # type: () -> (DataGenerator, DataGenerator)
+
+        """
+        Creates and initializes the data generators and returns a tuple of two data generators:
+        (training data generator, validation data generator)
+
+        # Arguments
+            None
+        # Returns
+            :return: A tuple of two data generators (training, validation)
+        """
+        pass
+
+    """
+    PROPERTIES
+    """
+
+    @abstractproperty
+    def num_classes(self):
+        # type: () -> int
+        pass
+
+    @property
+    def random_seed(self):
+        # type: () -> int
+        return int(self._get_config_value('random_seed'))
+
+    @property
+    def continue_from_last_checkpoint(self):
+        # type: () -> bool
+        return bool(self._get_config_value('continue_from_last_checkpoint'))
+
+    @property
+    def continue_from_optimizer_checkpoint(self):
+        # type: () -> bool
+        return bool(self._get_config_value('continue_from_last_checkpoint'))
+
+    @property
+    def input_shape(self):
+        # type: () -> list
+        return self._get_config_value('input_shape')
+
+    @property
+    def use_class_weights(self):
+        # type: () -> bool
+        return bool(self._get_config_value('use_class_weights'))
+
+    @property
+    def use_transfer_weights(self):
+        # type: () -> bool
+        return bool(self._get_config_value('transfer_weights'))
+
+    @property
+    def transfer_options(self):
+        # type: () -> dict
+        return self._get_config_value('transfer_options')
+
+    @property
+    def loss_function_name(self):
+        # type: () -> str
+        return self._get_config_value('loss_function')
+
+    @property
+    def use_data_augmentation(self):
+        # type: () -> bool
+        return bool(self._get_config_value('use_data_augmentation'))
+
+    @property
+    def num_color_channels(self):
+        # type: () -> int
+        return int(self._get_config_value('num_color_channels'))
+
+    @property
+    def num_epochs(self):
+        # type: () -> int
+        return int(self._get_config_value('num_epochs'))
+
+    @property
+    def num_labeled_per_batch(self):
+        # type: () -> int
+        return int(self._get_config_value('num_labeled_per_batch'))
+
+    @property
+    def num_unlabeled_per_batch(self):
+        # type: () -> int
+        return int(self._get_config_value('num_unlabeled_per_batch'))
+
+    @property
+    def crop_shape(self):
+        # type: () -> list
+        return self._get_config_value('crop_shape')
+
+    @property
+    def resize_shape(self):
+        # type: () -> list
+        return self._get_config_value('resize_shape')
+
+    @property
+    def validation_num_labeled_per_batch(self):
+        # type: () -> int
+        return int(self._get_config_value('validation_num_labeled_per_batch'))
+
+    @property
+    def validation_crop_shape(self):
+        # type: () -> list
+        return self._get_config_value('validation_crop_shape')
+
+    @property
+    def validation_resize_shape(self):
+        # type: () -> list
+        return self._get_config_value('validation_resize_shape')
+
+    @property
+    def model(self):
+        # type: () -> ExtendedModel
+        if self.model_wrapper is not None:
+            return self.model_wrapper.model
+
+        return None
+
+    @property
+    def using_gaussian_noise(self):
+        # type: () -> bool
+        return self.data_augmentation_parameters is not None and self.data_augmentation_parameters.gaussian_noise_stddev_function is not None
+
+    def _load_config_json(self, path):
+        with open(path) as f:
+            data = f.read()
+            return json.loads(data)
+
+    def _get_config_value(self, key):
+        return self.config[key] if key in self.config else None
+
+    def _set_config_value(self, key, value):
+        self.config[key] = value
+
+    def _get_data_augmentation_parameters(self):
+        if self._get_config_value('use_data_augmentation'):
             self.logger.log('Parsing data augmentation parameters')
 
-            augmentation_config = self.get_config_value('data_augmentation_params')
+            augmentation_config = self._get_config_value('data_augmentation_params')
 
             if not augmentation_config:
                 raise ValueError('No data with key data_augmentation_params was found in the configuration file')
@@ -157,7 +385,7 @@ class TrainerBase:
             gaussian_noise_stddev_function = augmentation_config.get('gaussian_noise_stddev_function')
             gamma_adjust_range = augmentation_config.get('gamma_adjust_range')
 
-            self.data_augmentation_parameters = DataAugmentationParameters(
+            data_augmentation_parameters = DataAugmentationParameters(
                 augmentation_probability_function=augmentation_probability_function,
                 rotation_range=rotation_range,
                 zoom_range=zoom_range,
@@ -170,7 +398,7 @@ class TrainerBase:
                 gamma_adjust_range=gamma_adjust_range)
 
             self.logger.log('Data augmentation params: augmentation probability function: {}, rotation range: {}, zoom range: {}, '
-                            'width shift range: {}, height shift range: {}, channel shift range: {}, horizontal flip: {}, vertical flip: {},'
+                            'width shift range: {}, height shift range: {}, channel shift range: {}, horizontal flip: {}, vertical flip: {}, '
                             'gaussian noise stddev function: {}, gamma_adjust_range: {}'
                              .format(augmentation_probability_function,
                                      rotation_range,
@@ -183,50 +411,18 @@ class TrainerBase:
                                      gaussian_noise_stddev_function,
                                      gamma_adjust_range))
         else:
-            self.data_augmentation_parameters = None
+            data_augmentation_parameters = None
 
-        self._init_config()
-        self._init_data()
-        self._init_models()
-        self._init_data_generators()
+        return data_augmentation_parameters
 
-    @abstractmethod
-    def _init_config(self):
-        self.logger.log('Reading configuration file')
-        self.save_values_on_early_exit = self.get_config_value('save_values_on_early_exit')
-
-    @abstractmethod
-    def _init_data(self):
-        self.logger.log('Initializing data')
-
-    @abstractmethod
-    def _init_models(self):
-        self.logger.log('Initializing models')
-
-    @abstractmethod
-    def _init_data_generators(self):
-        self.logger.log('Initializing data generators')
-
-    @staticmethod
-    def _load_config_json(path):
-        with open(path) as f:
-            data = f.read()
-            return json.loads(data)
-
-    def get_config_value(self, key):
-        return self.config[key] if key in self.config else None
-
-    def set_config_value(self, key, value):
-        self.config[key] = value
-
-    def get_callbacks(self):
-        keras_model_checkpoint = self.get_config_value('keras_model_checkpoint')
-        keras_tensorboard_log_path = self.get_config_value('keras_tensorboard_log_path').format(model_folder=self.model_folder_name)
-        keras_csv_log_file_path = self.get_config_value('keras_csv_log_file_path').format(model_folder=self.model_folder_name)
-        early_stopping = self.get_config_value('early_stopping')
-        reduce_lr_on_plateau = self.get_config_value('reduce_lr_on_plateau')
-        stepwise_learning_rate_scheduler = self.get_config_value('stepwise_learning_rate_scheduler')
-        optimizer_checkpoint_file_path = self.get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
+    def _get_training_callbacks(self):
+        keras_model_checkpoint = self._get_config_value('keras_model_checkpoint')
+        keras_tensorboard_log_path = self._get_config_value('keras_tensorboard_log_path').format(model_folder=self.model_folder_name)
+        keras_csv_log_file_path = self._get_config_value('keras_csv_log_file_path').format(model_folder=self.model_folder_name)
+        early_stopping = self._get_config_value('early_stopping')
+        reduce_lr_on_plateau = self._get_config_value('reduce_lr_on_plateau')
+        stepwise_learning_rate_scheduler = self._get_config_value('stepwise_learning_rate_scheduler')
+        optimizer_checkpoint_file_path = self._get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
 
         callbacks = []
 
@@ -346,28 +542,16 @@ class TrainerBase:
 
         return callbacks
 
-    @property
-    def model_checkpoint_directory(self):
-        keras_model_checkpoint = self.get_config_value('keras_model_checkpoint')
-        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
-        return keras_model_checkpoint_dir
-
-    @property
-    def model_checkpoint_file_path(self):
-        keras_model_checkpoint = self.get_config_value('keras_model_checkpoint')
-        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
-        keras_model_checkpoint_file = os.path.basename(keras_model_checkpoint.get('checkpoint_file_path'))
-        keras_model_checkpoint_file_path = os.path.join(keras_model_checkpoint_dir, keras_model_checkpoint_file)
-        return keras_model_checkpoint_file_path
-
-    def get_optimizer(self, continue_from_optimizer_checkpoint):
-        optimizer_info = self.get_config_value('optimizer')
+    def _get_model_optimizer(self):
+        optimizer_info = self._get_config_value('optimizer')
         optimizer_configuration = None
         optimizer = None
         optimizer_name = optimizer_info['name'].lower()
 
-        if continue_from_optimizer_checkpoint:
-            optimizer_configuration_file_path = self.get_config_value('optimizer_checkpoint_file_path')
+        if self.continue_from_optimizer_checkpoint and self.initial_epoch == 0:
+            self.logger.warn('Cannot continue from optimizer checkpoint if initial epoch is 0. Ignoring optimizer checkpoint.')
+        elif self.continue_from_optimizer_checkpoint and self.initial_epoch != 0:
+            optimizer_configuration_file_path = self._get_config_value('optimizer_checkpoint_file_path')
             self.logger.log('Loading optimizer configuration from file: {}'.format(optimizer_configuration_file_path))
 
             try:
@@ -414,8 +598,47 @@ class TrainerBase:
 
         return optimizer
 
-    @staticmethod
-    def get_latest_weights_file_path(weights_folder_path):
+    @abstractmethod
+    def _get_model_lambda_loss_type(self):
+        # type: () -> ModelLambdaLossType
+        pass
+
+    @abstractmethod
+    def _get_model_metrics(self):
+        # type: () -> dict[str, list[Callable]]
+        pass
+
+    @abstractmethod
+    def _get_model_loss(self):
+        # type: () -> dict[str, Callable]
+        pass
+
+    @abstractmethod
+    def _get_model_loss_weights(self):
+        # type: () -> dict[str, float]
+        pass
+
+    def _get_loss_function(self):
+        if self.loss_function_name == 'dummy':
+            return losses.dummy_loss
+        else:
+            raise ValueError('Unrecognized loss function name: {}'.format(self.loss_function_name))
+
+    def _get_compile_kwargs(self):
+        if settings.PROFILE:
+            return {'options': self.profiling_run_options, 'run_metadata': self.profiling_run_metadata}
+        return {}
+
+    def _get_batch_gaussian_noise(self, noise_shape, step_index):
+        if self.using_gaussian_noise:
+            stddev = self.data_augmentation_parameters.gaussian_noise_stddev_function(step_index)
+            self.logger.debug_log('Generating gaussian noise with stddev: {}'.format(stddev))
+            gnoise = np.random.normal(loc=0.0, scale=stddev, size=noise_shape)
+            return gnoise
+        else:
+            return np.zeros(noise_shape)
+
+    def _get_latest_weights_file_path(self, weights_folder_path):
         weight_files = dataset_utils.get_files(weights_folder_path)
 
         if len(weight_files) > 0:
@@ -427,7 +650,7 @@ class TrainerBase:
 
         return None
 
-    def load_latest_weights_for_model(self, model, weights_directory_path):
+    def _load_latest_weights_for_model(self, model, weights_directory_path):
         initial_epoch = 0
 
         try:
@@ -438,7 +661,7 @@ class TrainerBase:
                 weights_folder = os.path.dirname(weights_directory_path)
 
             self.logger.log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
-            weight_file_path = TrainerBase.get_latest_weights_file_path(weights_folder)
+            weight_file_path = self._get_latest_weights_file_path(weights_folder)
 
             if weight_file_path is None:
                 self.logger.log('Could not locate any suitable weight files from the given path')
@@ -463,7 +686,7 @@ class TrainerBase:
 
         return initial_epoch
 
-    def transfer_weights(self, to_model_wrapper, transfer_weights_options):
+    def _transfer_weights(self, to_model_wrapper, transfer_weights_options):
         # type: (ModelBase, dict) -> ()
 
         transfer_model_name = transfer_weights_options['transfer_model_name']
@@ -497,6 +720,20 @@ class TrainerBase:
         self.logger.log('Weight transfer completed with {} transferred layers, last transferred layer: {}'
             .format(transferred_layers, last_transferred_layer))
 
+    @property
+    def model_checkpoint_directory(self):
+        keras_model_checkpoint = self._get_config_value('keras_model_checkpoint')
+        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
+        return keras_model_checkpoint_dir
+
+    @property
+    def model_checkpoint_file_path(self):
+        keras_model_checkpoint = self._get_config_value('keras_model_checkpoint')
+        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
+        keras_model_checkpoint_file = os.path.basename(keras_model_checkpoint.get('checkpoint_file_path'))
+        keras_model_checkpoint_file_path = os.path.join(keras_model_checkpoint_dir, keras_model_checkpoint_file)
+        return keras_model_checkpoint_file_path
+
     @abstractmethod
     def train(self):
         self.logger.log('Starting training at local time {}\n'.format(datetime.datetime.now()))
@@ -512,19 +749,11 @@ class TrainerBase:
             K.tf.train.write_graph(K.get_session().graph_def, graph_def_file_folder, "graph_def", as_text=True)
             self.logger.profile_log('Writing Tensorflow GraphDef complete')
 
-    def handle_early_exit(self):
-        self.logger.log('Handle early exit method called')
-
-        if not self.save_values_on_early_exit:
-            self.logger.log('Save values on early exit is disabled')
-            return
-
-    def get_compile_kwargs(self):
-        if settings.PROFILE:
-            return {'options': self.profiling_run_options, 'run_metadata': self.profiling_run_metadata}
-        return {}
-
     def modify_batch_data(self, step_index, x, y, validation=False):
+        # type: (int, list, list, bool) -> (list, list)
+        assert isinstance(x, list)
+        assert isinstance(y, list)
+
         return x, y
 
     def on_batch_end(self, batch_index):
@@ -543,8 +772,36 @@ class TrainerBase:
         self.logger.log('The training session ended at local time {}\n'.format(datetime.datetime.now()))
         self.logger.close_log()
 
+    def handle_early_exit(self):
+        self.logger.log('Handle early exit method called')
+
+        if not self.save_values_on_early_exit:
+            self.logger.log('Save values on early exit is disabled')
+            return
+
+        # Stop training
+        self.logger.log('Stopping model training')
+        self.model.stop_fit_generator()
+
+        # Save student model weights
+        self.logger.log('Saving model weights')
+        self.save_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
+
+        # Save optimizer settings
+        self.logger.log('Saving model optimizer settings')
+        self.save_optimizer_settings(model=self.model, file_extension='.early-stop')
+
+    def save_model_weights(self, epoch_index, val_loss, file_extension=''):
+        file_path = self.model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
+
+        # Make sure the directory exists
+        general_utils.create_path_if_not_existing(file_path)
+
+        self.logger.log('Saving model weights to file: {}'.format(file_path))
+        self.model.save_weights(file_path, overwrite=True)
+
     def save_optimizer_settings(self, model, file_extension=''):
-        file_path = self.get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name) + file_extension
+        file_path = self._get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name) + file_extension
 
         with open(file_path, 'w') as log_file:
             optimizer_config = model.optimizer.get_config()
@@ -564,277 +821,46 @@ class TrainerBase:
             self.logger.profile_log('Saving profiling data to: {}'.format(profiling_timeline_file_path))
             self.profiling_timeliner.save(profiling_timeline_file_path)
 
+
 #############################################
-# SEGMENTATION TRAINER
+# MEAN TEACHER TRAINER BASE
 #############################################
 
+class MeanTeacherTrainerBase(TrainerBase):
 
-class SegmentationTrainer(TrainerBase):
+    __metaclass__ = ABCMeta
 
-    def __init__(self,
-                 trainer_type,
-                 model_name,
-                 model_folder_name,
-                 config_file_path):
-        # type: (str, str, str, str, str) -> ()
+    def __init__(self, trainer_type, model_name, model_folder_name, config_file_path):
+        super(MeanTeacherTrainerBase, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
 
-        # Declare variables that are going to be initialized in the _init_ functions
-        self.label_generation_function = None
-        self.consistency_cost_coefficient_function = None
-        self.ema_smoothing_coefficient_function = None
-        self.unlabeled_cost_coefficient_function = None
-
-        self.material_class_information = None
-        self.data_set_information = None
-        self.num_classes = -1
-
-        self.labeled_photo_files = None
-        self.labeled_mask_files = None
-        self.unlabeled_photo_files = None
-
-        self.training_set_labeled = None
-        self.training_set_unlabeled = None
-        self.validation_set = None
-        self.test_set = None
-
-        self.model_wrapper = None
-        self.model = None
+        # Declare instance variables
         self.teacher_model_wrapper = None
-        self.teacher_model = None
-        self.initial_epoch = 0
-
-        self.training_data_generator = None
-        self.validation_data_generator = None
         self.teacher_validation_data_generator = None
 
-        super(SegmentationTrainer, self).__init__(trainer_type, model_name, model_folder_name, config_file_path)
+        self._mean_teacher_method_config = None
+        self._ema_smoothing_coefficient_function = None
+        self._consistency_cost_coefficient_function = None
+        self._teacher_weights_directory_path = None
+        self._teacher_model_checkpoint_file_path = None
 
-    def _init_config(self):
-        super(SegmentationTrainer, self)._init_config()
+        # If we are using the mean teacher method - read the configuration and initialize the instance variables
+        self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
+        self._init_teacher_model()
 
-        self.path_to_material_class_file = self.get_config_value('path_to_material_class_file')
-        self.path_to_data_set_information_file = self.get_config_value('path_to_data_set_information_file')
-        self.path_to_labeled_photos = self.get_config_value('path_to_labeled_photos')
-        self.path_to_labeled_masks = self.get_config_value('path_to_labeled_masks')
-        self.path_to_unlabeled_photos = self.get_config_value('path_to_unlabeled_photos')
-        self.use_class_weights = bool(self.get_config_value('use_class_weights'))
-        self.use_material_samples = bool(self.get_config_value('use_material_samples'))
-
-        self.input_shape = self.get_config_value('input_shape')
-        self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
-        self.use_transfer_weights = bool(self.get_config_value('transfer_weights'))
-        self.transfer_options = self.get_config_value('transfer_options')
-        self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
-        self.loss_function_name = self.get_config_value('loss_function')
-
-        # If using mean teacher method read the parameters - any missing parameters should raise
-        # exceptions
-        if self.using_mean_teacher_method:
-            self._init_mean_teacher_config()
-
-        # If using superpixel method; read the parameters - any missing parameters should raise
-        # exceptions
-        if self.using_superpixel_method:
-            self._init_superpixel_config()
-
-        self.use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
-        self.num_color_channels = self.get_config_value('num_color_channels')
-
-        self.num_epochs = self.get_config_value('num_epochs')
-        self.num_labeled_per_batch = self.get_config_value('num_labeled_per_batch')
-        self.num_unlabeled_per_batch = self.get_config_value('num_unlabeled_per_batch')
-        self.crop_shape = self.get_config_value('crop_shape')
-        self.resize_shape = self.get_config_value('resize_shape')
-        self.validation_num_labeled_per_batch = self.get_config_value('validation_num_labeled_per_batch')
-        self.validation_crop_shape = self.get_config_value('validation_crop_shape')
-        self.validation_resize_shape = self.get_config_value('validation_resize_shape')
-
-        # Sanity check for number of unlabeled per batch
-        if self.num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
-            self.logger.warn('Trainer type is marked as {} with unlabeled per batch {} - assuming 0 unlabeled per batch'.format(self.trainer_type, self.num_unlabeled_per_batch))
-            self.num_unlabeled_per_batch = 0
-
-    def _init_mean_teacher_config(self):
-        self.logger.log('Reading mean teacher method configuration')
-        mean_teacher_params = self.get_config_value('mean_teacher_params')
-
-        if mean_teacher_params is None:
-            raise ValueError('Could not find entry for mean_teacher_params from the configuration JSON')
-
-        teacher_weights_directory_path = os.path.dirname(mean_teacher_params['teacher_model_checkpoint_file_path']).format(model_folder=self.model_folder_name)
-        self.logger.log('Teacher weights directory path: {}'.format(teacher_weights_directory_path))
-        self.teacher_weights_directory_path = teacher_weights_directory_path
-        self.teacher_model_checkpoint_file_path = mean_teacher_params['teacher_model_checkpoint_file_path']
-
-        ema_coefficient_schedule_function = mean_teacher_params['ema_smoothing_coefficient_function']
-        self.logger.log('EMA smoothing coefficient function: {}'.format(ema_coefficient_schedule_function))
-        self.ema_smoothing_coefficient_function = eval(ema_coefficient_schedule_function)
-
-        consistency_cost_coefficient_function = mean_teacher_params['consistency_cost_coefficient_function']
-        self.logger.log('Consistency cost coefficient function: {}'.format(consistency_cost_coefficient_function))
-        self.consistency_cost_coefficient_function = eval(consistency_cost_coefficient_function)
-
-    def _init_superpixel_config(self):
-        self.logger.log('Reading superpixel method configuration')
-        superpixel_params = self.get_config_value('superpixel_params')
-
-        if superpixel_params is None:
-            raise ValueError('Could not find entry for superpixel_params from the configuration JSON')
-
-        label_generation_function_name = superpixel_params['label_generation_function_name']
-        self.logger.log('Label generation function name: {}'.format(label_generation_function_name))
-        self.label_generation_function = self.get_label_generation_function(label_generation_function_name)
-
-        unlabeled_cost_coefficient_function = superpixel_params['unlabeled_cost_coefficient_function']
-        self.logger.log('Unlabeled cost coefficient function: {}'.format(unlabeled_cost_coefficient_function))
-        self.unlabeled_cost_coefficient_function = eval(unlabeled_cost_coefficient_function)
-
-    def _init_data(self):
-        super(SegmentationTrainer, self)._init_data()
-
-        # Load material class information
-        self.logger.log('Loading material class information from: {}'.format(self.path_to_material_class_file))
-        self.material_class_information = dataset_utils.load_material_class_information(self.path_to_material_class_file)
-        self.num_classes = len(self.material_class_information)
-        self.logger.log('Loaded {} material classes successfully'.format(self.num_classes))
-
-        # Load data set information
-        self.logger.log('Loading data set information from: {}'.format(self.path_to_data_set_information_file))
-        self.data_set_information = dataset_utils.load_segmentation_data_set_information(self.path_to_data_set_information_file)
-        self.logger.log('Loaded data set information successfully with set sizes (tr,va,te): {}, {}, {}'
-                 .format(self.data_set_information.training_set.labeled_size + self.data_set_information.training_set.unlabeled_size,
-                         self.data_set_information.validation_set.labeled_size,
-                         self.data_set_information.test_set.labeled_size))
-
-        self.logger.log('Constructing labeled data sets with photo files from: {} and mask files from: {}'.format(self.path_to_labeled_photos, self.path_to_labeled_masks))
-
-        # Labeled training set
-        self.logger.log('Constructing labeled training set')
-        stime = time.time()
-        self.training_set_labeled = LabeledImageDataSet('training_set_labeled',
-                                                        path_to_photo_archive=self.path_to_labeled_photos,
-                                                        path_to_mask_archive=self.path_to_labeled_masks,
-                                                        photo_file_list=self.data_set_information.training_set.labeled_photos,
-                                                        mask_file_list=self.data_set_information.training_set.labeled_masks,
-                                                        material_samples=self.data_set_information.training_set.material_samples)
-        self.logger.log('Labeled training set construction took: {} s, size: {}'.format(time.time()-stime, self.training_set_labeled.size))
-
-        if self.training_set_labeled.size == 0:
-            raise ValueError('No training data found')
-
-        # Unlabeled training set - skip construction if unlabeled per batch is zero or this is a supervised segmentation trainer
-        if self.num_unlabeled_per_batch > 0 and self.trainer_type != TrainerType.SEGMENTATION_SUPERVISED:
-            self.logger.log('Constructing unlabeled training set from: {}'.format(self.path_to_unlabeled_photos))
-            stime = time.time()
-            self.training_set_unlabeled = UnlabeledImageDataSet('training_set_unlabeled',
-                                                                path_to_photo_archive=self.path_to_unlabeled_photos,
-                                                                photo_file_list=self.data_set_information.training_set.unlabeled_photos)
-            self.logger.log('Unlabeled training set construction took: {} s, size: {}'.format(time.time()-stime, self.training_set_unlabeled.size))
-        else:
-            self.training_set_unlabeled = None
-
-        # Labeled validation set
-        self.logger.log('Constructing validation set')
-        stime = time.time()
-        self.validation_set = LabeledImageDataSet('validation_set',
-                                                  self.path_to_labeled_photos,
-                                                  self.path_to_labeled_masks,
-                                                  photo_file_list=self.data_set_information.validation_set.labeled_photos,
-                                                  mask_file_list=self.data_set_information.validation_set.labeled_masks,
-                                                  material_samples=self.data_set_information.validation_set.material_samples)
-        self.logger.log('Labeled validation set construction took: {} s, size: {}'.format(time.time()-stime, self.validation_set.size))
-
-        # Labeled test set
-        self.logger.log('Constructing test set')
-        stime = time.time()
-        self.test_set = LabeledImageDataSet('test_set',
-                                            self.path_to_labeled_photos,
-                                            self.path_to_labeled_masks,
-                                            photo_file_list=self.data_set_information.test_set.labeled_photos,
-                                            mask_file_list=self.data_set_information.test_set.labeled_masks,
-                                            material_samples=self.data_set_information.test_set.material_samples)
-        self.logger.log('Labeled test set construction took: {} s, size: {}'.format(time.time()-stime, self.test_set.size))
-
-        if self.training_set_unlabeled is not None:
-            total_data_set_size = self.training_set_labeled.size + self.training_set_unlabeled.size + self.validation_set.size + self.test_set.size
-        else:
-            total_data_set_size = self.training_set_labeled.size + self.validation_set.size + self.test_set.size
-
-        self.logger.log('Total data set size: {}'.format(total_data_set_size))
-
-        # Class weights
-        self.class_weights = self.get_class_weights(data_set_information=self.data_set_information)
-
-        # Ignored classes
-        self.ignore_classes = self.get_ignore_classes(self.class_weights)
-
-    def _init_models(self):
-        super(SegmentationTrainer, self)._init_models()
-
-        # Model creation
-        student_model_type = self.get_model_lambda_loss_type()
-
-        self.logger.log('Creating student model {} instance with type: {}, input shape: {}, num classes: {}'
-                        .format(self.model_name, student_model_type, self.input_shape, self.num_classes))
-        self.logger.log('Using mean teacher method: {}'.format(self.using_mean_teacher_method))
-        self.logger.log('Using superpixel method: {}'.format(self.using_superpixel_method))
-
-        self.model_wrapper = get_model(self.model_name,
-                                       self.input_shape,
-                                       self.num_classes,
-                                       logger=self.logger,
-                                       model_lambda_loss_type=student_model_type)
-
-        self.model = self.model_wrapper.model
-        self.model.summary()
-
-        if self.continue_from_last_checkpoint:
-            self.initial_epoch = self.load_latest_weights_for_model(self.model, self.model_checkpoint_directory)
-
-        if self.use_transfer_weights:
-            if self.initial_epoch != 0:
-                self.logger.warn('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
-            else:
-                self.transfer_weights(self.model_wrapper, self.transfer_options)
-
-        # Get the optimizer for the model
-        if self.continue_from_optimizer_checkpoint and self.initial_epoch == 0:
-            self.logger.warn('Cannot continue from optimizer checkpoint if initial epoch is 0. Ignoring optimizer checkpoint.')
-            self.continue_from_optimizer_checkpoint = False
-
-        optimizer = self.get_optimizer(self.continue_from_optimizer_checkpoint)
-
-        # Get the loss function for the student model
-        if self.loss_function_name != 'dummy':
-            self.logger.warn('Semisupervised trainer should uses \'dummy\' loss function, got: {}. Ignoring passed loss function.'.format(self.loss_function_name))
-            self.loss_function_name = 'dummy'
-
-        loss_function = losses.dummy_loss
-
-        # Ignore all the classes which have zero weights in the metrics
-        if len(self.ignore_classes) > 0:
-            self.logger.log('Ignoring classes with zero weights (in metrics): {}'.format(list(self.ignore_classes)))
-
-        # Compile the student model
-        self.model.compile(optimizer=optimizer,
-                           loss={'loss': loss_function, 'logits': lambda _, y_pred: 0.0*y_pred},
-                           loss_weights={'loss': 1., 'logits': 0.},
-                           metrics={'logits': [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                                               metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                                               metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]},
-                           **self.get_compile_kwargs())
-
+    def _init_teacher_model(self):
         # If we are using the mean teacher method create the teacher model
         if self.using_mean_teacher_method:
-            teacher_model_lambda_loss_type = ModelLambdaLossType.NONE
+            # Get the optimizer for the model
+            optimizer = self._get_model_optimizer()
+            teacher_model_lambda_loss_type = self._get_teacher_model_lambda_loss_type()
+
             self.logger.log('Creating teacher model {} instance with lambda loss type: {}, input shape: {}, num classes: {}'.format(self.model_name, teacher_model_lambda_loss_type, self.input_shape, self.num_classes))
             self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, logger=self.logger, model_lambda_loss_type=teacher_model_lambda_loss_type)
-            self.teacher_model = self.teacher_model_wrapper.model
             self.teacher_model.summary()
 
             if self.continue_from_last_checkpoint:
                 self.logger.log('Loading latest teacher model weights from path: {}'.format(self.teacher_weights_directory_path))
-                initial_teacher_epoch = self.load_latest_weights_for_model(self.teacher_model, self.teacher_weights_directory_path)
+                initial_teacher_epoch = self._load_latest_weights_for_model(self.teacher_model, self.teacher_weights_directory_path)
 
                 if initial_teacher_epoch < 1:
                     self.logger.warn('Could not find suitable weights, initializing teacher with student model weights')
@@ -842,253 +868,114 @@ class SegmentationTrainer(TrainerBase):
             else:
                 self.teacher_model.set_weights(self.model.get_weights())
 
-            # Note: Teacher model can use the regular metrics
+            teacher_model_loss = self._get_teacher_model_loss()
+            teacher_model_metrics = self._get_teacher_model_metrics()
+
             self.teacher_model.compile(optimizer=optimizer,
-                                       loss=losses.segmentation_sparse_weighted_categorical_cross_entropy(self.class_weights),
-                                       metrics=[metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                                                metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                                                metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)],
-                                       **self.get_compile_kwargs())
+                                       loss=teacher_model_loss,
+                                       metrics=teacher_model_metrics,
+                                       **self._get_compile_kwargs())
 
-    def _init_data_generators(self):
-        super(SegmentationTrainer, self)._init_data_generators()
-
-        # Create training data and validation data generators
-        # Note: training data comes from semi-supervised segmentation data generator and validation
-        # and test data come from regular segmentation data generator
-        self.logger.log('Creating training data generator')
-
-        training_data_generator_params = DataGeneratorParameters(
-            material_class_information=self.material_class_information,
-            num_color_channels=self.num_color_channels,
-            logger=self.logger,
-            random_seed=self.random_seed,
-            crop_shape=self.crop_shape,
-            resize_shape=self.resize_shape,
-            use_per_channel_mean_normalization=True,
-            per_channel_mean=self.data_set_information.per_channel_mean if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_mean,
-            use_per_channel_stddev_normalization=True,
-            per_channel_stddev=self.data_set_information.labeled_per_channel_stddev if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_stddev,
-            use_data_augmentation=self.use_data_augmentation,
-            use_material_samples=self.use_material_samples,
-            data_augmentation_params=self.data_augmentation_parameters,
-            shuffle_data_after_epoch=True,
-            div2_constraint=4)
-
-        self.training_data_generator = SegmentationDataGenerator(
-            labeled_data_set=self.training_set_labeled,
-            unlabeled_data_set=self.training_set_unlabeled if self.using_unlabeled_training_data else None,
-            num_labeled_per_batch=self.num_labeled_per_batch,
-            num_unlabeled_per_batch=self.num_unlabeled_per_batch if self.using_unlabeled_training_data else 0,
-            params=training_data_generator_params,
-            class_weights=self.class_weights,
-            batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
-            label_generation_function=self.label_generation_function)
-
-        self.logger.log('Creating validation data generator')
-
-        validation_data_generator_params = DataGeneratorParameters(
-            material_class_information=self.material_class_information,
-            num_color_channels=self.num_color_channels,
-            logger=self.logger,
-            random_seed=self.random_seed,
-            crop_shape=self.validation_crop_shape,
-            resize_shape=self.validation_resize_shape,
-            use_per_channel_mean_normalization=True,
-            per_channel_mean=training_data_generator_params.per_channel_mean,
-            use_per_channel_stddev_normalization=True,
-            per_channel_stddev=training_data_generator_params.per_channel_stddev,
-            use_data_augmentation=False,
-            use_material_samples=False,
-            data_augmentation_params=None,
-            shuffle_data_after_epoch=True,
-            div2_constraint=4)
-
-        # The student lambda loss layer needs semi-supervised input, so we need to work around it
-        # to only provide labeled input from the semi-supervised data generator. The dummy data
-        # is appended to each batch so that the batch data maintains it's shape. This is done in the
-        # modify_batch_data function.
-        self.validation_data_generator = SegmentationDataGenerator(
-            labeled_data_set=self.validation_set,
-            unlabeled_data_set=None,
-            num_labeled_per_batch=self.validation_num_labeled_per_batch,
-            num_unlabeled_per_batch=0,
-            params=validation_data_generator_params,
-            class_weights=self.class_weights,
-            batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
-            label_generation_function=None)
-
-        # Note: The teacher has a supervised batch data format for validation data generation
-        # because it doesn't have the semi-supervised loss lambda layer since we need to predict with it
-        if self.using_mean_teacher_method:
-            self.logger.log('Creating teacher validation data generator')
-
-            self.teacher_validation_data_generator = SegmentationDataGenerator(
-                labeled_data_set=self.validation_set,
-                unlabeled_data_set=None,
-                num_labeled_per_batch=self.validation_num_labeled_per_batch,
-                num_unlabeled_per_batch=0,
-                params=validation_data_generator_params,
-                class_weights=self.class_weights,
-                batch_data_format=BatchDataFormat.SUPERVISED,
-                label_generation_function=None)
-        else:
-            self.teacher_validation_data_generator = None
-
-        self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
-        self.logger.log('Using material samples: {}'.format(self.training_data_generator.use_material_samples))
-        self.logger.log('Using per-channel mean: {}'.format(self.training_data_generator.per_channel_mean))
-        self.logger.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
-
-    def get_class_weights(self, data_set_information):
-        # type: (SegmentationDataSetInformation) -> np.ndarray[np.float32]
-
-        # Calculate class weights for the data if necessary
-        if self.use_class_weights:
-
-            class_weights = data_set_information.class_weights
-            override_class_weights = self.get_config_value('override_class_weights')
-
-            # Legacy support for data sets without material_samples_class_weights
-            if self.use_material_samples and hasattr(data_set_information, 'material_samples_class_weights'):
-                if data_set_information.material_samples_class_weights is not None and len(data_set_information.material_samples_class_weights) > 0:
-                    class_weights = data_set_information.material_samples_class_weights
-                else:
-                    self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
-                                     'could be found - use override class weights or recreate the dataset.')
-            elif self.use_material_samples and not hasattr(data_set_information, 'material_samples_class_weights'):
-                self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
-                                 'could be found - use override class weights or recreate the dataset.')
-
-            if override_class_weights is not None:
-                self.logger.log('Found override class weights: {}'.format(override_class_weights))
-                self.logger.log('Using override class weights instead of data set information class weights')
-                class_weights = override_class_weights
-
-            if class_weights is None:
-                raise ValueError('Existing class weights were not found')
-            if len(class_weights) != self.num_classes:
-                raise ValueError('Number of classes in class weights did not match number of material classes: {} vs {}'
-                                 .format(len(class_weights), self.num_classes))
-
-            self.logger.log('Using class weights: {}'.format(class_weights))
-            class_weights = np.array(class_weights, dtype=np.float32)
-            return class_weights
-        else:
-            return np.ones([self.num_classes], dtype=np.float32)
-
-    def get_ignore_classes(self, class_weights):
-        ignore_classes = np.squeeze(np.where(np.equal(class_weights, 0.0))).astype(dtype=np.int32)
-
-        # If there is only a single ignored class the shape will be empty - expand to dim 1
-        if ignore_classes.shape == ():
-            ignore_classes = np.expand_dims(ignore_classes, axis=-1)
-
-        return ignore_classes
+    @abstractmethod
+    def _get_teacher_validation_data_generator(self):
+        pass
 
     @property
-    def is_supervised_only_trainer(self):
-        return self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED or \
-               self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER
+    def teacher_model(self):
+        if self.using_mean_teacher_method and self.teacher_model_wrapper is not None:
+            return self.teacher_model_wrapper.model
+
+        return None
 
     @property
+    def mean_teacher_method_config(self):
+        if self.using_mean_teacher_method and self._mean_teacher_method_config is None:
+            self.logger.log('Reading mean teacher method configuration')
+            self._mean_teacher_method_config = self._get_config_value('mean_teacher_params')
+
+            if self._mean_teacher_method_config is None:
+                raise ValueError('Could not find entry for mean_teacher_params from the configuration JSON')
+
+        return self._mean_teacher_method_config
+
+    @property
+    def ema_smoothing_coefficient_function(self):
+        if self.using_mean_teacher_method and self._ema_smoothing_coefficient_function is None:
+            ema_coefficient_schedule_function = self.mean_teacher_method_config['ema_smoothing_coefficient_function']
+            self.logger.log('Mean teacher EMA smoothing coefficient function: {}'.format(ema_coefficient_schedule_function))
+            self._ema_smoothing_coefficient_function = eval(ema_coefficient_schedule_function)
+
+        return self._ema_smoothing_coefficient_function
+
+    @property
+    def consistency_cost_coefficient_function(self):
+        if self.using_mean_teacher_method and self._consistency_cost_coefficient_function is None:
+            consistency_cost_coefficient_function = self.mean_teacher_method_config['consistency_cost_coefficient_function']
+            self.logger.log('Mean teacher consistency cost coefficient function: {}'.format(consistency_cost_coefficient_function))
+            self._consistency_cost_coefficient_function = eval(consistency_cost_coefficient_function)
+
+        return self._consistency_cost_coefficient_function
+
+    @property
+    def teacher_weights_directory_path(self):
+        if self.using_mean_teacher_method and self._teacher_weights_directory_path is None:
+            self._teacher_weights_directory_path = os.path.dirname(self.mean_teacher_method_config['teacher_model_checkpoint_file_path']).format(model_folder=self.model_folder_name)
+            self.logger.log('Teacher weights directory path: {}'.format(self._teacher_weights_directory_path))
+
+        return self._teacher_weights_directory_path
+
+    @property
+    def teacher_model_checkpoint_file_path(self):
+        if self.using_mean_teacher_method and self._teacher_model_checkpoint_file_path is None:
+            self._teacher_model_checkpoint_file_path= self.mean_teacher_method_config['teacher_model_checkpoint_file_path']
+            self.logger.log('Teacher checkpoint file path: {}'.format(self._teacher_model_checkpoint_file_path))
+
+        return self._teacher_model_checkpoint_file_path
+
+    @abstractproperty
     def using_mean_teacher_method(self):
-        return self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER or \
-               self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER or \
-               self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
+        pass
 
-    @property
-    def using_superpixel_method(self):
-        return self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL or \
-               self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
+    @abstractmethod
+    def _get_teacher_model_lambda_loss_type(self):
+        # type: () -> ModelLambdaLossType
+        pass
 
-    @property
-    def using_unlabeled_training_data(self):
-        return not self.is_supervised_only_trainer and \
-               self.training_set_unlabeled is not None and \
-               self.training_set_unlabeled.size > 0 and \
-               self.num_unlabeled_per_batch > 0
+    @abstractmethod
+    def _get_teacher_model_loss(self):
+        # type: () -> Callable
+        pass
 
-    @property
-    def using_gaussian_noise(self):
-        return self.data_augmentation_parameters is not None and self.data_augmentation_parameters.gaussian_noise_stddev_function is not None
+    @abstractmethod
+    def _get_teacher_model_metrics(self):
+        # type: () -> list[Callable]
+        pass
 
-    @property
-    def total_batch_size(self):
-        if not self.using_unlabeled_training_data:
-            return self.num_labeled_per_batch
-
-        return self.num_labeled_per_batch + self.num_unlabeled_per_batch
-
-    def train(self):
-        # type: () -> History
-        super(SegmentationTrainer, self).train()
-
-        assert isinstance(self.model, ExtendedModel)
-
-        # Labeled data set size determines the epochs
-        training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
-        validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
-        num_workers = dataset_utils.get_number_of_parallel_jobs()
-
-        if self.using_unlabeled_training_data:
-            self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
-                     .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
-        else:
-            self.logger.log('Labeled data set size: {}, num labeled per batch: {}'
-                     .format(self.training_set_labeled.size, self.num_labeled_per_batch))
-
-        self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
-                 .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
-
-        self.logger.log('Num workers: {}'.format(num_workers))
-
-        # Get a list of callbacks
-        callbacks = self.get_callbacks()
-
-        # Note: the student model should not be evaluated using the validation data generator
-        # the generator input will not be meaning
-        history = self.model.fit_generator(
-            generator=self.training_data_generator,
-            steps_per_epoch=training_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
-            epochs=self.num_epochs if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS,
-            initial_epoch=self.initial_epoch,
-            validation_data=self.validation_data_generator,
-            validation_steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
-            verbose=1,
-            trainer=self,
-            callbacks=callbacks,
-            workers=num_workers)
-
-        return history
-
-    def handle_early_exit(self):
-        super(SegmentationTrainer, self).handle_early_exit()
-
-        if not self.save_values_on_early_exit:
-            return
-
-        # Stop training
-        self.logger.log('Stopping model training')
-        self.model.stop_fit_generator()
-
-        # Save student model weights
-        self.logger.log('Saving model weights')
-        self.save_student_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.student-early-stop')
-
-        # Save teacher model weights
+    def _save_teacher_model_weights(self, epoch_index, val_loss, file_extension='.teacher'):
         if self.using_mean_teacher_method:
-            self.logger.log('Saving teacher model weights')
-            self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.teacher-early-stop')
+            if self.teacher_model is None:
+                raise ValueError('Teacher model is not set, cannot save weights')
 
-        # Save optimizer settings
-        self.logger.log('Saving model optimizer settings')
-        self.save_optimizer_settings(model=self.model, file_extension='.student-early-stop')
+            # Save the teacher model weights:
+            teacher_model_checkpoint_file_path = self.teacher_model_checkpoint_file_path
 
-        self.logger.log('Early exit handler complete - ready for exit')
+            # Don't crash here, too much effort done - save with a different name to the same path as
+            # the student model
+            if teacher_model_checkpoint_file_path is None:
+                self.logger.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to teacher folder under student directory')
+                file_name_format = os.path.basename(self.model_checkpoint_file_path)
+                teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
+
+            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
+
+            # Make sure the directory exists
+            general_utils.create_path_if_not_existing(file_path)
+
+            self.logger.log('Saving mean teacher model weights to file: {}'.format(file_path))
+            self.teacher_model.save_weights(file_path, overwrite=True)
 
     def modify_batch_data(self, step_index, x, y, validation=False):
-        # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
+        # type: (int, list[np.ndarray[np.float32]], np.array, bool) -> (list[np.ndarray[np.float32]], np.array)
 
         """
         Invoked by the ExtendedModel right before train_on_batch:
@@ -1096,12 +983,6 @@ class SegmentationTrainer(TrainerBase):
         If using the Mean Teacher method:
             Modifies the batch data by appending the mean teacher predictions as the last
             element of the input data X if we are using mean teacher training.
-
-        If using superpixel semi-supervised:
-            Modifies the batch data by appending the unlabeled data cost coefficients.
-
-        If using both:
-            Appends first mean teacher then superpixel extra data
 
         # Arguments
             :param step_index: the training step index
@@ -1111,47 +992,161 @@ class SegmentationTrainer(TrainerBase):
         # Returns
             :return: a tuple of (input data, output data)
         """
-        assert isinstance(x, list)
-        assert isinstance(y, list)
+        x, y = super(MeanTeacherTrainerBase, self).modify_batch_data(step_index=step_index, x=x, y=y, validation=validation)
 
-        img_batch = x[0]
-        mask_batch = x[1]
-
-        # Append first mean teacher data and then superpixel data if using both methods
+        # Append first mean teacher data
         if self.using_mean_teacher_method:
+            img_batch = x[0]
             x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, validation=validation)
-
-        if self.using_superpixel_method:
-            x = x + self._get_superpixel_extra_batch_data(img_batch, step_index=step_index, validation=validation)
-
-        # Apply possible Gaussian Noise to batch data last e.g. teacher model Gaussian Noise requires unnoised data
-        if self.using_gaussian_noise and not validation:
-            x[0] = img_batch + self._get_batch_gaussian_noise(noise_shape=img_batch.shape, step_index=step_index)
-
-        # If we are in debug mode, save the batch images - this is right before the images enter
-        # into the neural network
-        if settings.DEBUG:
-            b_min = np.min(img_batch)
-            b_max = np.max(img_batch)
-
-            for i in range(0, len(img_batch)):
-                img = ((img_batch[i] - b_min) / (b_max - b_min)) * 255.0
-                mask = mask_batch[i][:, :, np.newaxis]*255.0
-                self.logger.debug_log_image(img, '{}_{}_{}_photo.jpg'.format("val" if validation else "tr", step_index, i), scale=False)
-                self.logger.debug_log_image(mask, file_name='{}_{}_{}_mask.png'.format("val" if validation else "tr", step_index, i), format='PNG')
 
         return x, y
 
-    def _get_batch_gaussian_noise(self, noise_shape, step_index):
-        if self.using_gaussian_noise:
-            stddev = self.data_augmentation_parameters.gaussian_noise_stddev_function(step_index)
-            self.logger.debug_log('Generating gaussian noise with stddev: {}'.format(stddev))
-            gnoise = np.random.normal(loc=0.0, scale=stddev, size=noise_shape)
-            return gnoise
-        else:
-            return np.zeros(noise_shape)
+    def on_batch_end(self, step_index):
+        # type: (int) -> ()
+
+        """
+        Invoked by the ExtendedModel right after train_on_batch:
+
+        Updates the teacher model weights if using the mean teacher method for
+        training, otherwise does nothing.
+
+        # Arguments
+            :param step_index: the training step index
+        # Returns
+            Nothing
+        """
+
+        super(MeanTeacherTrainerBase, self).on_batch_end(step_index)
+
+        if self.using_mean_teacher_method:
+            if self.teacher_model is None:
+                raise ValueError('Teacher model is not set, cannot run EMA update')
+
+            a = self.ema_smoothing_coefficient_function(step_index)
+
+            # Perform the EMA weight update: theta'_t = a * theta'_t-1 + (1 - a) * theta_t
+            t_weights = self.teacher_model.get_weights()
+            s_weights = self.model.get_weights()
+
+            if len(t_weights) != len(s_weights):
+                raise ValueError('The weight arrays are not of the same length for the student and teacher: {} vs {}'
+                                 .format(len(t_weights), len(s_weights)))
+
+            num_weights = len(t_weights)
+            s_time = time.time()
+
+            for i in range(0, num_weights):
+                t_weights[i] = a * t_weights[i] + (1.0 - a) * s_weights[i]
+
+            self.teacher_model.set_weights(t_weights)
+            self.logger.profile_log('Mean teacher weight update took: {} s'.format(time.time() - s_time))
+
+    def on_epoch_end(self, epoch_index, step_index, logs):
+        # type: (int, int, dict) -> ()
+
+        """
+        Invoked by the ExtendedModel right after the epoch is over.
+
+        Evaluates mean teacher model on the validation data and saves the mean teacher
+        model weights.
+
+        # Arguments
+            :param epoch_index: index of the epoch that has finished
+            :param step_index: index of the step that has finished
+            :param logs: logs from the epoch (for the student model)
+        # Returns
+            Nothing
+        """
+        super(MeanTeacherTrainerBase, self).on_epoch_end(epoch_index, step_index, logs)
+
+        if self.using_mean_teacher_method:
+            if self.teacher_model is None:
+                raise ValueError('Teacher model is not set, cannot validate/save weights')
+
+            # Default to -1.0 validation loss if nothing else is given
+            val_loss = -1.0
+
+            if self.teacher_validation_data_generator is not None:
+                # Evaluate the mean teacher on the validation data
+                validation_steps_per_epoch = self.teacher_validation_data_generator.num_steps_per_epoch
+
+                val_outs = self.teacher_model.evaluate_generator(
+                    generator=self.teacher_validation_data_generator,
+                    steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
+                    workers=dataset_utils.get_number_of_parallel_jobs())
+
+                val_loss = val_outs[0]
+                self.logger.log('Epoch {}: Teacher model val_loss: {}'.format(epoch_index, val_loss))
+
+            self.logger.log('Epoch {}: EMA coefficient {}, consistency cost coefficient: {}'
+                            .format(epoch_index, self.ema_smoothing_coefficient_function(step_index),
+                                    self.consistency_cost_coefficient_function(step_index)))
+            self.save_teacher_model_weights(epoch_index=epoch_index, val_loss=val_loss)
+
+    def save_teacher_model_weights(self, epoch_index, val_loss, file_extension=''):
+        # type: (int, float, str) -> None
+
+        """
+        # Arguments
+        :param epoch_index: Index of the epoch (encoded in the file name)
+        :param val_loss: Validation loss (encoded in the file name)
+        :param file_extension: Optional extension for the file
+
+        # Returns
+            None
+        """
+        if self.using_mean_teacher_method:
+            if self.teacher_model is None:
+                raise ValueError('Teacher model is not set, cannot save teacher model weights')
+
+            # Save the teacher model weights:
+            teacher_model_checkpoint_file_path = self.teacher_model_checkpoint_file_path
+
+            # Don't crash here, too much effort done - save with a different name to the same path as
+            # the student model
+            if teacher_model_checkpoint_file_path is None:
+                self.logger.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to teacher folder under student directory')
+                file_name_format = os.path.basename(self.model_checkpoint_file_path)
+                teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
+
+            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
+
+            # Make sure the directory exists
+            general_utils.create_path_if_not_existing(file_path)
+
+            self.logger.log('Saving mean teacher model weights to file: {}'.format(file_path))
+            self.teacher_model.save_weights(file_path, overwrite=True)
+
+    def handle_early_exit(self):
+        super(MeanTeacherTrainerBase, self).handle_early_exit()
+
+        if not self.save_values_on_early_exit:
+            return
+
+        # Save teacher model weights
+        if self.using_mean_teacher_method:
+            if self.teacher_model is not None:
+                self.logger.log('Saving teacher model weights')
+                self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
 
     def _get_mean_teacher_extra_batch_data(self, img_batch, step_index, validation):
+        # type: (np.ndarray, int, bool) -> list
+
+        """
+        Calculates the extra batch data necessary for the Mean Teacher method. In other words returns a list with
+        two objects: mean teacher predictions for the image batch and consistency coefficients. The first dimension
+        in both is equal to the batch dimension.
+
+        If it's a validation round the data will be dummy data i.e. zeros
+
+        # Arguments
+            :param img_batch: The input images to the neural network
+            :param step_index: Step index (used in coefficient calculation)
+            :param validation: True if this is a validation batch false otherwise
+        # Returns
+            :return: The Mean Teacher extra data as a list [mt_predictions, consistency_coefficients]
+        """
+
         if not self.using_mean_teacher_method:
             return []
 
@@ -1181,136 +1176,479 @@ class SegmentationTrainer(TrainerBase):
             np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
             return [mean_teacher_predictions, np_consistency_coefficients]
 
-    def _get_superpixel_extra_batch_data(self, img_batch, step_index, validation):
-        if not self.using_superpixel_method:
-            return []
 
-        # First dimension in all of the input data should be the batch size
-        batch_size = img_batch.shape[0]
+#############################################
+# SEGMENTATION TRAINER
+#############################################
 
-        if validation:
-            np_unlabeled_cost_coefficients = np.zeros(shape=[batch_size])
-            return [np_unlabeled_cost_coefficients]
+
+class SegmentationTrainer(MeanTeacherTrainerBase):
+
+    def __init__(self,
+                 trainer_type,
+                 model_name,
+                 model_folder_name,
+                 config_file_path):
+        # type: (str, str, str, str, str) -> ()
+
+        # Declare instance variables
+        self._label_generation_function = None
+        self._data_set_information = None
+        self._material_class_information = None
+        self._class_weights = None
+        self._ignore_classes = None
+        self._training_data_generator_params = None
+        self._validation_data_generator_params = None
+        self._superpixel_params = None
+        self._superpixel_label_generation_function = None
+        self._superpixel_unlabeled_cost_coefficient_function = None
+
+        super(SegmentationTrainer, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
+
+    """
+    PROPERTIES
+    """
+
+    @property
+    def superpixel_method_config(self):
+        if self.using_superpixel_method and self._superpixel_params is None:
+            self.logger.log('Reading superpixel method configuration')
+            self._superpixel_params = self._get_config_value('superpixel_params')
+
+            if self._superpixel_params is None:
+                raise ValueError('Could not find entry for superpixel_params from the configuration JSON')
+
+        return self._superpixel_params
+
+    @property
+    def superpixel_label_generation_function(self):
+        if self.using_superpixel_method and self._superpixel_label_generation_function is None:
+            label_generation_function_name = self.superpixel_method_config['label_generation_function_name']
+            self.logger.log('Superpixel label generation function name: {}'.format(label_generation_function_name))
+            self._superpixel_label_generation_function = self._get_label_generation_function(label_generation_function_name)
+
+        return self._superpixel_label_generation_function
+
+    @property
+    def superpixel_unlabeled_cost_coefficient_function(self):
+        if self.using_superpixel_method and self._superpixel_unlabeled_cost_coefficient_function is None:
+            unlabeled_cost_coefficient_function = self.superpixel_method_config['unlabeled_cost_coefficient_function']
+            self.logger.log('Superpixel unlabeled cost coefficient function: {}'.format(unlabeled_cost_coefficient_function))
+            self._superpixel_unlabeled_cost_coefficient_function = eval(unlabeled_cost_coefficient_function)
+
+        return self._superpixel_unlabeled_cost_coefficient_function
+
+    @property
+    def num_unlabeled_per_batch(self):
+        num_unlabeled_per_batch = int(self._get_config_value('num_unlabeled_per_batch'))
+
+        # Sanity check for number of unlabeled per batch
+        if num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
+            self.logger.warn('Trainer type is marked as {} with unlabeled per batch {} - assuming 0 unlabeled per batch'.format(self.trainer_type, num_unlabeled_per_batch))
+            return 0
+
+        return num_unlabeled_per_batch
+
+    @property
+    def path_to_material_class_file(self):
+        return self._get_config_value('path_to_material_class_file')
+
+    @property
+    def path_to_data_set_information_file(self):
+        return self._get_config_value('path_to_data_set_information_file')
+
+    @property
+    def path_to_labeled_photos(self):
+        return self._get_config_value('path_to_labeled_photos')
+
+    @property
+    def path_to_labeled_masks(self):
+        return self._get_config_value('path_to_labeled_masks')
+
+    @property
+    def path_to_unlabeled_photos(self):
+        return self._get_config_value('path_to_unlabeled_photos')
+
+    @property
+    def data_set_information(self):
+        # Lazy load data set information
+        if self._data_set_information is None:
+            self.logger.log('Loading data set information from: {}'.format(self.path_to_data_set_information_file))
+            self._data_set_information = dataset_utils.load_segmentation_data_set_information(self.path_to_data_set_information_file)
+            self.logger.log('Loaded data set information successfully with set sizes (tr,va,te): {}, {}, {}'
+                            .format(self.data_set_information.training_set.labeled_size + self.data_set_information.training_set.unlabeled_size,
+                                    self.data_set_information.validation_set.labeled_size,
+                                    self.data_set_information.test_set.labeled_size))
+
+        return self._data_set_information
+
+    @property
+    def material_class_information(self):
+        # Lazy load material class information
+        if self._material_class_information is None:
+            self.logger.log('Loading material class information from: {}'.format(self.path_to_material_class_file))
+            self._material_class_information = dataset_utils.load_material_class_information(self.path_to_material_class_file)
+            self.logger.log('Loaded {} material classes successfully'.format(self.num_classes))
+
+        return self._material_class_information
+
+    @property
+    def class_weights(self):
+        # Lazy load class weights when needed
+        if self._class_weights is None:
+            if self.use_class_weights:
+                class_weights = self.data_set_information.class_weights
+                override_class_weights = self._get_config_value('override_class_weights')
+
+                # Legacy support for data sets without material_samples_class_weights
+                if self.using_material_samples and hasattr(self.data_set_information, 'material_samples_class_weights'):
+                    if self.data_set_information.material_samples_class_weights is not None and len(self.data_set_information.material_samples_class_weights) > 0:
+                        class_weights = self.data_set_information.material_samples_class_weights
+                    else:
+                        self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
+                                         'could be found - use override class weights or recreate the dataset.')
+                elif self.using_material_samples and not hasattr(self.data_set_information, 'material_samples_class_weights'):
+                    self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
+                                     'could be found - use override class weights or recreate the dataset.')
+
+                if override_class_weights is not None:
+                    self.logger.log('Found override class weights: {}'.format(override_class_weights))
+                    self.logger.log('Using override class weights instead of data set information class weights')
+                    class_weights = override_class_weights
+
+                if class_weights is None:
+                    raise ValueError('Existing class weights were not found')
+                if len(class_weights) != self.num_classes:
+                    raise ValueError('Number of classes in class weights did not match number of material classes: {} vs {}'
+                                     .format(len(class_weights), self.num_classes))
+
+                self.logger.log('Using class weights: {}'.format(class_weights))
+                class_weights = np.array(class_weights, dtype=np.float32)
+                self._class_weights = class_weights
+            else:
+                self._class_weights = np.ones([self.num_classes], dtype=np.float32)
+
+        return self._class_weights
+
+    @property
+    def ignore_classes(self):
+        if self._ignore_classes is None:
+            ignore_classes = np.squeeze(np.where(np.equal(self.class_weights, 0.0))).astype(dtype=np.int32)
+
+            # If there is only a single ignored class the shape will be empty - expand to dim 1
+            if ignore_classes.shape == ():
+                ignore_classes = np.expand_dims(ignore_classes, axis=-1)
+
+            self._ignore_classes = ignore_classes
+
+        return self._ignore_classes
+
+    @property
+    def training_data_generator_params(self):
+        if self._training_data_generator_params is None:
+            self._training_data_generator_params = SegmentationDataGeneratorParameters(
+                material_class_information=self.material_class_information,
+                num_color_channels=self.num_color_channels,
+                logger=self.logger,
+                random_seed=self.random_seed,
+                crop_shape=self.crop_shape,
+                resize_shape=self.resize_shape,
+                use_per_channel_mean_normalization=True,
+                per_channel_mean=self.data_set_information.per_channel_mean if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_mean,
+                use_per_channel_stddev_normalization=True,
+                per_channel_stddev=self.data_set_information.labeled_per_channel_stddev if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_stddev,
+                use_data_augmentation=self.use_data_augmentation,
+                use_material_samples=self.using_material_samples,
+                data_augmentation_params=self.data_augmentation_parameters,
+                shuffle_data_after_epoch=True,
+                div2_constraint=4)
+
+        return self._training_data_generator_params
+
+    @property
+    def validation_data_generator_params(self):
+        if self._validation_data_generator_params is None:
+            self._validation_data_generator_params = SegmentationDataGeneratorParameters(
+                material_class_information=self.material_class_information,
+                num_color_channels=self.num_color_channels,
+                logger=self.logger,
+                random_seed=self.random_seed,
+                crop_shape=self.validation_crop_shape,
+                resize_shape=self.validation_resize_shape,
+                use_per_channel_mean_normalization=True,
+                per_channel_mean=self.training_data_generator_params.per_channel_mean,
+                use_per_channel_stddev_normalization=True,
+                per_channel_stddev=self.training_data_generator_params.per_channel_stddev,
+                use_data_augmentation=False,
+                use_material_samples=False,
+                data_augmentation_params=None,
+                shuffle_data_after_epoch=True,
+                div2_constraint=4)
+
+        return self._validation_data_generator_params
+
+    @property
+    def num_classes(self):
+        return len(self.material_class_information)
+
+    @property
+    def is_supervised_only_trainer(self):
+        return self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED or \
+               self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER
+
+    @property
+    def using_material_samples(self):
+        return bool(self._get_config_value('use_material_samples'))
+
+    @property
+    def using_mean_teacher_method(self):
+        return self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER or \
+               self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER or \
+               self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
+
+    @property
+    def using_superpixel_method(self):
+        return self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL or \
+               self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
+
+    @property
+    def using_unlabeled_training_data(self):
+        return not self.is_supervised_only_trainer and \
+               self.training_set_unlabeled is not None and \
+               self.training_set_unlabeled.size > 0 and \
+               self.num_unlabeled_per_batch > 0
+
+    @property
+    def total_batch_size(self):
+        if not self.using_unlabeled_training_data:
+            return self.num_labeled_per_batch
+
+        return self.num_labeled_per_batch + self.num_unlabeled_per_batch
+
+    def _get_data_sets(self):
+        self.logger.log('Initializing data')
+
+        self.logger.log('Creating labeled data sets with photo files from: {} and mask files from: {}'
+                        .format(self.path_to_labeled_photos, self.path_to_labeled_masks))
+
+        # Labeled training set
+        self.logger.log('Creating labeled training set')
+        stime = time.time()
+        training_set_labeled = LabeledImageDataSet('training_set_labeled',
+                                                   path_to_photo_archive=self.path_to_labeled_photos,
+                                                   path_to_mask_archive=self.path_to_labeled_masks,
+                                                   photo_file_list=self.data_set_information.training_set.labeled_photos,
+                                                   mask_file_list=self.data_set_information.training_set.labeled_masks,
+                                                   material_samples=self.data_set_information.training_set.material_samples)
+        self.logger.log('Labeled training set construction took: {} s, size: {}'.format(time.time()-stime, training_set_labeled.size))
+
+        if training_set_labeled.size == 0:
+            raise ValueError('No training data found')
+
+        # Unlabeled training set - skip construction if unlabeled per batch is zero or this is a supervised segmentation trainer
+        if self.num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
+            self.logger.log('Creating unlabeled training set from: {}'.format(self.path_to_unlabeled_photos))
+            stime = time.time()
+            training_set_unlabeled = UnlabeledImageDataSet('training_set_unlabeled',
+                                                           path_to_photo_archive=self.path_to_unlabeled_photos,
+                                                           photo_file_list=self.data_set_information.training_set.unlabeled_photos)
+            self.logger.log('Unlabeled training set creation took: {} s, size: {}'.format(time.time()-stime, training_set_unlabeled.size))
         else:
-            unlabeled_cost_coefficient = self.unlabeled_cost_coefficient_function(step_index)
-            np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
-            return [np_unlabeled_cost_coefficients]
+            training_set_unlabeled = None
 
-    def on_batch_end(self, step_index):
-        # type: (int) -> ()
+        # Labeled validation set
+        self.logger.log('Creating validation set')
+        stime = time.time()
+        validation_set = LabeledImageDataSet('validation_set',
+                                             path_to_photo_archive=self.path_to_labeled_photos,
+                                             path_to_mask_archive=self.path_to_labeled_masks,
+                                             photo_file_list=self.data_set_information.validation_set.labeled_photos,
+                                             mask_file_list=self.data_set_information.validation_set.labeled_masks,
+                                             material_samples=self.data_set_information.validation_set.material_samples)
+        self.logger.log('Labeled validation set creation took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
+
+        # Labeled test set
+        self.logger.log('Creating test set')
+        stime = time.time()
+        test_set = LabeledImageDataSet('test_set',
+                                            path_to_photo_archive=self.path_to_labeled_photos,
+                                            path_to_mask_archive=self.path_to_labeled_masks,
+                                            photo_file_list=self.data_set_information.test_set.labeled_photos,
+                                            mask_file_list=self.data_set_information.test_set.labeled_masks,
+                                            material_samples=self.data_set_information.test_set.material_samples)
+        self.logger.log('Labeled test set creation took: {} s, size: {}'.format(time.time()-stime, test_set.size))
+
+        if training_set_unlabeled is not None:
+            total_data_set_size = training_set_labeled.size + training_set_unlabeled.size + validation_set.size + test_set.size
+        else:
+            total_data_set_size = training_set_labeled.size + validation_set.size + test_set.size
+
+        self.logger.log('Total data set size: {}'.format(total_data_set_size))
+
+        return training_set_labeled, training_set_unlabeled, validation_set, test_set
+
+    def _get_data_generators(self):
+        self.logger.log('Initializing data generators')
+
+        # Create training data and validation data generators
+        # Note: training data comes from semi-supervised segmentation data generator and validation
+        # and test data come from regular segmentation data generator
+        self.logger.log('Creating training data generator')
+
+        training_data_generator = SegmentationDataGenerator(
+            labeled_data_set=self.training_set_labeled,
+            unlabeled_data_set=self.training_set_unlabeled if self.using_unlabeled_training_data else None,
+            num_labeled_per_batch=self.num_labeled_per_batch,
+            num_unlabeled_per_batch=self.num_unlabeled_per_batch if self.using_unlabeled_training_data else 0,
+            params=self.training_data_generator_params,
+            class_weights=self.class_weights,
+            batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
+            label_generation_function=self.superpixel_label_generation_function)
+
+        self.logger.log('Creating validation data generator')
+
+        # The student lambda loss layer needs semi-supervised input, so we need to work around it
+        # to only provide labeled input from the semi-supervised data generator. The dummy data
+        # is appended to each batch so that the batch data maintains it's shape. This is done in the
+        # modify_batch_data function.
+        validation_data_generator = SegmentationDataGenerator(
+            labeled_data_set=self.validation_set,
+            unlabeled_data_set=None,
+            num_labeled_per_batch=self.validation_num_labeled_per_batch,
+            num_unlabeled_per_batch=0,
+            params=self.validation_data_generator_params,
+            class_weights=self.class_weights,
+            batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
+            label_generation_function=None)
+
+        self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
+        self.logger.log('Using material samples: {}'.format(training_data_generator.use_material_samples))
+        self.logger.log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
+        self.logger.log('Using per-channel stddev: {}'.format(training_data_generator.per_channel_stddev))
+
+        return training_data_generator, validation_data_generator
+
+    def _get_teacher_validation_data_generator(self):
+        # Note: The teacher has a supervised batch data format for validation data generation
+        # because it doesn't have the semi-supervised loss lambda layer since we need to predict with it
+        if self.using_mean_teacher_method:
+            self.logger.log('Creating teacher validation data generator')
+
+            teacher_validation_data_generator = SegmentationDataGenerator(
+                labeled_data_set=self.validation_set,
+                unlabeled_data_set=None,
+                num_labeled_per_batch=self.validation_num_labeled_per_batch,
+                num_unlabeled_per_batch=0,
+                params=self.validation_data_generator_params,
+                class_weights=self.class_weights,
+                batch_data_format=BatchDataFormat.SUPERVISED,
+                label_generation_function=None)
+        else:
+            teacher_validation_data_generator = None
+
+        return teacher_validation_data_generator
+
+    def train(self):
+        # type: () -> History
+        super(SegmentationTrainer, self).train()
+
+        assert isinstance(self.model, ExtendedModel)
+
+        # Labeled data set size determines the epochs
+        training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
+        validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
+        num_workers = dataset_utils.get_number_of_parallel_jobs()
+
+        if self.using_unlabeled_training_data:
+            self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
+                     .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
+        else:
+            self.logger.log('Labeled data set size: {}, num labeled per batch: {}'
+                     .format(self.training_set_labeled.size, self.num_labeled_per_batch))
+
+        self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
+                 .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
+
+        self.logger.log('Num workers: {}'.format(num_workers))
+
+        # Get a list of callbacks
+        callbacks = self._get_training_callbacks()
+
+        # Note: the student model should not be evaluated using the validation data generator
+        # the generator input will not be meaning
+        history = self.model.fit_generator(
+            generator=self.training_data_generator,
+            steps_per_epoch=training_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
+            epochs=self.num_epochs if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS,
+            initial_epoch=self.initial_epoch,
+            validation_data=self.validation_data_generator,
+            validation_steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
+            verbose=1,
+            trainer=self,
+            callbacks=callbacks,
+            workers=num_workers)
+
+        return history
+
+    def handle_early_exit(self):
+        super(SegmentationTrainer, self).handle_early_exit()
+        self.logger.log('Early exit handler complete - ready for exit')
+
+    def modify_batch_data(self, step_index, x, y, validation=False):
+        # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
 
         """
-        Invoked by the ExtendedModel right after train_on_batch:
+        Invoked by the ExtendedModel right before train_on_batch:
 
-        Updates the teacher model weights if using the mean teacher method for
-        training, otherwise does nothing.
+        If using the Mean Teacher method:
+            Modifies the batch data by appending the mean teacher predictions as the last
+            element of the input data X if we are using mean teacher training.
+
+        If using superpixel semi-supervised:
+            Modifies the batch data by appending the unlabeled data cost coefficients.
+
+        If using both:
+            Appends first mean teacher then superpixel extra data
 
         # Arguments
             :param step_index: the training step index
+            :param x: input data
+            :param y: output data
+            :param validation: is this a validation data batch
         # Returns
-            Nothing
+            :return: a tuple of (input data, output data)
         """
+        x, y = super(SegmentationTrainer, self).modify_batch_data(step_index=step_index, x=x, y=y, validation=validation)
 
-        super(SegmentationTrainer, self).on_batch_end(step_index)
+        img_batch = x[0]
+        mask_batch = x[1]
 
-        if self.using_mean_teacher_method:
-            if self.teacher_model is None:
-                raise ValueError('Teacher model is not set, cannot run EMA update')
+        # Append first mean teacher data and then superpixel data if using both methods
+        # mean teacher data is handled by the MeanTeacherTrainerBase - base class
+        if self.using_superpixel_method:
+            x = x + self._get_superpixel_extra_batch_data(img_batch, step_index=step_index, validation=validation)
 
-            a = self.ema_smoothing_coefficient_function(step_index)
+        # Apply possible Gaussian Noise to batch data last e.g. teacher model Gaussian Noise requires unnoised data
+        if self.using_gaussian_noise and not validation:
+            x[0] = img_batch + self._get_batch_gaussian_noise(noise_shape=img_batch.shape, step_index=step_index)
 
-            # Perform the EMA weight update: theta'_t = a * theta'_t-1 + (1 - a) * theta_t
-            t_weights = self.teacher_model.get_weights()
-            s_weights = self.model.get_weights()
+        # If we are in debug mode, save the batch images - this is right before the images enter
+        # into the neural network
+        if settings.DEBUG:
+            b_min = np.min(img_batch)
+            b_max = np.max(img_batch)
 
-            if len(t_weights) != len(s_weights):
-                raise ValueError('The weight arrays are not of the same length for the student and teacher: {} vs {}'
-                                 .format(len(t_weights), len(s_weights)))
+            for i in range(0, len(img_batch)):
+                img = ((img_batch[i] - b_min) / (b_max - b_min)) * 255.0
+                mask = mask_batch[i][:, :, np.newaxis]*255.0
+                self.logger.debug_log_image(img, '{}_{}_{}_photo.jpg'.format("val" if validation else "tr", step_index, i), scale=False)
+                self.logger.debug_log_image(mask, file_name='{}_{}_{}_mask.png'.format("val" if validation else "tr", step_index, i), format='PNG')
 
-            num_weights = len(t_weights)
-            s_time = time.time()
+        return x, y
 
-            for i in range(0, num_weights):
-                t_weights[i] = a * t_weights[i] + (1.0 - a) * s_weights[i]
+    def _get_model_lambda_loss_type(self):
+        # type: () -> ModelLambdaLossType
 
-            self.teacher_model.set_weights(t_weights)
-            self.logger.profile_log('Mean teacher weight update took: {} s'.format(time.time()-s_time))
-
-    def on_epoch_end(self, epoch_index, step_index, logs):
-        # type: (int, int, dict) -> ()
-
-        """
-        Invoked by the ExtendedModel right after the epoch is over.
-
-        Evaluates mean teacher model on the validation data and saves the mean teacher
-        model weights.
-
-        # Arguments
-            :param epoch_index: index of the epoch that has finished
-            :param step_index: index of the step that has finished
-            :param logs: logs from the epoch (for the student model)
-        # Returns
-            Nothing
-        """
-
-        super(SegmentationTrainer, self).on_epoch_end(epoch_index, step_index, logs)
-
-        if self.using_mean_teacher_method:
-            if self.teacher_model is None:
-                raise ValueError('Teacher model is not set, cannot validate/save weights')
-
-            # Default to -1.0 validation loss if nothing else is given
-            val_loss = -1.0
-
-            if self.teacher_validation_data_generator is not None:
-                # Evaluate the mean teacher on the validation data
-                validation_steps_per_epoch = self.teacher_validation_data_generator.num_steps_per_epoch
-
-                val_outs = self.teacher_model.evaluate_generator(
-                    generator=self.teacher_validation_data_generator,
-                    steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
-                    workers=dataset_utils.get_number_of_parallel_jobs())
-
-                val_loss = val_outs[0]
-                self.logger.log('Epoch {}: Teacher model val_loss: {}'.format(epoch_index, val_loss))
-
-            self.logger.log('Epoch {}: EMA coefficient {}, consistency cost coefficient: {}'
-                            .format(epoch_index, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))
-            self.save_teacher_model_weights(epoch_index=epoch_index, val_loss=val_loss)
-
-    def save_student_model_weights(self, epoch_index, val_loss, file_extension='.student'):
-        file_path = self.model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
-
-        # Make sure the directory exists
-        general_utils.create_path_if_not_existing(file_path)
-
-        self.logger.log('Saving student model weights to file: {}'.format(file_path))
-        self.model.save_weights(file_path, overwrite=True)
-
-    def save_teacher_model_weights(self, epoch_index, val_loss, file_extension='.teacher'):
-        if self.using_mean_teacher_method:
-            if self.teacher_model is None:
-                raise ValueError('Teacher model is not set, cannot save weights')
-
-            # Save the teacher model weights:
-            teacher_model_checkpoint_file_path = self.teacher_model_checkpoint_file_path
-
-            # Don't crash here, too much effort done - save with a different name to the same path as
-            # the student model
-            if teacher_model_checkpoint_file_path is None:
-                self.logger.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to teacher folder under student directory')
-                file_name_format = os.path.basename(self.model_checkpoint_file_path)
-                teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
-
-            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
-
-            # Make sure the directory exists
-            general_utils.create_path_if_not_existing(file_path)
-
-            self.logger.log('Saving mean teacher model weights to file: {}'.format(file_path))
-            self.teacher_model.save_weights(file_path, overwrite=True)
-
-    def get_model_lambda_loss_type(self):
         if self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED:
             return ModelLambdaLossType.SEGMENTATION_CATEGORICAL_CROSS_ENTROPY
         if self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER:
@@ -1324,7 +1662,44 @@ class SegmentationTrainer(TrainerBase):
         else:
             raise ValueError('Unsupported combination for a semisupervised trainer - cannot deduce model type')
 
-    def get_label_generation_function(self, label_generation_function_name):
+    def _get_model_loss(self):
+        return {'loss': losses.dummy_loss, 'logits': lambda _, y_pred: 0.0*y_pred}
+
+    def _get_model_loss_weights(self):
+        return {'loss': 1., 'logits': 0.}
+
+    def _get_model_metrics(self):
+        return {'logits': [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                           metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                           metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]}
+
+    def _get_teacher_model_lambda_loss_type(self):
+        return ModelLambdaLossType.NONE
+
+    def _get_teacher_model_loss(self):
+        return losses.segmentation_sparse_weighted_categorical_cross_entropy(self.class_weights)
+
+    def _get_teacher_model_metrics(self):
+        return [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]
+
+    def _get_superpixel_extra_batch_data(self, img_batch, step_index, validation):
+        if not self.using_superpixel_method:
+            return []
+
+        # First dimension in all of the input data should be the batch size
+        batch_size = img_batch.shape[0]
+
+        if validation:
+            np_unlabeled_cost_coefficients = np.zeros(shape=[batch_size])
+            return [np_unlabeled_cost_coefficients]
+        else:
+            unlabeled_cost_coefficient = self.superpixel_unlabeled_cost_coefficient_function(step_index)
+            np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
+            return [np_unlabeled_cost_coefficients]
+
+    def _get_label_generation_function(self, label_generation_function_name):
         # type: (str) -> function
 
         if label_generation_function_name.lower() == 'felzenszwalb':
@@ -1342,519 +1717,415 @@ class SegmentationTrainer(TrainerBase):
 #############################################
 # CLASSIFICATION TRAINER
 #############################################
-#
-# class ClassificationTrainer(TrainerBase):
-#
-#     def __init__(self, trainer_type, model_name, model_folder_name, config_file_path, debug=None):
-#
-#         # Declare variables that are going to be initialized in the _init_ functions
-#         self.consistency_cost_coefficient_function = None
-#         self.ema_smoothing_coefficient_function = None
-#
-#         self.material_class_information = None
-#         self.data_set_information = None
-#         self.num_classes = -1
-#
-#         self.labeled_photo_files = None
-#         self.labeled_mask_files = None
-#         self.unlabeled_photo_files = None
-#
-#         self.training_set_labeled = None
-#         self.training_set_unlabeled = None
-#         self.validation_set = None
-#         self.test_set = None
-#
-#         self.use_mean_teacher_method = False
-#         self.model_wrapper = None
-#         self.model = None
-#         self.teacher_model_wrapper = None
-#         self.teacher_model = None
-#         self.initial_epoch = 0
-#
-#         self.training_data_generator = None
-#         self.validation_data_generator = None
-#         self.teacher_validation_data_generator = None
-#
-#         super(ClassificationTrainer, self).__init__(trainer_type, model_name, model_folder_name, config_file_path, debug)
-#
-#     def _init_config(self):
-#         super(ClassificationTrainer, self)._init_config()
-#
-#         self.minc_classification_data_set = self.get_config_value('minc_classification_data_set')
-#
-#         if self.minc_classification_data_set is None:
-#             raise ValueError('Could not find MINC classification data set from config file with key \'minc_classification_data_set\'')
-#
-#         self.num_classes = self.minc_classification_data_set['num_classes']
-#
-#         self.path_to_labeled_photos = self.get_config_value('path_to_labeled_photos')
-#         self.use_class_weights = self.get_config_value('use_class_weights')
-#
-#         self.input_shape = self.get_config_value('input_shape')
-#         self.continue_from_last_checkpoint = bool(self.get_config_value('continue_from_last_checkpoint'))
-#         self.weights_directory_path = os.path.dirname(self.get_config_value('keras_model_checkpoint_file_path')).format(model_folder=self.model_folder_name)
-#         self.use_transfer_weights = bool(self.get_config_value('transfer_weights'))
-#         self.transfer_options = self.get_config_value('transfer_options')
-#         self.continue_from_optimizer_checkpoint = bool(self.get_config_value('continue_from_optimizer_checkpoint'))
-#         self.loss_function_name = self.get_config_value('loss_function')
-#
-#         # If using mean teacher method read the parameters - any missing parameters should raise
-#         # exceptions
-#         self.use_mean_teacher_method = bool(self.get_config_value('use_mean_teacher_method'))
-#
-#         if self.use_mean_teacher_method:
-#             self.logger.log('Reading mean teacher method configuration')
-#             mean_teacher_params = self.get_config_value('mean_teacher_params')
-#
-#             if mean_teacher_params is None:
-#                 raise ValueError('Could not find entry for mean_teacher_params from the configuration JSON')
-#
-#             teacher_weights_directory_path = os.path.dirname(mean_teacher_params['teacher_model_checkpoint_file_path']).format(model_folder=self.model_folder_name)
-#             self.logger.log('Teacher weights directory path: {}'.format(teacher_weights_directory_path))
-#             self.teacher_weights_directory_path = teacher_weights_directory_path
-#             self.teacher_model_checkpoint_file_path = mean_teacher_params['teacher_model_checkpoint_file_path']
-#
-#             ema_coefficient_schedule_function = mean_teacher_params['ema_smoothing_coefficient_function']
-#             self.logger.log('EMA smoothing coefficient function: {}'.format(ema_coefficient_schedule_function))
-#             self.ema_smoothing_coefficient_function = eval(ema_coefficient_schedule_function)
-#
-#             consistency_cost_coefficient_function = mean_teacher_params['consistency_cost_coefficient_function']
-#             self.logger.log('Consistency cost coefficient function: {}'.format(consistency_cost_coefficient_function))
-#             self.consistency_cost_coefficient_function = eval(consistency_cost_coefficient_function)
-#
-#         self.use_data_augmentation = bool(self.get_config_value('use_data_augmentation'))
-#         self.num_color_channels = self.get_config_value('num_color_channels')
-#         self.random_seed = self.get_config_value('random_seed')
-#
-#         self.num_epochs = self.get_config_value('num_epochs')
-#         self.num_labeled_per_batch = self.get_config_value('num_labeled_per_batch')
-#         self.crop_shape = self.get_config_value('crop_shape')
-#         self.resize_shape = self.get_config_value('resize_shape')
-#         self.validation_num_labeled_per_batch = self.get_config_value('validation_num_labeled_per_batch')
-#         self.validation_crop_shape = self.get_config_value('validation_crop_shape')
-#         self.validation_resize_shape = self.get_config_value('validation_resize_shape')
-#
-#     def _init_data(self):
-#         super(ClassificationTrainer, self)._init_data()
-#
-#         # Initialize class weights
-#         if self.get_config_value('use_class_weights'):
-#             override_class_weights = self.get_config_value('override_class_weights')
-#
-#             if override_class_weights is None:
-#                 raise ValueError('Use class weights is true, but override class weights could not be found. ClassificationTrainer only supports override class weights.')
-#
-#             if override_class_weights is not None:
-#                 self.logger.log('Found override class weights')
-#                 self.class_weights = np.array(override_class_weights)
-#         else:
-#             self.class_weights = np.ones(np.ones([self.num_classes], dtype=np.float32))
-#
-#         self.logger.log('Using class weights: {}'.format(self.class_weights))
-#
-#     def _init_models(self):
-#         super(ClassificationTrainer, self)._init_models()
-#
-#         # Are we using the mean teacher method or superpixel method?
-#         self.logger.log('Use mean teacher method: {}'.format(self.use_mean_teacher_method))
-#
-#         # Model creation
-#         student_model_type = self.get_model_type()
-#
-#         self.logger.log('Creating student model {} instance with type: {}, input shape: {}, num classes: {}'
-#                  .format(self.model_name, student_model_type, self.input_shape, self.num_classes))
-#
-#         self.model_wrapper = get_model(self.model_name,
-#                                        self.input_shape,
-#                                        self.num_classes,
-#                                        model_lambda_loss_type=student_model_type)
-#
-#         self.model = self.model_wrapper.model
-#         self.model.summary()
-#
-#         if self.continue_from_last_checkpoint:
-#             self.initial_epoch = self.load_latest_weights_for_model(self.model, self.weights_directory_path)
-#
-#         if self.use_transfer_weights:
-#             if self.initial_epoch != 0:
-#                 self.logger.log('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
-#             else:
-#                 self.transfer_weights(self.model_wrapper, self.transfer_options)
-#
-#         # Get the optimizer for the model
-#         if self.continue_from_optimizer_checkpoint and self.initial_epoch == 0:
-#             self.logger.log('Cannot continue from optimizer checkpoint if initial epoch is 0. Ignoring optimizer checkpoint.')
-#             self.continue_from_optimizer_checkpoint = False
-#
-#         optimizer = self.get_optimizer(self.continue_from_optimizer_checkpoint)
-#
-#         # Get the loss function for the student model
-#         if self.use_mean_teacher_method and self.loss_function_name != 'dummy':
-#             self.logger.log('In Mean Teacher mode trainer should use \'dummy\' loss function, got: {}. Ignoring passed loss function.'.format(self.loss_function_name))
-#             self.loss_function_name = 'dummy'
-#
-#         loss_function = self.get_loss_function(self.loss_function_name,
-#                                                use_class_weights=self.use_class_weights,
-#                                                class_weights=self.class_weights,
-#                                                num_classes=self.num_classes)
-#
-#         # Compile the student model
-#         if self.use_mean_teacher_method:
-#             self.model.compile(optimizer=optimizer,
-#                                loss={'loss': loss_function, 'logits': lambda _, y_pred: 0.0*y_pred},
-#                                loss_weights={'loss': 1., 'logits': 0.},
-#                                metrics={'logits': ['accuracy']},
-#                                **self.get_compile_kwargs())
-#         else:
-#             self.model.compile(optimizer=optimizer,
-#                                loss=loss_function,
-#                                metrics=['accuracy'],
-#                                **self.get_compile_kwargs())
-#
-#         # If we are using the mean teacher method create the teacher model
-#         if self.use_mean_teacher_method:
-#             teacher_model_type = ModelLambdaLossType.MEAN_TEACHER_TEACHER
-#             self.logger.log('Creating teacher model {} instance with type: {}, input shape: {}, num classes: {}'.format(self.model_name, teacher_model_type, self.input_shape, self.num_classes))
-#             self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, model_lambda_loss_type=teacher_model_type)
-#             self.teacher_model = self.teacher_model_wrapper.model
-#             self.teacher_model.summary()
-#
-#             if self.continue_from_last_checkpoint:
-#                 self.logger.log('Loading latest teacher model weights from path: {}'.format(self.teacher_weights_directory_path))
-#                 initial_teacher_epoch = self.load_latest_weights_for_model(self.teacher_model, self.teacher_weights_directory_path)
-#
-#                 if initial_teacher_epoch < 1:
-#                     self.logger.log('Could not find suitable weights, initializing teacher with student model weights')
-#                     self.teacher_model.set_weights(self.model.get_weights())
-#             else:
-#                 self.teacher_model.set_weights(self.model.get_weights())
-#
-#             teacher_class_weights = self.class_weights
-#
-#             # Note: Teacher model can use the regular metrics
-#             self.teacher_model.compile(optimizer=optimizer,
-#                                        loss=losses.categorical_crossentropy_loss(teacher_class_weights),
-#                                        metrics=['accuracy'],
-#                                        **self.get_compile_kwargs())
-#
-#     def _init_data_generators(self):
-#         super(ClassificationTrainer, self)._init_data_generators()
-#
-#         # Create training data and validation data generators
-#         # Note: training data comes from semi-supervised segmentation data generator and validation
-#         # and test data come from regular segmentation data generator
-#         self.logger.log('Creating training data generator')
-#
-#         training_data_generator_params = DataGeneratorParameters(
-#             material_class_information=None,
-#             num_color_channels=self.num_color_channels,
-#             random_seed=self.random_seed,
-#             crop_shape=self.crop_shape,
-#             resize_shape=self.resize_shape,
-#             use_per_channel_mean_normalization=True,
-#             per_channel_mean=self.minc_classification_data_set.get('per_channel_mean'),
-#             use_per_channel_stddev_normalization=True,
-#             per_channel_stddev=self.minc_classification_data_set.get('per_channel_stddev'),
-#             use_data_augmentation=self.use_data_augmentation,
-#             use_material_samples=False,
-#             data_augmentation_params=self.data_augmentation_parameters,
-#             shuffle_data_after_epoch=True)
-#
-#         self.training_data_generator = MINCClassificationDataGenerator(
-#             minc_data_set_file_path=self.minc_classification_data_set.get('training_set_file_path'),
-#             minc_labels_translation_file_path=self.minc_classification_data_set.get('labels_translation_file_path'),
-#             minc_photos_folder_path=self.path_to_labeled_photos,
-#             num_labeled_per_batch=self.num_labeled_per_batch,
-#             params=training_data_generator_params)
-#
-#         self.logger.log('Creating validation data generator')
-#
-#         validation_data_generator_params = DataGeneratorParameters(
-#             material_class_information=None,
-#             num_color_channels=self.num_color_channels,
-#             random_seed=self.random_seed,
-#             crop_shape=self.validation_crop_shape,
-#             resize_shape=self.validation_resize_shape,
-#             use_per_channel_mean_normalization=True,
-#             per_channel_mean=training_data_generator_params.per_channel_mean,
-#             use_per_channel_stddev_normalization=True,
-#             per_channel_stddev=training_data_generator_params.per_channel_stddev,
-#             use_data_augmentation=False,
-#             use_material_samples=False,
-#             data_augmentation_params=None,
-#             shuffle_data_after_epoch=True)
-#
-#         # The student lambda loss layer needs semi supervised input, so we need to work around it
-#         # to only provide labeled input from the semi-supervised data generator. The dummy data
-#         # is appended to each batch so that the batch data maintains it's shape. This is done in the
-#         # modify_batch_data function.
-#         self.validation_data_generator = MINCClassificationDataGenerator(
-#             minc_data_set_file_path=self.minc_classification_data_set.get('validation_set_file_path'),
-#             minc_labels_translation_file_path=self.minc_classification_data_set.get('labels_translation_file_path'),
-#             minc_photos_folder_path=self.path_to_labeled_photos,
-#             num_labeled_per_batch=self.validation_num_labeled_per_batch,
-#             params=validation_data_generator_params)
-#
-#         # Note: The teacher has a regular SegmentationDataGenerator for validation data generation
-#         # because it doesn't have the semi supervised loss lambda layer
-#         if self.use_mean_teacher_method:
-#             self.teacher_validation_data_generator = MINCClassificationDataGenerator(
-#                 minc_data_set_file_path=self.minc_classification_data_set.get('validation_set_file_path'),
-#                 minc_labels_translation_file_path=self.minc_classification_data_set.get('labels_translation_file_path'),
-#                 minc_photos_folder_path=self.path_to_labeled_photos,
-#                 num_labeled_per_batch=self.validation_num_labeled_per_batch,
-#                 params=validation_data_generator_params)
-#         else:
-#             self.teacher_validation_data_generator = None
-#
-#         self.logger.log('Using per-channel mean: {}'.format(self.training_data_generator.per_channel_mean))
-#         self.logger.log('Using per-channel stddev: {}'.format(self.training_data_generator.per_channel_stddev))
-#
-#     def train(self):
-#         super(ClassificationTrainer, self).train()
-#
-#         total_batch_size = self.num_labeled_per_batch
-#         training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
-#         validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
-#         num_workers = dataset_utils.get_number_of_parallel_jobs()
-#
-#         self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
-#                  .format(self.num_epochs, self.initial_epoch, total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
-#
-#         self.logger.log('Num workers: {}'.format(num_workers))
-#
-#         # Get a list of callbacks
-#         callbacks = self.get_callbacks()
-#
-#         # Sanity check
-#         if not isinstance(self.model, ExtendedModel):
-#             raise ValueError('When using classification training the model must be an instance of ExtendedModel')
-#
-#         # Note: the student model should not be evaluated using the validation data generator
-#         # the generator input will not be meaning
-#         self.model.fit_generator(
-#             generator=self.training_data_generator,
-#             steps_per_epoch=training_steps_per_epoch if not self.debug else self.debug_steps_per_epoch,
-#             epochs=self.num_epochs if not self.debug else self.debug_num_epochs,
-#             initial_epoch=self.initial_epoch,
-#             validation_data=self.validation_data_generator,
-#             validation_steps=validation_steps_per_epoch if not self.debug else self.debug_steps_per_epoch,
-#             verbose=1,
-#             trainer=self,
-#             callbacks=callbacks,
-#             workers=num_workers,
-#             debug=self.debug is not None)
-#
-#         if self.debug:
-#             self.logger.log('Saving debug data to: {}'.format(self.debug))
-#             self.debug_timeliner.save(self.debug)
-#
-#         self.logger.log('The training session ended at local time {}\n'.format(datetime.datetime.now()))
-#         self.logger.log_file.close()
-#
-#     def handle_early_exit(self):
-#         super(ClassificationTrainer, self).handle_early_exit()
-#
-#         if not self.save_values_on_early_exit:
-#             return
-#
-#         # Stop training
-#         self.logger.log('Stopping student model training')
-#         self.model.stop_fit_generator()
-#
-#         # Save student model weights
-#         self.logger.log('Saving student model weights')
-#         self.save_student_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.student-early-stop')
-#
-#         # Save teacher model weights
-#         if self.use_mean_teacher_method:
-#             self.logger.log('Saving teacher model weights')
-#             self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.teacher-early-stop')
-#
-#         # Save optimizer settings
-#         self.logger.log('Saving optimizer settings')
-#         self.save_optimizer_settings(model=self.model, file_extension='.student-early-stop')
-#
-#         self.logger.log('Early exit handler complete - ready for exit')
-#
-#     def modify_batch_data(self, step_index, x, y, validation=False):
-#         # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
-#
-#         """
-#         Invoked by the ExtendedModel right before train_on_batch:
-#
-#         If using the Mean Teacher method:
-#
-#             Modifies the batch data by appending the mean teacher predictions as the last
-#             element of the input data X if we are using mean teacher training.
-#
-#         # Arguments
-#             :param step_index: the training step index
-#             :param x: input data
-#             :param y: output data
-#             :param validation: is this a validation data batch
-#         # Returns
-#             :return: a tuple of (input data, output data)
-#         """
-#
-#         images = x[0]
-#         #images = images + np.random.normal(loc=0.0, scale=0.03, size=images.shape)
-#         #x[0] = images
-#
-#         if self.model_wrapper.model_type == ModelLambdaLossType.MEAN_TEACHER_STUDENT:
-#             if self.teacher_model is None:
-#                 raise ValueError('Teacher model is not set, cannot run predictions')
-#
-#             # First dimension in all of the input data should be the batch size
-#             images = x[0]
-#             batch_size = images.shape[0]
-#
-#             if validation:
-#                 # BxHxWxC
-#                 mean_teacher_predictions = np.zeros(shape=(images.shape[0], images.shape[1], images.shape[2], self.num_classes))
-#                 np_consistency_coefficients = np.zeros(shape=[batch_size])
-#                 x = x + [mean_teacher_predictions, np_consistency_coefficients]
-#             else:
-#                 s_time = 0
-#
-#                 if self.debug:
-#                     s_time = time.time()
-#
-#                 mean_teacher_predictions = self.teacher_model.predict_on_batch(images)
-#
-#                 if self.debug:
-#                     self.logger.log('Mean teacher batch predictions took: {} s'.format(time.time()-s_time))
-#
-#                 consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
-#                 np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
-#                 x = x + [mean_teacher_predictions, np_consistency_coefficients]
-#
-#         return x, y
-#
-#     def on_batch_end(self, step_index):
-#         # type: (int) -> ()
-#
-#         """
-#         Invoked by the ExtendedModel right after train_on_batch:
-#
-#         Updates the teacher model weights if using the mean teacher method for
-#         training, otherwise does nothing.
-#
-#         # Arguments
-#             :param step_index: the training step index
-#         # Returns
-#             Nothing
-#         """
-#
-#         super(ClassificationTrainer, self).on_batch_end(step_index)
-#
-#         if self.use_mean_teacher_method:
-#             if self.teacher_model is None:
-#                 raise ValueError('Teacher model is not set, cannot run EMA update')
-#
-#             a = self.ema_smoothing_coefficient_function(step_index)
-#
-#             # Perform the EMA weight update: theta'_t = a * theta'_t-1 + (1 - a) * theta_t
-#             t_weights = self.teacher_model.get_weights()
-#             s_weights = self.model.get_weights()
-#
-#             if len(t_weights) != len(s_weights):
-#                 raise ValueError('The weight arrays are not of the same length for the student and teacher: {} vs {}'
-#                                  .format(len(t_weights), len(s_weights)))
-#
-#             num_weights = len(t_weights)
-#             s_time = 0
-#
-#             if self.debug:
-#                 s_time = time.time()
-#
-#             for i in range(0, num_weights):
-#                 t_weights[i] = a * t_weights[i] + (1.0 - a) * s_weights[i]
-#
-#             self.teacher_model.set_weights(t_weights)
-#
-#             if self.debug:
-#                 self.logger.log('Mean teacher weight update took: {} s'.format(time.time()-s_time))
-#
-#     def on_epoch_end(self, epoch_index, step_index, logs):
-#         # type: (int, int, dict) -> ()
-#
-#         """
-#         Invoked by the ExtendedModel right after the epoch is over.
-#
-#         Evaluates mean teacher model on the validation data and saves the mean teacher
-#         model weights.
-#
-#         # Arguments
-#             :param epoch_index: index of the epoch that has finished
-#             :param step_index: index of the step that has finished
-#             :param logs: logs from the epoch (for the student model)
-#         # Returns
-#             Nothing
-#         """
-#
-#         super(ClassificationTrainer, self).on_epoch_end(epoch_index, step_index, logs)
-#
-#         if self.use_mean_teacher_method:
-#             if self.teacher_model is None:
-#                 raise ValueError('Teacher model is not set, cannot validate/save weights')
-#
-#             # Default to -1.0 validation loss if nothing else is given
-#             val_loss = -1.0
-#
-#             if self.teacher_validation_data_generator is not None:
-#                 # Evaluate the mean teacher on the validation data
-#                 validation_steps_per_epoch = dataset_utils.get_number_of_batches(
-#                     self.validation_set.size,
-#                     self.validation_num_labeled_per_batch)
-#
-#                 val_outs = self.teacher_model.evaluate_generator(
-#                     generator=self.teacher_validation_data_generator,
-#                     steps=validation_steps_per_epoch if not self.debug else self.debug_steps_per_epoch,
-#                     workers=dataset_utils.get_number_of_parallel_jobs())
-#
-#                 val_loss = val_outs[0]
-#                 self.logger.log('\nEpoch {}: Mean teacher validation loss {}'.format(epoch_index, val_loss))
-#
-#             self.logger.log('\nEpoch {}: EMA coefficient {}, consistency cost coefficient: {}'
-#                      .format(epoch_index, self.ema_smoothing_coefficient_function(step_index), self.consistency_cost_coefficient_function(step_index)))
-#             self.save_teacher_model_weights(epoch_index=epoch_index, val_loss=val_loss)
-#
-#     def save_student_model_weights(self, epoch_index, val_loss, file_extension='.student'):
-#         file_path = self.get_config_value('keras_model_checkpoint_file_path')\
-#                         .format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
-#
-#         # Make sure the directory exists
-#         TrainerBase._create_path_if_not_existing(file_path)
-#
-#         self.logger.log('Saving student model weights to file: {}'.format(file_path))
-#         self.model.save_weights(file_path, overwrite=True)
-#
-#     def save_teacher_model_weights(self, epoch_index, val_loss, file_extension='.teacher'):
-#         if self.use_mean_teacher_method:
-#             if self.teacher_model is None:
-#                 raise ValueError('Teacher model is not set, cannot save weights')
-#
-#             # Save the teacher model weights:
-#             teacher_model_checkpoint_file_path = self.teacher_model_checkpoint_file_path
-#
-#             # Don't crash here, too much effort done - save with a different name to the same path as
-#             # the student model
-#             if teacher_model_checkpoint_file_path is None:
-#                 self.logger.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to teacher folder under student directory')
-#                 file_name_format = os.path.basename(self.get_config_value('keras_model_checkpoint_file_path'))
-#                 teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.weights_directory_path, 'teacher/'), file_name_format)
-#
-#             file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
-#
-#             # Make sure the directory exists
-#             TrainerBase._create_path_if_not_existing(file_path)
-#
-#             self.logger.log('Saving mean teacher model weights to file: {}'.format(file_path))
-#             self.teacher_model.save_weights(file_path, overwrite=True)
-#
-#     def get_model_type(self):
-#         if self.use_mean_teacher_method:
-#             return ModelLambdaLossType.MEAN_TEACHER_STUDENT_CLASSIFICATION
-#         else:
-#             return ModelLambdaLossType.NONE
+
+class ClassificationTrainer(MeanTeacherTrainerBase):
+
+    def __init__(self,
+                 trainer_type,
+                 model_name,
+                 model_folder_name,
+                 config_file_path):
+
+        # Declare instance variables
+        self._classification_data_set_config = None
+        self._ignore_classes = None
+        self._class_weights = None
+
+        self._training_data_generator_params = None
+        self._validation_data_generator_params = None
+
+        super(ClassificationTrainer, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
+
+    @property
+    def path_to_labeled_photos(self):
+        return self.config['path_to_labeled_photos']
+
+    @property
+    def path_to_unlabeled_photos(self):
+        return self.config['path_to_unlabeled_photos']
+
+    @property
+    def classification_data_set_config(self):
+        if self._classification_data_set_config is None:
+            self.logger.log('Reading classification data set configuration')
+            self._classification_data_set_config = self._get_config_value('classification_data_set_params')
+
+            if self._classification_data_set_config is None:
+                raise ValueError('Could not find entry for classification_data_set_params from the configuration JSON')
+
+        return self._classification_data_set_config
+
+    @property
+    def path_to_label_mapping_file(self):
+        return self.classification_data_set_config['path_to_label_mapping_file']
+
+    @property
+    def path_to_training_set_file(self):
+        return self.classification_data_set_config['path_to_training_set_file']
+
+    @property
+    def path_to_validation_set_file(self):
+        return self.classification_data_set_config['path_to_validation_set_file']
+
+    @property
+    def path_to_test_set_file(self):
+        return self.classification_data_set_config['path_to_test_set_file']
+
+    @property
+    def per_channel_mean(self):
+        return self.classification_data_set_config['per_channel_mean']
+
+    @property
+    def per_channel_mean_labeled(self):
+        return self.classification_data_set_config['per_channel_mean_labeled']
+
+    @property
+    def per_channel_stddev(self):
+        return self.classification_data_set_config['per_channel_stddev']
+
+    @property
+    def per_channel_stddev_labeled(self):
+        return self.classification_data_set_config['per_channel_stddev_labeled']
+
+    @property
+    def class_weights(self):
+        # Lazy load class weights when needed
+        if self._class_weights is None:
+            if self.use_class_weights:
+                override_class_weights = self._get_config_value('override_class_weights')
+
+                if override_class_weights is None:
+                    raise ValueError('The ClassificationTrainer can only use override class weights and they were not found from the config file')
+
+                self.logger.log('Using class weights: {}'.format(override_class_weights))
+                class_weights = np.array(override_class_weights, dtype=np.float32)
+                self._class_weights = class_weights
+            else:
+                self._class_weights = np.ones([self.num_classes], dtype=np.float32)
+
+        return self._class_weights
+
+    @property
+    def ignore_classes(self):
+        if self._ignore_classes is None:
+            ignore_classes = np.squeeze(np.where(np.equal(self.class_weights, 0.0))).astype(dtype=np.int32)
+
+            # If there is only a single ignored class the shape will be empty - expand to dim 1
+            if ignore_classes.shape == ():
+                ignore_classes = np.expand_dims(ignore_classes, axis=-1)
+
+            self._ignore_classes = ignore_classes
+
+        return self._ignore_classes
+
+    @property
+    def is_supervised_only_trainer(self):
+        return self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED or \
+               self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER
+
+    @property
+    def using_unlabeled_training_data(self):
+        return not self.is_supervised_only_trainer and \
+               self.training_set_unlabeled is not None and \
+               self.training_set_unlabeled.size > 0 and \
+               self.num_unlabeled_per_batch > 0
+
+    @property
+    def training_data_generator_params(self):
+        if self._training_data_generator_params is None:
+            self._training_data_generator_params = DataGeneratorParameters(
+                num_color_channels=self.num_color_channels,
+                logger=self.logger,
+                random_seed=self.random_seed,
+                crop_shape=self.crop_shape,
+                resize_shape=self.resize_shape,
+                use_per_channel_mean_normalization=True,
+                per_channel_mean=self.per_channel_mean if self.using_unlabeled_training_data else self.per_channel_mean_labeled,
+                use_per_channel_stddev_normalization=True,
+                per_channel_stddev=self.per_channel_stddev_labeled if self.using_unlabeled_training_data else self.per_channel_stddev_labeled,
+                use_data_augmentation=self.use_data_augmentation,
+                data_augmentation_params=self.data_augmentation_parameters,
+                shuffle_data_after_epoch=True,
+                div2_constraint=1)
+
+        return self._training_data_generator_params
+
+    @property
+    def validation_data_generator_params(self):
+        if self._validation_data_generator_params is None:
+            self._validation_data_generator_params = DataGeneratorParameters(
+                num_color_channels=self.num_color_channels,
+                logger=self.logger,
+                random_seed=self.random_seed,
+                crop_shape=self.validation_crop_shape,
+                resize_shape=self.validation_resize_shape,
+                use_per_channel_mean_normalization=True,
+                per_channel_mean=self.training_data_generator_params.per_channel_mean,
+                use_per_channel_stddev_normalization=True,
+                per_channel_stddev=self.training_data_generator_params.per_channel_stddev,
+                use_data_augmentation=False,
+                data_augmentation_params=None,
+                shuffle_data_after_epoch=True,
+                div2_constraint=1)
+
+        return self._validation_data_generator_params
+
+    # TrainerBase implementations
+
+    @property
+    def num_unlabeled_per_batch(self):
+        num_unlabeled_per_batch = int(self._get_config_value('num_unlabeled_per_batch'))
+
+        # Sanity check for number of unlabeled per batch
+        if num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
+            self.logger.warn('Trainer type is marked as {} with unlabeled per batch {} - assuming 0 unlabeled per batch'.format(self.trainer_type, num_unlabeled_per_batch))
+            return 0
+
+        return num_unlabeled_per_batch
+
+    def _get_data_sets(self):
+        # type: () -> (object, object, object, object)
+
+        """
+        Creates and initializes the data sets and return a tuple of four data sets:
+        (training labeled, training unlabeled, validation and test)
+
+        # Arguments
+            None
+        # Returns
+            :return: A tuple of data sets (training labeled, training unlabeled, validation, test)
+        """
+        self.logger.log('Creating labeled training set')
+        stime = time.time()
+        training_set_labeled = MINCDataSet(name='training_set_labeled',
+                                           path_to_photo_archive=self.path_to_labeled_photos,
+                                           label_mappings_file_path=self.path_to_label_mapping_file,
+                                           data_set_file_path=self.path_to_training_set_file)
+        self.logger.log('Labeled training set construction took: {} s, size: {}'.format(time.time()-stime, training_set_labeled.size))
+
+        if training_set_labeled.size == 0:
+            raise ValueError('No training data found')
+
+        # Unlabeled training set - skip construction if unlabeled per batch is zero or this is a supervised segmentation trainer
+        if self.num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
+            self.logger.log('Creating unlabeled training set from: {}'.format(self.path_to_unlabeled_photos))
+            stime = time.time()
+            training_set_unlabeled = UnlabeledImageDataSet(name='training_set_unlabeled',
+                                                           path_to_photo_archive=self.path_to_unlabeled_photos)
+            self.logger.log('Unlabeled training set creation took: {} s, size: {}'.format(time.time()-stime, training_set_unlabeled.size))
+        else:
+            training_set_unlabeled = None
+
+        self.logger.log('Creating validation set')
+        stime = time.time()
+        validation_set = MINCDataSet(name='validation_set',
+                                     path_to_photo_archive=self.path_to_labeled_photos,
+                                     label_mappings_file_path=self.path_to_label_mapping_file,
+                                     data_set_file_path=self.path_to_validation_set_file)
+        self.logger.log('Validation set construction took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
+
+        self.logger.log('Creating test set')
+        stime = time.time()
+        test_set = MINCDataSet(name='test_set',
+                               path_to_photo_archive=self.path_to_labeled_photos,
+                               label_mappings_file_path=self.path_to_label_mapping_file,
+                               data_set_file_path=self.path_to_test_set_file)
+        self.logger.log('Test set construction took: {} s, size: {}'.format(time.time()-stime, test_set.size))
+
+        return training_set_labeled, training_set_unlabeled, validation_set, test_set
+
+    def _get_data_generators(self):
+        # type: () -> (DataGenerator, DataGenerator)
+
+        """
+        Creates and initializes the data generators and returns a tuple of two data generators:
+        (training data generator, validation data generator)
+
+        # Arguments
+            None
+        # Returns
+            :return: A tuple of two data generators (training, validation)
+        """
+        self.logger.log('Initializing data generators')
+
+        self.logger.log('Creating training data generator')
+        training_data_generator = ClassificationDataGenerator(labeled_data_set=self.training_set_labeled,
+                                                              unlabeled_data_set=self.training_set_unlabeled if self.using_unlabeled_training_data else None,
+                                                              num_labeled_per_batch=self.num_labeled_per_batch,
+                                                              num_unlabeled_per_batch=self.num_unlabeled_per_batch if self.using_unlabeled_training_data else 0,
+                                                              class_weights=self.class_weights,
+                                                              batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
+                                                              params=self.training_data_generator_params)
+
+        self.logger.log('Creating validation data generator')
+        validation_data_generator = ClassificationDataGenerator(labeled_data_set=self.validation_set,
+                                                                unlabeled_data_set=None,
+                                                                num_labeled_per_batch=self.validation_num_labeled_per_batch,
+                                                                num_unlabeled_per_batch=0,
+                                                                class_weights=self.class_weights,
+                                                                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
+                                                                params=self.validation_data_generator_params)
+
+        self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
+        self.logger.log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
+        self.logger.log('Using per-channel stddev: {}'.format(training_data_generator.per_channel_stddev))
+
+        return training_data_generator, validation_data_generator
+
+    @property
+    def num_classes(self):
+        # type: () -> int
+        return self.training_set_labeled.num_classes
+
+    @property
+    def total_batch_size(self):
+        if self.using_unlabeled_training_data:
+            return self.num_labeled_per_batch + self.num_unlabeled_per_batch
+
+        return self.num_labeled_per_batch
+
+    def train(self):
+        # type: () -> History
+        super(ClassificationTrainer, self).train()
+        assert isinstance(self.model, ExtendedModel)
+
+        # Labeled data set size determines the epochs
+        training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
+        validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
+        num_workers = dataset_utils.get_number_of_parallel_jobs()
+
+        if self.using_unlabeled_training_data:
+            self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
+                     .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
+        else:
+            self.logger.log('Labeled data set size: {}, num labeled per batch: {}'
+                     .format(self.training_set_labeled.size, self.num_labeled_per_batch))
+
+        self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
+                 .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
+
+        self.logger.log('Num workers: {}'.format(num_workers))
+
+        # Get a list of callbacks
+        callbacks = self._get_training_callbacks()
+
+        # Note: the student model should not be evaluated using the validation data generator
+        # the generator input will not be meaning
+        history = self.model.fit_generator(
+            generator=self.training_data_generator,
+            steps_per_epoch=training_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
+            epochs=self.num_epochs if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS,
+            initial_epoch=self.initial_epoch,
+            validation_data=self.validation_data_generator,
+            validation_steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
+            verbose=1,
+            trainer=self,
+            callbacks=callbacks,
+            workers=num_workers)
+
+        return history
+
+    def _get_model_lambda_loss_type(self):
+        # type: () -> ModelLambdaLossType
+        if self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED:
+            return ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY
+        elif self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER:   # Same lambda loss as semi-supervised but only with 0 unlabeled data
+            return ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
+        elif self.trainer_type == TrainerType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER:
+            return ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
+        else:
+            raise ValueError('Unsupported trainer type for ClassificationTrainer - cannot deduce lambda loss type')
+
+    def _get_model_metrics(self):
+        return {'logits': [metrics.classification_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                           metrics.classification_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]}
+
+    def _get_model_loss(self):
+        # type: () -> dict[str, Callable]
+        return {'loss': losses.dummy_loss, 'logits': lambda _, y_pred: 0.0*y_pred}
+
+    def _get_model_loss_weights(self):
+        # type: () -> dict[str, float]
+        return {'loss': 1., 'logits': 0.}
+
+    # End of: TrainerBase implementations
+
+    # MeanTeacherBase implementations
+
+    def _get_teacher_validation_data_generator(self):
+        if self.using_mean_teacher_method:
+            teacher_validation_data_generator = ClassificationDataGenerator(labeled_data_set=self.validation_set,
+                                                                            unlabeled_data_set=None,
+                                                                            num_labeled_per_batch=self.validation_num_labeled_per_batch,
+                                                                            num_unlabeled_per_batch=0,
+                                                                            class_weights=self.class_weights,
+                                                                            batch_data_format=BatchDataFormat.SUPERVISED,
+                                                                            params=self.validation_data_generator_params)
+        else:
+            teacher_validation_data_generator = None
+
+        return teacher_validation_data_generator
+
+    @property
+    def using_mean_teacher_method(self):
+        return self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER or \
+               self.trainer_type == TrainerType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
+
+    def _get_teacher_model_lambda_loss_type(self):
+        # type: () -> ModelLambdaLossType
+        return ModelLambdaLossType.NONE
+
+    def _get_teacher_model_loss(self):
+        # type: () -> Callable
+        return losses.classification_weighted_categorical_crossentropy_loss(self.class_weights)
+
+    def _get_teacher_model_metrics(self):
+        # type: () -> list[Callable]
+        return [metrics.classification_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                metrics.classification_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]
+
+    # End of: MeanTeacherBase implementations
+
+    def handle_early_exit(self):
+        super(ClassificationTrainer, self).handle_early_exit()
+        self.logger.log('Early exit handler complete - ready for exit')
+
+    def modify_batch_data(self, step_index, x, y, validation=False):
+        # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
+
+        """
+        Invoked by the ExtendedModel right before train_on_batch:
+
+        If using the Mean Teacher method:
+            Modifies the batch data by appending the mean teacher predictions as the last
+            element of the input data X if we are using mean teacher training.
+
+        # Arguments
+            :param step_index: the training step index
+            :param x: input data
+            :param y: output data
+            :param validation: is this a validation data batch
+        # Returns
+            :return: a tuple of (input data, output data)
+        """
+        x, y = super(ClassificationTrainer, self).modify_batch_data(step_index=step_index, x=x, y=y, validation=validation)
+
+        img_batch = x[0]
+        label_batch = x[1]
+
+        # Apply possible Gaussian Noise to batch data last e.g. teacher model Gaussian Noise requires unnoised data
+        if self.using_gaussian_noise and not validation:
+            x[0] = img_batch + self._get_batch_gaussian_noise(noise_shape=img_batch.shape, step_index=step_index)
+
+        # If we are in debug mode, save the batch images - this is right before the images enter
+        # into the neural network
+        if settings.DEBUG:
+            b_min = np.min(img_batch)
+            b_max = np.max(img_batch)
+
+            for i in range(0, len(img_batch)):
+                label = np.argmax(label_batch[i])
+                img = ((img_batch[i] - b_min) / (b_max - b_min)) * 255.0
+                self.logger.debug_log_image(img, '{}_{}_{}_{}_photo.jpg'.format(label, "val" if validation else "tr", step_index, i), scale=False)
+
+        return x, y

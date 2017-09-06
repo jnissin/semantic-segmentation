@@ -190,7 +190,7 @@ if __name__ == '__main__':
     log('Using per-channel stddev: {}'.format(training_data_generator.per_channel_stddev))
 
     # Get callbacks
-    callbacks = training_utils._get_callbacks(
+    callbacks = training_utils._get_training_callbacks(
         keras_model_checkpoint_file_path=get_config_value('keras_model_checkpoint_file_path'),
         keras_tensorboard_log_path=get_config_value('keras_tensorboard_log_path'),
         keras_csv_log_file_path=get_config_value('keras_csv_log_file_path'),
@@ -243,8 +243,8 @@ if __name__ == '__main__':
     # Get the optimizer
     # Note: we will only provide the optimizer configuration file from previous run
     # if we are continuing training
-    optimizer = training_utils._get_optimizer(get_config_value('optimizer'),
-                                              get_config_value('optimizer_checkpoint_file_path') if initial_epoch != 0 else None)
+    optimizer = training_utils._get_model_optimizer(get_config_value('optimizer'),
+                                                    get_config_value('optimizer_checkpoint_file_path') if initial_epoch != 0 else None)
 
     # Get the loss function
     loss_function = get_loss_function(training_set=training_set)
