@@ -997,7 +997,14 @@ class MeanTeacherTrainerBase(TrainerBase):
         # Append first mean teacher data
         if self.using_mean_teacher_method:
             img_batch = x[0]
-            x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, validation=validation)
+
+            # Parse the teacher data shape, this should work for classification and segmentation regardless of the
+            # label encoding as the model predictions should always yield logits for each class and the batch dimension
+            # should always be the first dimension in any input
+            labels_data = x[1]
+            teacher_data_shape = list(labels_data.shape[0:-1]) + [self.num_classes]
+
+            x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, teacher_data_shape=teacher_data_shape, validation=validation)
 
         return x, y
 
@@ -1129,8 +1136,8 @@ class MeanTeacherTrainerBase(TrainerBase):
                 self.logger.log('Saving teacher model weights')
                 self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
 
-    def _get_mean_teacher_extra_batch_data(self, img_batch, step_index, validation):
-        # type: (np.ndarray, int, bool) -> list
+    def _get_mean_teacher_extra_batch_data(self, img_batch, step_index, teacher_data_shape, validation):
+        # type: (np.ndarray, int, list, bool) -> list
 
         """
         Calculates the extra batch data necessary for the Mean Teacher method. In other words returns a list with
@@ -1142,6 +1149,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         # Arguments
             :param img_batch: The input images to the neural network
             :param step_index: Step index (used in coefficient calculation)
+            :param teacher_data_shape: Shape of the teacher data - might not always be the same as img batch e.g. for classification
             :param validation: True if this is a validation batch false otherwise
         # Returns
             :return: The Mean Teacher extra data as a list [mt_predictions, consistency_coefficients]
@@ -1158,7 +1166,7 @@ class MeanTeacherTrainerBase(TrainerBase):
 
         if validation:
             # BxHxWxC
-            mean_teacher_predictions = np.zeros(shape=(img_batch.shape[0], img_batch.shape[1], img_batch.shape[2], self.num_classes))
+            mean_teacher_predictions = np.zeros(shape=teacher_data_shape)
             np_consistency_coefficients = np.zeros(shape=[batch_size])
             return [mean_teacher_predictions, np_consistency_coefficients]
         else:
@@ -1174,6 +1182,11 @@ class MeanTeacherTrainerBase(TrainerBase):
             self.logger.profile_log('Mean teacher batch predictions took: {} s'.format(time.time() - s_time))
             consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
             np_consistency_coefficients = np.ones(shape=[batch_size]) * consistency_coefficient
+
+            if teacher_data_shape != list(mean_teacher_predictions.shape):
+                self.logger.warn('Mismatch between teacher data shape and returned MT predictions: {} vs {}'
+                                 .format(teacher_data_shape, mean_teacher_predictions.shape))
+
             return [mean_teacher_predictions, np_consistency_coefficients]
 
 
