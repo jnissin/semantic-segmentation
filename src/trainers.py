@@ -997,12 +997,16 @@ class MeanTeacherTrainerBase(TrainerBase):
         # Append first mean teacher data
         if self.using_mean_teacher_method:
             img_batch = x[0]
+            labels_data = x[1]
 
             # Parse the teacher data shape, this should work for classification and segmentation regardless of the
             # label encoding as the model predictions should always yield logits for each class and the batch dimension
             # should always be the first dimension in any input
-            labels_data = x[1]
-            teacher_data_shape = list(labels_data.shape[0:-1]) + [self.num_classes]
+            # TODO: Fix
+            if self.trainer_type == TrainerType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER or self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER:
+                teacher_data_shape = list(labels_data.shape)
+            else:
+                teacher_data_shape = list(img_batch.shape[0:-1]) + [self.num_classes]
 
             x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, teacher_data_shape=teacher_data_shape, validation=validation)
 
