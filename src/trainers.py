@@ -34,7 +34,8 @@ from utils.dataset_utils import MaterialClassInformation, SegmentationDataSetInf
 import losses
 import metrics
 import settings
-from logger import Logger, LogLevel
+from logger import Logger
+
 
 #############################################
 # TIMELINER (PROFILING)
@@ -300,6 +301,12 @@ class TrainerBase:
     def num_color_channels(self):
         # type: () -> int
         return int(self._get_config_value('num_color_channels'))
+
+    @property
+    def div2_constraint(self):
+        # type: () -> int
+        val = self._get_config_value('div2_constraint')
+        return int(val) if val is not None else 0
 
     @property
     def num_epochs(self):
@@ -1385,6 +1392,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             self._training_data_generator_params = SegmentationDataGeneratorParameters(
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
+                num_crop_reattempts=self.num_crop_reattempts,
                 logger=self.logger,
                 random_seed=self.random_seed,
                 crop_shapes=self.crop_shape,
@@ -1397,7 +1405,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 use_material_samples=self.using_material_samples,
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
-                div2_constraint=4)
+                div2_constraint=self.div2_constraint)
 
         return self._training_data_generator_params
 
@@ -1407,6 +1415,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             self._validation_data_generator_params = SegmentationDataGeneratorParameters(
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
+                num_crop_reattempts=self.num_crop_reattempts,
                 logger=self.logger,
                 random_seed=self.random_seed,
                 crop_shapes=self.validation_crop_shape,
@@ -1419,13 +1428,18 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 use_material_samples=False,
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
-                div2_constraint=4)
+                div2_constraint=self.div2_constraint)
 
         return self._validation_data_generator_params
 
     @property
     def num_classes(self):
         return len(self.material_class_information)
+
+    @property
+    def num_crop_reattempts(self):
+        val = self._get_config_value('num_crop_reattempts')
+        return int(val) if val is not None else 0
 
     @property
     def is_supervised_only_trainer(self):
@@ -1882,7 +1896,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 use_data_augmentation=self.use_data_augmentation,
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
-                div2_constraint=1)
+                div2_constraint=self.div2_constraint)
 
         return self._training_data_generator_params
 
@@ -1902,7 +1916,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 use_data_augmentation=False,
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
-                div2_constraint=1)
+                div2_constraint=self.div2_constraint)
 
         return self._validation_data_generator_params
 

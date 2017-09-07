@@ -29,6 +29,8 @@
     "input_shape": [362, 362, 3],
     "crop_shape": null,
     "resize_shape": null,
+    "div2_constraint": 1,
+    "num_crop_reattempts": 0,
 
     "num_labeled_per_batch": 20,
     "num_unlabeled_per_batch": 0,
