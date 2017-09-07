@@ -44,6 +44,17 @@ class ModelLambdaLossType(Enum):
     CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 6
 
 
+class WeightTransferInformation(object):
+
+    def __init__(self, num_transferred_layers, last_transferred_layer_name, num_frozen_layers=0, last_frozen_layer_name=None):
+        # type: (int, str, int, str) -> None
+
+        self.num_transferred_layers = num_transferred_layers
+        self.last_transferred_layer_name = last_transferred_layer_name
+        self.num_frozen_layers = num_frozen_layers
+        self.last_frozen_layer_name = last_frozen_layer_name
+
+
 #############################################
 # UTILITY FUNCTIONS
 #############################################
@@ -195,8 +206,8 @@ class ModelBase(object):
     def model(self):
         return self._model
 
-    def transfer_weights(self, from_model, from_layer_index, to_layer_index, freeze_transferred_layers):
-        # type: (Model, int, int, bool) -> (int, str)
+    def transfer_weights(self, from_model, from_layer_index, to_layer_index, freeze_from_layer_index=None, freeze_to_layer_index=None):
+        # type: (Model, int, int, int, int) -> (WeightTransferInformation)
 
         """
         Transfers weights of the given layer range from the parameter model to this model.
@@ -207,12 +218,15 @@ class ModelBase(object):
             :param from_model: model where to transfer weights from
             :param from_layer_index: first layer to transfer
             :param to_layer_index: end of the transferrable layers
-            :param freeze_transferred_layers: should the transferred layers be frozen?
+            :param freeze_from_layer_index: the first layer index to freeze
+            :param freeze_to_layer_index: end of the frozen layers index
         # Returns
-            :return: number of transferred layers and the name of the last transferred layer
+            :return: a WeightTransferInformation object
         """
 
         num_transferred_layers = 0
+        num_frozen_layers = 0
+        freezing_layers = freeze_from_layer_index is not None and freeze_to_layer_index is not None
 
         # Support negative indexing
         if from_layer_index < 0:
@@ -221,17 +235,34 @@ class ModelBase(object):
         if to_layer_index < 0:
             to_layer_index += len(from_model.layers)
 
+        if freeze_from_layer_index is not None and freeze_from_layer_index < 0:
+            freeze_from_layer_index += len(from_model.layers)
+
+        if freeze_to_layer_index is not None and freeze_to_layer_index < 0:
+            freeze_to_layer_index += len(from_model.layers)
+
+        # Sanity checks
+        assert(from_layer_index < to_layer_index)
+        assert(not (freezing_layers and freeze_from_layer_index > freeze_to_layer_index))
+
         # Assumes indexing is the same for both models for the specified
         # layer range
         for i in range(from_layer_index, to_layer_index):
             self._model.layers[i].set_weights(from_model.layers[i].get_weights())
 
-            if freeze_transferred_layers:
-                self._model.layers[i].trainable = False
+            if freezing_layers:
+                if freeze_from_layer_index <= i < freeze_to_layer_index:
+                    self._model.layers[i].trainable = False
+                    num_frozen_layers += 1
 
             num_transferred_layers += 1
 
-        return num_transferred_layers, from_model.layers[to_layer_index - 1].name
+        info = WeightTransferInformation(num_transferred_layers=num_transferred_layers,
+                                         last_transferred_layer_name=from_model.layers[to_layer_index - 1].name,
+                                         num_frozen_layers=num_frozen_layers,
+                                         last_frozen_layer_name=from_model.layers[freeze_to_layer_index - 1].name if freezing_layers else None)
+
+        return info
 
     @abstractmethod
     def _build_model(self, inputs):
@@ -431,37 +462,6 @@ class ModelBase(object):
 
         model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
         return model
-
-    # def _get_mean_teacher_student_model_classification(self):
-    #
-    #     if self.inputs is None or self.outputs is None:
-    #         raise RuntimeError('The model must be built by calling _build_model() first')
-    #     if self.lambda_loss_function is None:
-    #         raise ValueError('Mean teacher models must be given a lambda loss function')
-    #
-    #     labels_shape = (self.input_shape[0], self.input_shape[1])
-    #     logits_shape = (self.num_classes)
-    #
-    #     labels = Input(name="labels", shape=labels_shape)
-    #     self.inputs.append(labels)
-    #
-    #     class_weights = Input(name="class_weights", shape=labels_shape)
-    #     self.inputs.append(class_weights)
-    #
-    #     mt_predictions = Input(name="mt_predictions", shape=logits_shape)
-    #     self.inputs.append(mt_predictions)
-    #
-    #     consistency_cost = Input(name="consistency_cost", shape=[1])
-    #     self.inputs.append(consistency_cost)
-    #
-    #     # Note: assumes there is only a single output, which is the last layer
-    #     logits = self.outputs[0]
-    #     lambda_inputs = [logits, labels, class_weights, mt_predictions, consistency_cost]
-    #     loss_layer = Lambda(self.lambda_loss_function, output_shape=(1,), name='loss')(lambda_inputs)
-    #     self.outputs = [loss_layer, logits]
-    #
-    #     model = ExtendedModel(name=self.name, inputs=self.inputs, outputs=self.outputs)
-    #     return model
 
 
 ##############################################

@@ -705,20 +705,22 @@ class TrainerBase:
         self.logger.log('Loading transfer weights to transfer model from file: {}'.format(transfer_model_weights_file_path))
         transfer_model.load_weights(transfer_model_weights_file_path)
 
-        from_layer_index = transfer_weights_options['from_layer_index']
-        to_layer_index = transfer_weights_options['to_layer_index']
-        freeze_transferred_layers = transfer_weights_options['freeze_transferred_layers']
-        self.logger.log('Transferring weights from layer range: [{}:{}], freeze transferred layers: {}'
-            .format(from_layer_index, to_layer_index, freeze_transferred_layers))
+        from_layer_index = int(transfer_weights_options['from_layer_index'])
+        to_layer_index = int(transfer_weights_options['to_layer_index'])
+        freeze_from_layer_index = transfer_weights_options.get('freeze_from_layer_index')
+        freeze_to_layer_index = transfer_weights_options.get('freeze_to_layer_index')
+        self.logger.log('Transferring weights from layer range: [{}:{}], freezing transferred layer range: [{}:{}]'
+                        .format(from_layer_index, to_layer_index, freeze_from_layer_index, freeze_to_layer_index))
 
-        transferred_layers, last_transferred_layer = to_model_wrapper._transfer_weights(
+        info = to_model_wrapper.transfer_weights(
             from_model=transfer_model,
             from_layer_index=from_layer_index,
             to_layer_index=to_layer_index,
-            freeze_transferred_layers=freeze_transferred_layers)
+            freeze_from_layer_index=freeze_from_layer_index,
+            freeze_to_layer_index=freeze_to_layer_index)
 
-        self.logger.log('Weight transfer completed with {} transferred layers, last transferred layer: {}'
-            .format(transferred_layers, last_transferred_layer))
+        self.logger.log('Weight transfer completed with transferred layers: {}, last transferred layer name: {}, frozen layers: {}, last frozen layer name: {}'
+                        .format(info.num_transferred_layers, info.last_transferred_layer_name, info.num_frozen_layers, info.last_frozen_layer_name))
 
     @property
     def model_checkpoint_directory(self):
@@ -846,6 +848,13 @@ class MeanTeacherTrainerBase(TrainerBase):
         # If we are using the mean teacher method - read the configuration and initialize the instance variables
         self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
         self._init_teacher_model()
+
+        # Trigger property initializations - raise errors if properties don't exist
+        if self.using_mean_teacher_method:
+            assert(self.ema_smoothing_coefficient_function is not None)
+            assert(self.consistency_cost_coefficient_function is not None)
+            assert(self.teacher_weights_directory_path is not None)
+            assert(self.teacher_model_checkpoint_file_path is not None)
 
     def _init_teacher_model(self):
         # If we are using the mean teacher method create the teacher model
@@ -1222,6 +1231,11 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
         super(SegmentationTrainer, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
 
+        # Trigger property initializations - raise errors if don't exist
+        if self.using_superpixel_method:
+            assert(self.superpixel_label_generation_function is not None)
+            assert(self.superpixel_unlabeled_cost_coefficient_function is not None)
+
     """
     PROPERTIES
     """
@@ -1368,8 +1382,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 num_color_channels=self.num_color_channels,
                 logger=self.logger,
                 random_seed=self.random_seed,
-                crop_shape=self.crop_shape,
-                resize_shape=self.resize_shape,
+                crop_shapes=self.crop_shape,
+                resize_shapes=self.resize_shape,
                 use_per_channel_mean_normalization=True,
                 per_channel_mean=self.data_set_information.per_channel_mean if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_mean,
                 use_per_channel_stddev_normalization=True,
@@ -1390,8 +1404,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 num_color_channels=self.num_color_channels,
                 logger=self.logger,
                 random_seed=self.random_seed,
-                crop_shape=self.validation_crop_shape,
-                resize_shape=self.validation_resize_shape,
+                crop_shapes=self.validation_crop_shape,
+                resize_shapes=self.validation_resize_shape,
                 use_per_channel_mean_normalization=True,
                 per_channel_mean=self.training_data_generator_params.per_channel_mean,
                 use_per_channel_stddev_normalization=True,
@@ -1854,8 +1868,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 num_color_channels=self.num_color_channels,
                 logger=self.logger,
                 random_seed=self.random_seed,
-                crop_shape=self.crop_shape,
-                resize_shape=self.resize_shape,
+                crop_shapes=self.crop_shape,
+                resize_shapes=self.resize_shape,
                 use_per_channel_mean_normalization=True,
                 per_channel_mean=self.per_channel_mean if self.using_unlabeled_training_data else self.per_channel_mean_labeled,
                 use_per_channel_stddev_normalization=True,
@@ -1874,8 +1888,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 num_color_channels=self.num_color_channels,
                 logger=self.logger,
                 random_seed=self.random_seed,
-                crop_shape=self.validation_crop_shape,
-                resize_shape=self.validation_resize_shape,
+                crop_shapes=self.validation_crop_shape,
+                resize_shapes=self.validation_resize_shape,
                 use_per_channel_mean_normalization=True,
                 per_channel_mean=self.training_data_generator_params.per_channel_mean,
                 use_per_channel_stddev_normalization=True,
