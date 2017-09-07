@@ -15,7 +15,6 @@ from utils import image_utils
 from utils.image_utils import ImageInterpolation, ImageTransform
 from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSample
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
-import settings
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 import keras.backend as K
@@ -587,8 +586,38 @@ class DataGenerator(object):
         """
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
+    def _resize_image(self, np_image, resize_shape, cval, interp):
+        # type: (np.ndarray, tuple, np.ndarray, str) -> np.ndarray
+
+        # If the resize shape is None just return the original image
+        if resize_shape is None:
+            return np_image
+
+        assert(isinstance(resize_shape, list) or isinstance(resize_shape, tuple) or isinstance(resize_shape, np.ndarray))
+        assert(len(resize_shape) == 2)
+        assert(not (resize_shape[0] is None and resize_shape[1] is None))
+
+        # Scale to match the sdim found in index 0
+        if resize_shape[0] is not None and resize_shape[1] is None:
+            target_sdim = resize_shape[0]
+            img_sdim = min(np_image.shape[:2])
+            scale_factor = float(target_sdim)/float(img_sdim)
+            target_shape = tuple(np.round(np.array(np_image.shape[:2], dtype=np.float32) * scale_factor).astype(dtype=np.int32))
+        # Scale the match the bdim found in index 1
+        elif resize_shape[0] is None and resize_shape[1] is not None:
+            target_bdim = resize_shape[1]
+            img_bdim = max(np_image.shape[:2])
+            scale_factor = float(target_bdim)/float(img_bdim)
+            target_shape = tuple(np.round(np.array(np_image.shape[:2], dtype=np.float32) * scale_factor).astype(dtype=np.int32))
+        # Scale to the exact shape
+        else:
+            target_shape = tuple(resize_shape)
+
+        return image_utils.np_scale_image_with_padding(np_image, shape=target_shape, cval=cval, interp=interp)
+
+
     def _normalize_photo_batch(self, batch):
-        # type: (np.array) -> np.array
+        # type: (np.ndarray) -> np.ndarray
 
         """
         Standardizes the color channels from the given image batch to zero-centered
@@ -1000,8 +1029,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            np_photo = image_utils.np_scale_image_with_padding(np_photo, shape=resize_shape, cval=photo_cval, interp='bilinear')
-            np_mask = image_utils.np_scale_image_with_padding(np_mask, shape=resize_shape, cval=mask_cval, interp='nearest')
+            np_photo = self._resize_image(np_photo, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
+            np_mask = self._resize_image(np_photo, resize_shape=resize_shape, cval=self.photo_cval, interp='nearest')
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -1613,7 +1642,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            np_image = image_utils.np_scale_image_with_padding(np_image, shape=resize_shape, cval=self.photo_cval, interp='bilinear')
+            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
 
         # Apply data augmentation
         if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_index):
@@ -1669,7 +1698,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            np_image = image_utils.np_scale_image_with_padding(np_image, shape=resize_shape, cval=self.photo_cval, interp='bilinear')
+            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
 
         img_height, img_width = np_image.shape[0], np_image.shape[1]
         crop_height, crop_width = crop_shape[0], crop_shape[1]
@@ -1758,7 +1787,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            np_image = image_utils.np_scale_image_with_padding(np_image, shape=resize_shape, cval=self.photo_cval, interp='bilinear')
+            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors

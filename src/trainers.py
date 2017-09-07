@@ -196,7 +196,7 @@ class TrainerBase:
             if self.initial_epoch != 0:
                 self.logger.warn('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
             else:
-                self._transfer_weights(self.model_wrapper, self.transfer_options)
+                self._transfer_weights(to_model_wrapper=self.model_wrapper)
 
 
         # Get the necessary components to compile the model
@@ -686,8 +686,13 @@ class TrainerBase:
 
         return initial_epoch
 
-    def _transfer_weights(self, to_model_wrapper, transfer_weights_options):
+    def _transfer_weights(self, to_model_wrapper):
         # type: (ModelBase, dict) -> ()
+
+        transfer_weights_options = self._get_config_value('transfer_weights_options')
+
+        if transfer_weights_options is None:
+            raise ValueError('Could not find transfer weights options with key: transfer_weights_options')
 
         transfer_model_name = transfer_weights_options['transfer_model_name']
         transfer_model_input_shape = tuple(transfer_weights_options['transfer_model_input_shape'])
@@ -1011,7 +1016,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             # Parse the teacher data shape, this should work for classification and segmentation regardless of the
             # label encoding as the model predictions should always yield logits for each class and the batch dimension
             # should always be the first dimension in any input
-            # TODO: Fix
+            # TODO: Fix to work in a more general case
             if self.trainer_type == TrainerType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER or self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER:
                 teacher_data_shape = list(labels_data.shape)
             else:

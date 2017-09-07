@@ -91,6 +91,19 @@
       "mode": "auto"
     },
 
+    "transfer_weights": true,
+
+    "transfer_weights_options": {
+      "transfer_model_name": "enet-naive-upsampling-encoder-only",
+      "transfer_model_input_shape": [362, 362, 3],
+      "transfer_model_num_classes": 24,
+      "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-encoder-only/supervised-mt/checkpoints/teacher/teacher_weights.13-0.53.hdf5",
+      "from_layer_index": 0,
+      "to_layer_index": -3,
+      "freeze_from_layer_index": 0,
+      "freeze_to_layer_index": -3
+    },
+
     "stepwise_learning_rate_scheduler": {
       "lr_schedule": "lambda x: 5e-4 * min(np.exp(-5.0*(1.0-((float(x)/100.0)**2))), 1.0)",
       "b2_schedule": "lambda x: 0.999 if x >= 100 else 0.99",
@@ -100,7 +113,6 @@
 
     "image_data_format": "channels_last",
     "continue_from_last_checkpoint": false,
-    "transfer_weights": false,
     "use_class_weights": true,
     "_mfb_bbox_override_class_weights": [0.0, 0.7386141910270192, 1.1840046803490438, 0.97006299986923794, 0.91720643604011876, 1.0277399393210132, 0.0, 0.0, 0.85180914748899506, 0.88734945143950239, 0.0, 0.0, 1.1336130626170875, 2.1720728136575631, 0.0, 1.4200010027451655, 1.1573493121679481, 0.77252137940291588, 0.0, 0.0, 0.97514121474240345, 0.0, 0.0, 1.0261593653489667],
     "override_class_weights": [0.0, 1.4076836518169229, 1.9895755325627065, 1.7132058844736244, 1.6440989649431705, 1.7882206208033504, 0.0, 0.0, 1.5580805453163682, 1.6049007933647912, 0.0, 0.0, 1.9249285421136184, 3.2132651074155878, 0.0, 2.2890694255743536, 1.9554121286926713, 1.4529513768333295, 0.0, 0.0, 1.7198267756184442, 0.0, 0.0, 1.7861701853657472],
