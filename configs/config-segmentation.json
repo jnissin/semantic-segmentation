@@ -32,9 +32,9 @@
     "div2_constraint": 4,
     "num_crop_reattempts": 5,
 
-    "num_labeled_per_batch": 20,
+    "num_labeled_per_batch": 10,
     "num_unlabeled_per_batch": 0,
-    "validation_num_labeled_per_batch": 20,
+    "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": null,
     "validation_resize_shape": [512, 512],
 
@@ -43,7 +43,7 @@
 
     "optimizer": {
       "name": "adam",
-      "learning_rate": 5e-4,
+      "learning_rate": 5e-3,
       "momentum": 0.9,
       "decay": 2e-4
     },
@@ -106,11 +106,11 @@
       "freeze_to_layer_index": null,
       "scale_lr_from_layer_index": 0,
       "scale_lr_to_layer_index": -3,
-      "scale_lr_factor": 0.1
+      "scale_lr_factor": 0.05
     },
 
     "stepwise_learning_rate_scheduler": {
-      "lr_schedule": "lambda x: 5e-4 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "lr_schedule": "lambda x: 5e-3 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
       "b2_schedule": "lambda x: 0.99 if x < 40000 else 0.999",
       "last_scheduled_step": 40000,
       "verbose": false
