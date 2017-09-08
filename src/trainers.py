@@ -13,7 +13,8 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 
 import keras
 import keras.backend as K
-from keras.optimizers import SGD, Adam
+from keras.optimizers import Optimizer
+from extended_optimizers import SGD, Adam
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau, EarlyStopping
 
 from tensorflow.python.client import timeline
@@ -196,12 +197,14 @@ class TrainerBase:
         if self.use_transfer_weights:
             if self.initial_epoch != 0:
                 self.logger.warn('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
+                lr_scalers = dict()
             else:
-                self._transfer_weights(to_model_wrapper=self.model_wrapper)
-
+                lr_scalers = self._transfer_weights(to_model_wrapper=self.model_wrapper)
+        else:
+            lr_scalers = dict()
 
         # Get the necessary components to compile the model
-        model_optimizer = self._get_model_optimizer()
+        model_optimizer = self._get_model_optimizer(lr_scalers)
         model_loss = self._get_model_loss()
         model_loss_weights = self._get_model_loss_weights()
         model_metrics = self._get_model_metrics()
@@ -549,11 +552,13 @@ class TrainerBase:
 
         return callbacks
 
-    def _get_model_optimizer(self):
+    def _get_model_optimizer(self, lr_scalers={}):
+        # type: (dict) -> Optimizer
+
         optimizer_info = self._get_config_value('optimizer')
         optimizer_configuration = None
         optimizer = None
-        optimizer_name = optimizer_info['name'].lower()
+        optimizer_name = optimizer_info['name'].strip().lower()
 
         if self.continue_from_optimizer_checkpoint and self.initial_epoch == 0:
             self.logger.warn('Cannot continue from optimizer checkpoint if initial epoch is 0. Ignoring optimizer checkpoint.')
@@ -576,7 +581,7 @@ class TrainerBase:
             else:
                 lr = optimizer_info['learning_rate']
                 decay = optimizer_info['decay']
-                optimizer = Adam(lr=lr, decay=decay)
+                optimizer = Adam(lr=lr, decay=decay, lr_scalers=lr_scalers)
 
             self.logger.log('Using {} optimizer with learning rate: {}, decay: {}, beta_1: {}, beta_2: {}'
                 .format(optimizer.__class__.__name__,
@@ -592,7 +597,7 @@ class TrainerBase:
                 lr = optimizer_info['learning_rate']
                 decay = optimizer_info['decay']
                 momentum = optimizer_info['momentum']
-                optimizer = SGD(lr=lr, momentum=momentum, decay=decay)
+                optimizer = SGD(lr=lr, momentum=momentum, decay=decay, lr_scalers=lr_scalers)
 
             self.logger.log('Using {} optimizer with learning rate: {}, momentum: {}, decay: {}'
                 .format(optimizer.__class__.__name__,
@@ -694,7 +699,7 @@ class TrainerBase:
         return initial_epoch
 
     def _transfer_weights(self, to_model_wrapper):
-        # type: (ModelBase, dict) -> ()
+        # type: (ModelBase) -> dict
 
         transfer_weights_options = self._get_config_value('transfer_weights_options')
 
@@ -721,18 +726,33 @@ class TrainerBase:
         to_layer_index = int(transfer_weights_options['to_layer_index'])
         freeze_from_layer_index = transfer_weights_options.get('freeze_from_layer_index')
         freeze_to_layer_index = transfer_weights_options.get('freeze_to_layer_index')
-        self.logger.log('Transferring weights from layer range: [{}:{}], freezing transferred layer range: [{}:{}]'
-                        .format(from_layer_index, to_layer_index, freeze_from_layer_index, freeze_to_layer_index))
+        scale_lr_from_layer_index = transfer_weights_options.get('scale_lr_from_layer_index')
+        scale_lr_to_layer_index = transfer_weights_options.get('scale_lr_to_layer_index')
+        scale_lr_factor = transfer_weights_options.get('scale_lr_factor')
+
+        self.logger.log('Transferring weights from layer range: [{}:{}], freezing transferred layer range: [{}:{}], lr scaling layer range: [{}:{}]'
+                        .format(from_layer_index, to_layer_index, freeze_from_layer_index, freeze_to_layer_index, scale_lr_from_layer_index, scale_lr_to_layer_index))
 
         info = to_model_wrapper.transfer_weights(
             from_model=transfer_model,
             from_layer_index=from_layer_index,
             to_layer_index=to_layer_index,
             freeze_from_layer_index=freeze_from_layer_index,
-            freeze_to_layer_index=freeze_to_layer_index)
+            freeze_to_layer_index=freeze_to_layer_index,
+            scale_lr_from_layer_index=scale_lr_from_layer_index,
+            scale_lr_to_layer_index=scale_lr_to_layer_index,
+            scale_lr_factor=scale_lr_factor)
 
-        self.logger.log('Weight transfer completed with transferred layers: {}, last transferred layer name: {}, frozen layers: {}, last frozen layer name: {}'
-                        .format(info.num_transferred_layers, info.last_transferred_layer_name, info.num_frozen_layers, info.last_frozen_layer_name))
+        self.logger.log('Weight transfer completed with transferred layers: {}, last transferred layer name: {}, frozen layers: {}, last frozen layer name: {}, '
+                        'lr scaling layers: {}, lr scaling factor: {}'
+                        .format(info.num_transferred_layers,
+                                info.last_transferred_layer_name,
+                                info.num_frozen_layers,
+                                info.last_frozen_layer_name,
+                                info.num_lr_scaling_layers,
+                                scale_lr_factor))
+
+        return info.lr_scalers
 
     @property
     def model_checkpoint_directory(self):

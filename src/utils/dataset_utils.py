@@ -68,9 +68,6 @@ class MaterialSample(object):
     def bbox_bottom_left_corner_abs(self):
         return self.yx_max[0], self.yx_min[1]
 
-    def get_bbox_abs(self):
-        return self.bbox_top_left_corner_abs, self.bbox_top_right_corner_abs, self.bbox_bottom_right_corner_abs, self.bbox_bottom_left_corner_abs
-
     @property
     def bbox_top_left_corner_rel(self):
         return float(self.yx_min[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width)
@@ -86,6 +83,9 @@ class MaterialSample(object):
     @property
     def bbox_bottom_left_corner_rel(self):
         return float(self.yx_max[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width)
+
+    def get_bbox_abs(self):
+        return self.bbox_top_left_corner_abs, self.bbox_top_right_corner_abs, self.bbox_bottom_right_corner_abs, self.bbox_bottom_left_corner_abs
 
     def get_bbox_rel(self):
         return self.bbox_top_left_corner_rel, self.bbox_top_right_corner_rel, self.bbox_bottom_right_corner_rel, self.bbox_bottom_left_corner_rel

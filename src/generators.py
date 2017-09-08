@@ -7,7 +7,7 @@ from enum import Enum
 from typing import Callable
 from abc import ABCMeta, abstractmethod, abstractproperty
 import keras.backend as K
-from keras.preprocessing.image import img_to_array
+from keras.preprocessing.image import img_to_array, array_to_img
 from PIL import Image
 
 from utils import dataset_utils
@@ -271,6 +271,30 @@ class DataGenerator(object):
         self.using_random_resize_sizes = any(isinstance(i, list) for i in self._resize_shapes) if self._resize_shapes is not None else False
         self.logger.log('DataGenerator: Using random resize sizes: {}'.format(self.using_random_resize_sizes))
 
+        # Ensure the crop shapes satisfy the div2 constraints - this is a strict requirement
+        if self.using_random_crop_sizes:
+            for crop_shape in self._crop_shapes:
+                if crop_shape is not None:
+                    if dataset_utils.count_trailing_zeroes(crop_shape[0]) < self.div2_constraint or \
+                       dataset_utils.count_trailing_zeroes(crop_shape[1]) < self.div2_constraint:
+                        raise ValueError('A crop shape {} does not satisfy the div2 constraint of {}'.format(crop_shape, self.div2_constraint))
+        elif self._crop_shapes is not None and not self.using_random_crop_sizes:
+            if dataset_utils.count_trailing_zeroes(self._crop_shapes[0]) < self.div2_constraint or \
+               dataset_utils.count_trailing_zeroes(self._crop_shapes[1]) < self.div2_constraint:
+                raise ValueError('A crop shape {} does not satisfy the div2 constraint of {}'.format(self._crop_shapes, self.div2_constraint))
+
+        # Ensure the resize shapes satisfy the div2 constraints - this is not a strict requirement because crops might still fix the issue
+        if self.using_random_resize_sizes:
+            for resize_shape in self._resize_shapes:
+                if resize_shape is not None:
+                    if (resize_shape[0] is not None and dataset_utils.count_trailing_zeroes(resize_shape[0]) < self.div2_constraint) or \
+                       (resize_shape[1] is not None and dataset_utils.count_trailing_zeroes(resize_shape[1]) < self.div2_constraint):
+                        raise ValueError('A resize shape {} does not satisfy the div2 constraint of {}'.format(resize_shape, self.div2_constraint))
+        elif self._resize_shapes is not None and not self.using_random_crop_sizes:
+            if (self._resize_shapes[0] is not None and dataset_utils.count_trailing_zeroes(self._resize_shapes[0]) < self.div2_constraint) or \
+               (self._resize_shapes[1] is not None and dataset_utils.count_trailing_zeroes(self._resize_shapes[1]) < self.div2_constraint):
+                raise ValueError('A resize shape {} does not satisfy the div2 constraint of {}'.format(self._resize_shapes, self.div2_constraint))
+
     def get_batch_crop_shape(self):
         if self.using_random_crop_sizes:
             shape = self._crop_shapes[np.random.randint(0, len(self._crop_shapes))]
@@ -282,7 +306,7 @@ class DataGenerator(object):
     def get_batch_resize_shape(self):
         if self.using_random_resize_sizes:
             shape = self._resize_shapes[np.random.randint(0, len(self._resize_shapes))]
-            assert isinstance(shape, list) or isinstance(shape, tuple)
+            assert shape is None or isinstance(shape, list) or isinstance(shape, tuple)
             return shape
 
         return self._resize_shapes
@@ -344,22 +368,46 @@ class DataGenerator(object):
         if resize_shape[0] is not None and resize_shape[1] is None:
             target_sdim = resize_shape[0]
             img_sdim = min(np_image.shape[:2])
+
+            if target_sdim == img_sdim:
+                return np_image
+
             scale_factor = float(target_sdim)/float(img_sdim)
             target_shape = tuple(np.round(np.array(np_image.shape[:2], dtype=np.float32) * scale_factor).astype(dtype=np.int32))
         # Scale the match the bdim found in index 1
         elif resize_shape[0] is None and resize_shape[1] is not None:
             target_bdim = resize_shape[1]
             img_bdim = max(np_image.shape[:2])
+
+            if target_bdim == img_bdim:
+                return np_image
+
             scale_factor = float(target_bdim)/float(img_bdim)
             target_shape = tuple(np.round(np.array(np_image.shape[:2], dtype=np.float32) * scale_factor).astype(dtype=np.int32))
         # Scale to the exact shape
         else:
             target_shape = tuple(resize_shape)
 
-        return image_utils.np_scale_image_with_padding(np_image, shape=target_shape, cval=cval, interp=interp)
+            if target_shape[0] == np_image.shape[0] and target_shape[1] == np_image.shape[1]:
+                return np_image
 
+        return image_utils.np_resize_image_with_padding(np_image, shape=target_shape, cval=cval, interp=interp)
 
-    def _normalize_photo_batch(self, batch):
+    def _fit_image_to_div2_constraint(self, np_image, cval, interp):
+        # type: (np.ndarray, np.ndarray, str) -> np.ndarray
+
+        # Make sure the image dimensions satisfy the div2_constraint i.e. are n times divisible
+        # by 2 to work with the network. If the dimensions are not ok pad the images.
+        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
+        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
+
+        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
+            target_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
+            np_image = image_utils.np_resize_image_with_padding(np_image, shape=target_shape, cval=cval, interp=interp)
+
+        return np_image
+
+    def _normalize_image_batch(self, batch):
         # type: (np.ndarray) -> np.ndarray
 
         """
@@ -417,6 +465,61 @@ class DataGenerator(object):
                 raise ValueError('Per-channel stddev is in unknown range: {}'.format(_per_channel_stddev))
 
         return batch
+
+    def _should_apply_augmentation(self, step_idx):
+        # type: () -> bool
+
+        """
+        Returns a boolean describing whether to apply augmentation.
+
+        # Arguments
+            :param step_idx: the global step index
+        # Returns
+            :return: true if augmentation should be applied, false otherwise
+        """
+
+        return self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_idx)
+
+    def _apply_data_augmentation_to_images(self, images, cvals, interpolations, transform_origin=None, override_channel_shift_ranges=None, override_gamma_adjust_ranges=None):
+        # type: (list, list, list, np.ndarray, list, list) -> (list, ImageTransform)
+
+        """
+        Applies (same) data augmentation as per stored DataAugmentationParameters to a list of images.
+
+        # Arguments
+            :param images: images to augment (same augmentation on all)
+            :param cvals: constant fill values for the images
+            :param interpolations: interpolations for the images
+            :param transform_origin: the origin for the transformations, if None the center of the images is used
+            :param override_channel_shift_ranges: optional channel shift range override (e.g. for mask images), otherwise DataAugmentationParam used for all
+            :param override_gamma_adjust_ranges: optional gamma adjust range override (e.g. for mask images), otherwise DataAugmentationParam used for all
+        # Returns
+            :return: the list of augmented images and ImageTransform as a tuple (images, transform)
+        """
+
+        if not self.use_data_augmentation:
+            self.logger.warn('Apply data augmentation called but use_data_augmentation is false')
+
+        num_images = len(images)
+        channel_shift_ranges = [self.data_augmentation_params.channel_shift_range] * num_images if override_channel_shift_ranges is None else override_channel_shift_ranges
+        gamma_adjust_ranges = [self.data_augmentation_params.gamma_adjust_range] * num_images if override_gamma_adjust_ranges is None else override_gamma_adjust_ranges
+
+        images, transform = image_utils.np_apply_random_transform(images=images,
+                                                                  cvals=cvals,
+                                                                  fill_mode=self.data_augmentation_params.fill_mode,
+                                                                  interpolations=interpolations,
+                                                                  transform_origin=transform_origin,
+                                                                  img_data_format=self.img_data_format,
+                                                                  rotation_range=self.data_augmentation_params.rotation_range,
+                                                                  zoom_range=self.data_augmentation_params.zoom_range,
+                                                                  width_shift_range=self.data_augmentation_params.width_shift_range,
+                                                                  height_shift_range=self.data_augmentation_params.height_shift_range,
+                                                                  channel_shift_ranges=channel_shift_ranges,
+                                                                  horizontal_flip=self.data_augmentation_params.horizontal_flip,
+                                                                  vertical_flip=self.data_augmentation_params.vertical_flip,
+                                                                  gamma_adjust_ranges=gamma_adjust_ranges)
+
+        return images, transform
 
 #######################################
 # SEGMENTATION DATA GENERATOR
@@ -781,8 +884,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            np_photo = self._resize_image(np_photo, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
-            np_mask = self._resize_image(np_photo, resize_shape=resize_shape, cval=self.photo_cval, interp='nearest')
+            np_photo = self._resize_image(np_photo, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
+            np_mask = self._resize_image(np_mask, resize_shape=resize_shape, cval=self.mask_cval, interp='nearest')
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -798,110 +901,80 @@ class SegmentationDataGenerator(DataGenerator):
         # to both the image and mask now. We apply the transformation to the
         # whole image to decrease the number of 'dead' pixels due to transformations
         # within the possible crop.
-        bbox = material_sample.get_bbox_abs() if material_sample is not None else None
+        bbox = material_sample.get_bbox_rel() if material_sample is not None else None
 
-        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_idx):
-
-            np_orig_photo, np_orig_mask = None, None
+        if self._should_apply_augmentation(step_idx):
+            np_orig_photo = None
+            np_orig_mask = None
 
             if material_sample is not None:
                 np_orig_photo = np.array(np_photo, copy=True)
                 np_orig_mask = np.array(np_mask, copy=True)
 
-            images, transform = image_utils.np_apply_random_transform(images=[np_photo, np_mask],
-                                                                      cvals=[photo_cval, mask_cval],
-                                                                      fill_mode=self.data_augmentation_params.fill_mode,
-                                                                      interpolations=[ImageInterpolation.BICUBIC, ImageInterpolation.NEAREST],
-                                                                      img_data_format=self.img_data_format,
-                                                                      rotation_range=self.data_augmentation_params.rotation_range,
-                                                                      zoom_range=self.data_augmentation_params.zoom_range,
-                                                                      width_shift_range=self.data_augmentation_params.width_shift_range,
-                                                                      height_shift_range=self.data_augmentation_params.height_shift_range,
-                                                                      channel_shift_ranges=[self.data_augmentation_params.channel_shift_range, None],
-                                                                      horizontal_flip=self.data_augmentation_params.horizontal_flip,
-                                                                      vertical_flip=self.data_augmentation_params.vertical_flip,
-                                                                      gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range, None])
+            images, transform = self._apply_data_augmentation_to_images(images=[np_photo, np_mask],
+                                                                        cvals=[photo_cval, mask_cval],
+                                                                        interpolations=[ImageInterpolation.BICUBIC, ImageInterpolation.NEAREST],
+                                                                        override_channel_shift_ranges=[self.data_augmentation_params.channel_shift_range, None],
+                                                                        override_gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range, None])
             # Unpack the images
             np_photo, np_mask = images
 
             if material_sample is not None:
-                # If the material was lost during the random transform - revert to unaugmented values
-                if not np.any(np.equal(np_mask, material_sample.material_r_color)):
-                    bbox = material_sample.get_bbox_abs()
-                    np_photo = np_orig_photo
-                    np_mask = np_orig_mask
-                    self.logger.debug_log('Mask does not contain material {} after augmentation - reverting to original input and bbox'.format(material_sample.material_id))
-                # If the material exists in the mask image
-                else:
-                    # Transform the bounding box
+                material_lost_during_transform = not np.any(np.equal(np_mask, material_sample.material_r_color))
+
+                if not material_lost_during_transform:
+                    # Applies the same transform the bounding box coordinates
                     bbox = self.transform_bbox(bbox, transform, np_mask, material_sample)
 
-                    # If we cannot build a new valid axis-aligned bounding box - revert to unaugmented values
-                    if bbox is None:
-                        bbox = material_sample.get_bbox_abs()
-                        np_photo = np_orig_photo
-                        np_mask = np_orig_mask
-                        self.logger.debug_log('Could not rebuild a valid axis-aligned bbox after augmentation - reverting to original input and bbox')
+                # If the material was lost during the random transform - revert to unaugmented values or
+                # If we cannot build a new valid axis-aligned bounding box - revert to unaugmented values
+                if material_lost_during_transform or bbox is None:
+                    bbox = material_sample.get_bbox_rel()
+                    np_photo = np_orig_photo
+                    np_mask = np_orig_mask
+                    self.logger.debug_log('Reverting to original bbox and image data, material lost: {}, cannot rebuild axis-aligned bbox: {}'
+                                          .format(material_lost_during_transform, bbox is None))
 
         # If a crop size is given: take a random crop of both the image and the mask
         if crop_shape is not None:
-            if dataset_utils.count_trailing_zeroes(crop_shape[0]) < self.div2_constraint or \
-                            dataset_utils.count_trailing_zeroes(crop_shape[1]) < self.div2_constraint:
-                raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(self.div2_constraint))
-
-            # If we don't have a bounding box as a hint for cropping - take random crops
-            if bbox is None:
-                # Re-attempt crops if the crops end up getting only background
-                # i.e. black pixels
-                attempts = self.num_crop_reattempts+1
-
-                while attempts > 0:
+            for attempt in xrange(max(self.num_crop_reattempts+1, 1), 0, -1):
+                if material_sample is None:
+                    # If we don't have a bounding box as a hint for cropping - take random crops
                     x1y1, x2y2 = image_utils.np_get_random_crop_area(np_mask, crop_shape[1], crop_shape[0])
-                    mask_crop = image_utils.np_crop_image(np_mask, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
+                else:
+                    # Use the bounding box information to take a targeted crop
+                    x1y1, x2y2 = self.get_random_bbox_crop_area(bbox=bbox,
+                                                                img_shape=np_mask.shape[:2],
+                                                                crop_shape=crop_shape,
+                                                                material_sample=material_sample)
 
-                    # If the mask crop is only background (all R channel is zero) - try another crop
-                    # until attempts are exhausted
-                    if np.max(mask_crop[:, :, 0]) == 0 and attempts - 1 != 0 and retry_crops:
-                        self.logger.debug_log('Only background found within crop area of shape {} - retrying'.format(crop_shape))
-                        attempts -= 1
-                        continue
+                mask_crop = image_utils.np_crop_image(np_mask, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
 
-                    np_mask = mask_crop
-                    np_photo = image_utils.np_crop_image(np_photo, x1=x1y1[0], y1=x1y1[1], x2=x2y2[0], y2=x2y2[1])
-                    break
-            # Use the bounding box information to take a targeted crop
-            else:
-                # Re-attempt crops if the crop doesn't end up getting the
-                # desired material within the crop
-                attempts = self.num_crop_reattempts+1
+                if material_sample is None:
+                    # If the mask has something else besides background
+                    valid_crop_found = not np.all(np.equal(mask_crop[:, :, 0], 0))
 
-                while attempts > 0:
-                    x1y1, x2y2 = self.get_random_bbox_crop_area(bbox=bbox, img_shape=np_mask.shape[:2], crop_shape=crop_shape, material_sample=material_sample)
-                    mask_crop = image_utils.np_crop_image(np_mask, x1=x1y1[0], y1=x1y1[1], x2=x2y2[0], y2=x2y2[1])
+                    if not valid_crop_found:
+                        self.logger.debug_log('Only background found within crop area of shape {}'.format(crop_shape))
+                else:
+                    # If the mask contains pixels of the desired material
+                    valid_crop_found = np.any(np.equal(mask_crop[:, :, 0], material_sample.material_r_color))
 
-                    # If the mask crop doesn't contain any of the desired material sample red color
-                    # retry the crop until attempts are exhausted
-                    if not np.any(np.equal(mask_crop[:, :, 0], material_sample.material_r_color)) and attempts - 1 != 0 and retry_crops:
-                        self.logger.debug_log('Material not found within crop area of shape {} for material id {} and material red color {} - retrying'
+                    if not valid_crop_found:
+                        self.logger.debug_log('Material not found within crop area of shape {} for material id {} and material red color {}'
                                               .format(crop_shape, material_sample.material_id, material_sample.material_r_color))
-                        attempts -= 1
-                        continue
 
+                # If a valid crop was found or this is the last attempt or we should not retry crops
+                stop_iteration = valid_crop_found or attempt-1 <= 0 or not retry_crops
+
+                if stop_iteration:
                     np_mask = mask_crop
                     np_photo = image_utils.np_crop_image(np_photo, x1=x1y1[0], y1=x1y1[1], x2=x2y2[0], y2=x2y2[1])
                     break
 
-        # Mke sure the image dimensions satisfy the div2_constraint
-        # i.e. are n times divisible by 2 to work with
-        # the network. If the dimensions are not ok pad the images.
-        img_height_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[0])
-        img_width_div2 = dataset_utils.count_trailing_zeroes(np_photo.shape[1])
-
-        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
-            # The photo needs to be filled with the photo_cval color and masks with the mask cval color
-            padded_shape = dataset_utils.get_required_image_dimensions(np_photo.shape, self.div2_constraint)
-            np_photo = image_utils.np_pad_image_to_shape(np_photo, padded_shape, photo_cval)
-            np_mask = image_utils.np_pad_image_to_shape(np_mask, padded_shape, mask_cval)
+        # Make sure both satisfy the div2 constraint
+        np_photo = self._fit_image_to_div2_constraint(np_image=np_photo, cval=photo_cval, interp='bicubic')
+        np_mask = self._fit_image_to_div2_constraint(np_image=np_mask, cval=mask_cval, interp='nearest')
 
         return np_photo, np_mask
 
@@ -909,8 +982,12 @@ class SegmentationDataGenerator(DataGenerator):
         tlc, trc, brc, blc = bbox
         crop_height, crop_width = crop_shape
         img_height, img_width = img_shape
-        bbox_ymin, bbox_ymax = tlc[0], min(blc[0] + 1, img_height)  # +1 because the bbox ymax is inclusive
-        bbox_xmin, bbox_xmax = tlc[1], min(trc[1] + 1, img_width)   # +1 because the bbox xmax is inclusive
+
+        # Transform bbox to absolute coordinates from relative
+        bbox_ymin = int(np.round(tlc[0]*img_height))
+        bbox_ymax = min(int(np.round(brc[0]*img_height)) + 1, img_height)  # +1 because the bbox ymax is inclusive
+        bbox_xmin = int(np.round(tlc[1]*img_width))
+        bbox_xmax = min(int(np.round(brc[1]*img_width)) + 1, img_width)    # +1 because the bbox xmax is inclusive
         bbox_height = bbox_ymax - bbox_ymin
         bbox_width = bbox_xmax - bbox_xmin
 
@@ -918,14 +995,14 @@ class SegmentationDataGenerator(DataGenerator):
         # expand the bounding box a bit to avoid errors
         if bbox_height <= 0:
             self.logger.debug_log('Invalid bounding box height: mat id: {}, file name: {}, bbox: {}, original bbox: {} - inflating'
-                                  .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_abs()))
+                                  .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_rel()))
             bbox_ymin = max(bbox_ymin - 1, 0)
             bbox_ymax = min(bbox_ymax + 1, img_height)
             bbox_height = bbox_ymax - bbox_ymin
 
         if bbox_width <= 0:
             self.logger.debug_log('Invalid bounding box width: mat id: {}, file name: {}, bbox: {}, original bbox: {} - inflating'
-                                  .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_abs()))
+                                  .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_rel()))
             bbox_xmin = max(bbox_xmin - 1, 0)
             bbox_xmax = min(bbox_xmax + 1, img_width)
             bbox_width = bbox_xmax - bbox_xmin
@@ -933,7 +1010,7 @@ class SegmentationDataGenerator(DataGenerator):
         # If after the fix bounding box is still of invalid size throw an error
         if bbox_height <= 0 or bbox_width <= 0:
             raise ValueError('Invalid bounding box dimensions: mat id: {}, file name: {}, bbox: {}, original bbox: {}'
-                             .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_abs()))
+                             .format(material_sample.material_id, material_sample.file_name, bbox, material_sample.get_bbox_rel()))
 
         # Calculate the difference in height and width between the bbox and crop
         height_diff = abs(crop_height - bbox_height)
@@ -976,7 +1053,7 @@ class SegmentationDataGenerator(DataGenerator):
         return (crop_xmin, crop_ymin), (crop_xmax, crop_ymax)
 
     def transform_bbox(self, bbox, transform, np_mask, material_sample):
-        # type: (tuple[tuple[int, int]], ImageTransform, np.ndarray) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]
+        # type: (tuple[tuple[float, float]], ImageTransform, np.ndarray) -> tuple[tuple[int, int], tuple[int, int], tuple[int, int], tuple[int, int]]
 
         # Transform the bbox coords to ndarray
         # Bbox is: tlc, trc, brc, blc
@@ -986,19 +1063,20 @@ class SegmentationDataGenerator(DataGenerator):
         if original_bbox_coords.shape[0] != 4 and original_bbox_coords.shape[1] != 2:
             raise ValueError('Expected bounding box with dimensions [4,2] got shape: {}'.format(original_bbox_coords.shape))
 
-        # The transform needs to get the coordinates in (x,y) instead of (y,x), so flip the coordinates
+        # The transform needs to get the coordinates in (x,y) instead of (y,x), so flip the coordinates there and back
         original_bbox_coords = np.fliplr(original_bbox_coords)
-        transformed_bbox_coords = np.round(np.fliplr(transform.transform_coordinates(original_bbox_coords))).astype(dtype=np.int32)
+        transformed_bbox_coords = np.fliplr(transform.transform_normalized_coordinates(original_bbox_coords))
+
+        # Switch to absolute coordinates
+        transformed_bbox_coords[:, 0] *= np_mask.shape[0]
+        transformed_bbox_coords[:, 1] *= np_mask.shape[1]
+        transformed_bbox_coords = np.round(transformed_bbox_coords).astype(dtype=np.int32)
 
         # Clamp the values of the corners into valid ranges [[0, img_height], [0, img_width]]
-        y_coords, x_coords = [], []
-
-        for i in range(len(transformed_bbox_coords)):
-            y_coords.append(np.clip(transformed_bbox_coords[i][0], 0, transform.image_height))
-            x_coords.append(np.clip(transformed_bbox_coords[i][1], 0, transform.image_width))
-
-        tf_y_min, tf_y_max = min(y_coords), max(y_coords)
-        tf_x_min, tf_x_max = min(x_coords), max(x_coords)
+        tf_y_min = np.clip(np.min(transformed_bbox_coords[:, 0]), 0, transform.image_height)
+        tf_y_max = np.clip(np.max(transformed_bbox_coords[:, 0]), 0, transform.image_height)
+        tf_x_min = np.clip(np.min(transformed_bbox_coords[:, 1]), 0, transform.image_width)
+        tf_x_max = np.clip(np.max(transformed_bbox_coords[:, 1]), 0, transform.image_width)
 
         # If the area is less than 4 pixels return None
         if tf_y_max - tf_y_min <= 2 or tf_x_max - tf_x_min <= 2:
@@ -1035,11 +1113,11 @@ class SegmentationDataGenerator(DataGenerator):
                              .format(material_sample.material_id, bbox[0], bbox[2], (tf_y_min, tf_x_min), (tf_y_max, tf_x_max), (rf_y_min, rf_x_min), (rf_y_max, rf_x_max), np_mask.shape, material_img_instances))
             return None
 
-        # Rebuild the bounding box and represent in (y, x)
-        tlc = (rf_y_min, rf_x_min)
-        trc = (rf_y_min, rf_x_max)
-        brc = (rf_y_max, rf_x_max)
-        blc = (rf_y_max, rf_x_min)
+        # Rebuild the bounding box and represent in (y, x) - use relative coordinates [0.0, 1.0]
+        tlc = (float(rf_y_min)/np_mask.shape[0], float(rf_x_min)/np_mask.shape[1])
+        trc = (float(rf_y_min)/np_mask.shape[0], float(rf_x_max)/np_mask.shape[1])
+        brc = (float(rf_y_max)/np_mask.shape[0], float(rf_x_max)/np_mask.shape[1])
+        blc = (float(rf_y_max)/np_mask.shape[0], float(rf_x_min)/np_mask.shape[1])
 
         return tlc, trc, brc, blc
 
@@ -1065,6 +1143,7 @@ class SegmentationDataGenerator(DataGenerator):
         with self.lock:
             crop_shape = self.get_batch_crop_shape()
             resize_shape = self.get_batch_resize_shape()
+            self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
             labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_iterator.get_next_batch()
             unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
 
@@ -1080,11 +1159,13 @@ class SegmentationDataGenerator(DataGenerator):
         num_unlabeled_samples_in_batch = len(X_unlabeled)
         num_samples_in_batch = len(X)
 
-        # Cast the lists to numpy arrays
-        X, Y, W = np.array(X, dtype=np.float32, copy=False), np.array(Y, dtype=np.int32, copy=False), np.array(W, dtype=np.float32, copy=False)
+        # Concatenate the lists to numpy arrays and ensure that correct types are used
+        X = np.asarray(X, dtype=np.float32)
+        Y = np.asarray(Y, dtype=np.int32)
+        W = np.asarray(W, dtype=np.float32)
 
         # Normalize the photo batch data
-        X = self._normalize_photo_batch(X)
+        X = self._normalize_image_batch(X)
 
         if self.batch_data_format == BatchDataFormat.SUPERVISED:
             batch_input_data = [X]
@@ -1327,6 +1408,7 @@ class ClassificationDataGenerator(DataGenerator):
         with self.lock:
             crop_shape = self.get_batch_crop_shape()
             resize_shape = self.get_batch_resize_shape()
+            self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
             labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_set_iterator.get_next_batch()
             unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
 
@@ -1343,10 +1425,12 @@ class ClassificationDataGenerator(DataGenerator):
         num_samples_in_batch = len(X)
 
         # Cast the lists to numpy arrays
-        X, Y, W = np.array(X, dtype=np.float32, copy=False), np.array(Y, dtype=np.float32, copy=False), np.array(W, dtype=np.float32, copy=False)
+        X = np.asarray(X, dtype=np.float32)
+        Y = np.asarray(Y, dtype=np.float32)
+        W = np.asarray(W, dtype=np.float32)
 
         # Normalize the photo batch data
-        X = self._normalize_photo_batch(X)
+        X = self._normalize_image_batch(X)
 
         if self.batch_data_format == BatchDataFormat.SUPERVISED:
             batch_input_data = [X]
@@ -1373,9 +1457,14 @@ class ClassificationDataGenerator(DataGenerator):
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
 
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500:
-            data = [self.get_labeled_sample_minc_2500(step_index, sample_index, resize_shape=resize_shape) for sample_index in index_array]
+            data = [self.get_labeled_sample_minc_2500(step_index=step_index,
+                                                      sample_index=sample_index,
+                                                      resize_shape=resize_shape) for sample_index in index_array]
         elif self.labeled_data_set.data_set_type == MINCDataSetType.MINC:
-            data = [self.get_labeled_sample_minc(step_index, sample_index, crop_shape, resize_shape) for sample_index in index_array]
+            data = [self.get_labeled_sample_minc(step_index=step_index,
+                                                 sample_index=sample_index,
+                                                 crop_shape=crop_shape,
+                                                 resize_shape=resize_shape) for sample_index in index_array]
         else:
             raise ValueError('Unknown data set type: {}'.format(self.labeled_data_set.data_set_type))
 
@@ -1394,37 +1483,19 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
+            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
 
         # Apply data augmentation
-        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_index):
-            images, _ = image_utils.np_apply_random_transform(images=[np_image],
-                                                              cvals=[self.photo_cval],
-                                                              fill_mode=self.data_augmentation_params.fill_mode,
-                                                              interpolations=[ImageInterpolation.BICUBIC],
-                                                              img_data_format=self.img_data_format,
-                                                              rotation_range=self.data_augmentation_params.rotation_range,
-                                                              zoom_range=self.data_augmentation_params.zoom_range,
-                                                              width_shift_range=self.data_augmentation_params.width_shift_range,
-                                                              height_shift_range=self.data_augmentation_params.height_shift_range,
-                                                              channel_shift_ranges=[self.data_augmentation_params.channel_shift_range],
-                                                              horizontal_flip=self.data_augmentation_params.horizontal_flip,
-                                                              vertical_flip=self.data_augmentation_params.vertical_flip,
-                                                              gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
+        if self._should_apply_augmentation(step_index):
+            images, _ = self._apply_data_augmentation_to_images(images=[np_image],
+                                                                cvals=[self.photo_cval],
+                                                                interpolations=[ImageInterpolation.BICUBIC])
 
             # Unpack the photo
             np_image, = images
 
         # Make sure the image dimensions satisfy the div2_constraint
-        # i.e. are n times divisible by 2 to work with
-        # the network. If the dimensions are not ok pad the images.
-        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
-        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
-
-        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
-            # The photo needs to be filled with the photo_cval color and masks with the mask cval color
-            padded_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
-            np_image = image_utils.np_pad_image_to_shape(np_image, padded_shape, self.photo_cval)
+        np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -1457,22 +1528,12 @@ class ClassificationDataGenerator(DataGenerator):
         crop_center_y, crop_center_x = minc_sample.y, minc_sample.x
 
         # Apply data augmentation
-        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_index):
+        if self._should_apply_augmentation(step_index):
             np_image_orig = np.array(np_image, copy=True)
-            images, transform = image_utils.np_apply_random_transform(images=[np_image],
-                                                                      cvals=[self.photo_cval],
-                                                                      fill_mode=self.data_augmentation_params.fill_mode,
-                                                                      interpolations=[ImageInterpolation.BICUBIC],
-                                                                      transform_origin=np.array([crop_center_y, crop_center_x]),
-                                                                      img_data_format=self.img_data_format,
-                                                                      rotation_range=self.data_augmentation_params.rotation_range,
-                                                                      zoom_range=self.data_augmentation_params.zoom_range,
-                                                                      width_shift_range=self.data_augmentation_params.width_shift_range,
-                                                                      height_shift_range=self.data_augmentation_params.height_shift_range,
-                                                                      channel_shift_ranges=[self.data_augmentation_params.channel_shift_range],
-                                                                      horizontal_flip=self.data_augmentation_params.horizontal_flip,
-                                                                      vertical_flip=self.data_augmentation_params.vertical_flip,
-                                                                      gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
+            images, transform = self._apply_data_augmentation_to_images(images=[np_image],
+                                                                        cvals=[self.photo_cval],
+                                                                        interpolations=[ImageInterpolation.BICUBIC],
+                                                                        transform_origin=np.array([crop_center_y, crop_center_x]))
 
             # Unpack the photo
             np_image, = images
@@ -1497,17 +1558,7 @@ class ClassificationDataGenerator(DataGenerator):
         x_1 = np.clip(int(round(x_c + crop_width*0.5)), 0, img_width)
 
         np_image = image_utils.np_crop_image_with_fill(np_image, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
-
-        # Make sure the image dimensions satisfy the div2_constraint
-        # i.e. are n times divisible by 2 to work with
-        # the network. If the dimensions are not ok pad the images.
-        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
-        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
-
-        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
-            # The photo needs to be filled with the photo_cval color and masks with the mask cval color
-            padded_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
-            np_image = image_utils.np_pad_image_to_shape(np_image, padded_shape, self.photo_cval)
+        np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -1539,7 +1590,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
+            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -1550,43 +1601,20 @@ class ClassificationDataGenerator(DataGenerator):
             np_image = image_utils.np_pad_image_to_shape(np_image, min_img_shape, self.photo_cval)
 
         # Apply data augmentation
-        if self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_index):
-            images, _ = image_utils.np_apply_random_transform(images=[np_image],
-                                                              cvals=[self.photo_cval],
-                                                              fill_mode=self.data_augmentation_params.fill_mode,
-                                                              interpolations=[ImageInterpolation.BICUBIC],
-                                                              img_data_format=self.img_data_format,
-                                                              rotation_range=self.data_augmentation_params.rotation_range,
-                                                              zoom_range=self.data_augmentation_params.zoom_range,
-                                                              width_shift_range=self.data_augmentation_params.width_shift_range,
-                                                              height_shift_range=self.data_augmentation_params.height_shift_range,
-                                                              channel_shift_ranges=[self.data_augmentation_params.channel_shift_range],
-                                                              horizontal_flip=self.data_augmentation_params.horizontal_flip,
-                                                              vertical_flip=self.data_augmentation_params.vertical_flip,
-                                                              gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
+        if self._should_apply_augmentation(step_index):
+            images, _ = self._apply_data_augmentation_to_images(images=[np_image],
+                                                                cvals=[self.photo_cval],
+                                                                interpolations=[ImageInterpolation.BICUBIC])
 
             # Unpack the photo
             np_image, = images
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
-            if dataset_utils.count_trailing_zeroes(crop_shape[0]) < self.div2_constraint or \
-                            dataset_utils.count_trailing_zeroes(crop_shape[1]) < self.div2_constraint:
-                raise ValueError('The crop size does not satisfy the div2 constraint of {}'.format(self.div2_constraint))
-
             x1y1, x2y2 = image_utils.np_get_random_crop_area(np_image, crop_shape[1], crop_shape[0])
             np_image = image_utils.np_crop_image(np_image, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
 
-        # Make sure the image dimensions satisfy the div2_constraint
-        # i.e. are n times divisible by 2 to work with
-        # the network. If the dimensions are not ok pad the images.
-        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
-        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
-
-        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
-            # The photo needs to be filled with the photo_cval color and masks with the mask cval color
-            padded_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
-            np_image = image_utils.np_pad_image_to_shape(np_image, padded_shape, self.photo_cval)
+        np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
 
         # Create a dummy label vector (one-hot) all zeros
         y = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)

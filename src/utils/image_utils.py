@@ -135,6 +135,10 @@ class ImageTransform:
         return p
 
 
+##############################################
+# NUMPY IMAGE FUNCTIONS
+##############################################
+
 def np_check_image_properties(np_img, min_val=0.0, max_val=255.0, height=None, width=None, dtype=None):
     # type: (np.ndarray, float, float, int, int, np.dtype) -> None
 
@@ -478,7 +482,7 @@ def np_crop_image_with_fill(np_img, x1, y1, x2, y2, cval):
     return np_cropped_img
 
 
-def np_scale_image_with_padding(np_img, shape, cval, interp='bilinear'):
+def np_resize_image_with_padding(np_img, shape, cval, interp='bilinear'):
     # type: (np.ndarray, tuple[int], np.ndarray, str) -> np.ndarray
 
     """
@@ -486,25 +490,28 @@ def np_scale_image_with_padding(np_img, shape, cval, interp='bilinear'):
     color value.
 
     # Arguments
-        :param np_img:
-        :param shape: Desired shape
-        :param cval: The value to use for filling the pixels that possibly go over due to aspect ratio mismatch
+        :param np_img: the image as a numpy array
+        :param shape: desired shape
+        :param cval: the value to use for filling the pixels that possibly go over due to aspect ratio mismatch
         :param interp: interpolation type ‘nearest’, ‘lanczos’, ‘bilinear’, ‘bicubic’ or ‘cubic’
     # Returns
         :return: The resized image as a numpy array
     """
 
+    if np_img.shape[0] == shape[0] and np_img.shape[1] == shape[1]:
+        return np_img
+
     # Scale so that the bigger dimension matches
     sfactor = float(max(shape[0], shape[1])) / float(max(np_img.shape[0], np_img.shape[1]))
 
-    # If the image's bigger dimension already matches
+    # If the image's bigger dimension already matches - we only need padding
     if sfactor == 1:
         np_img_resized = np_img
     else:
         target_shape = (int(round(sfactor*np_img.shape[0])), int(round(sfactor*np_img.shape[1])))
 
         # Do the resizing using PIL because scipy/numpy lacks interpolation
-        pil_img = array_to_img(np_img)
+        pil_img = array_to_img(np_img, scale=False)
         func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
         pil_img = pil_img.resize(size=(target_shape[1], target_shape[0]), resample=func[interp])
         np_img_resized = img_to_array(pil_img)

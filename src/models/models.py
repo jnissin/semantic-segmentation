@@ -46,14 +46,18 @@ class ModelLambdaLossType(Enum):
 
 class WeightTransferInformation(object):
 
-    def __init__(self, num_transferred_layers, last_transferred_layer_name, num_frozen_layers=0, last_frozen_layer_name=None):
+    def __init__(self, num_transferred_layers, last_transferred_layer_name, num_frozen_layers=0, last_frozen_layer_name=None, lr_scalers=dict()):
         # type: (int, str, int, str) -> None
 
         self.num_transferred_layers = num_transferred_layers
         self.last_transferred_layer_name = last_transferred_layer_name
         self.num_frozen_layers = num_frozen_layers
         self.last_frozen_layer_name = last_frozen_layer_name
+        self.lr_scalers = lr_scalers
 
+    @property
+    def num_lr_scaling_layers(self):
+        return len(self.lr_scalers)
 
 #############################################
 # UTILITY FUNCTIONS
@@ -206,8 +210,16 @@ class ModelBase(object):
     def model(self):
         return self._model
 
-    def transfer_weights(self, from_model, from_layer_index, to_layer_index, freeze_from_layer_index=None, freeze_to_layer_index=None):
-        # type: (Model, int, int, int, int) -> (WeightTransferInformation)
+    def transfer_weights(self,
+                         from_model,
+                         from_layer_index,
+                         to_layer_index,
+                         freeze_from_layer_index=None,
+                         freeze_to_layer_index=None,
+                         scale_lr_from_layer_index=None,
+                         scale_lr_to_layer_index=None,
+                         scale_lr_factor=None):
+        # type: (Model, int, int, int, int, int, int, float) -> (WeightTransferInformation)
 
         """
         Transfers weights of the given layer range from the parameter model to this model.
@@ -220,6 +232,9 @@ class ModelBase(object):
             :param to_layer_index: end of the transferrable layers
             :param freeze_from_layer_index: the first layer index to freeze
             :param freeze_to_layer_index: end of the frozen layers index
+            :param scale_lr_from_layer_index: the first layer where to apply the scale_lr_factor
+            :param scale_lr_to_layer_index: end of the learning rate scaling layers
+            :param scale_lr_factor: scaling factor for the learning rate of the specified layers
         # Returns
             :return: a WeightTransferInformation object
         """
@@ -227,23 +242,33 @@ class ModelBase(object):
         num_transferred_layers = 0
         num_frozen_layers = 0
         freezing_layers = freeze_from_layer_index is not None and freeze_to_layer_index is not None
+        scaling_lr_layers = scale_lr_from_layer_index is not None and scale_lr_to_layer_index is not None
+        num_from_model_layers = len(from_model.layers)
 
         # Support negative indexing
         if from_layer_index < 0:
-            from_layer_index += len(from_model.layers)
+            from_layer_index += num_from_model_layers
 
         if to_layer_index < 0:
-            to_layer_index += len(from_model.layers)
+            to_layer_index += num_from_model_layers
 
         if freeze_from_layer_index is not None and freeze_from_layer_index < 0:
-            freeze_from_layer_index += len(from_model.layers)
+            freeze_from_layer_index += num_from_model_layers
 
         if freeze_to_layer_index is not None and freeze_to_layer_index < 0:
-            freeze_to_layer_index += len(from_model.layers)
+            freeze_to_layer_index += num_from_model_layers
+
+        if scale_lr_from_layer_index is not None and scale_lr_from_layer_index < 0:
+            scale_lr_from_layer_index += num_from_model_layers
+
+        if scale_lr_to_layer_index is not None and scale_lr_to_layer_index < 0:
+            scale_lr_to_layer_index += num_from_model_layers
 
         # Sanity checks
         assert(from_layer_index < to_layer_index)
         assert(not (freezing_layers and freeze_from_layer_index > freeze_to_layer_index))
+        assert(not (scaling_lr_layers and scale_lr_from_layer_index > scale_lr_to_layer_index))
+        assert(not (scaling_lr_layers and scale_lr_factor is None))
 
         # Assumes indexing is the same for both models for the specified
         # layer range
@@ -257,10 +282,18 @@ class ModelBase(object):
 
             num_transferred_layers += 1
 
+        # Create learning rate scaler params
+        lr_scalers = dict()
+
+        if scaling_lr_layers:
+            for i in range(scale_lr_from_layer_index, scale_lr_to_layer_index):
+                lr_scalers[i] = scale_lr_factor
+
         info = WeightTransferInformation(num_transferred_layers=num_transferred_layers,
                                          last_transferred_layer_name=from_model.layers[to_layer_index - 1].name,
                                          num_frozen_layers=num_frozen_layers,
-                                         last_frozen_layer_name=from_model.layers[freeze_to_layer_index - 1].name if freezing_layers else None)
+                                         last_frozen_layer_name=from_model.layers[freeze_to_layer_index - 1].name if freezing_layers else None,
+                                         lr_scalers=lr_scalers)
 
         return info
 

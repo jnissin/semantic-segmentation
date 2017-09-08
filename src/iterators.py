@@ -234,7 +234,6 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         self.step_index += 1
 
-        self.logger.debug_log('Batch {}: {}'.format(self.step_index, batch))
         return batch, current_index, current_batch_size, self.step_index
 
     def _get_next_batch_unique(self):
@@ -253,7 +252,6 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         self.step_index += 1
 
         batch = self._material_samples_flattened[current_index: current_index + current_batch_size]
-        self.logger.debug_log('Batch {}: {}'.format(self.step_index, list(batch)))
         return batch, current_index, current_batch_size, self.step_index
 
     @property
