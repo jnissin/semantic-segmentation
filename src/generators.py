@@ -791,6 +791,10 @@ class SegmentationDataGenerator(DataGenerator):
                     self.logger.log_image(np_photo, file_name='{}_crop_missing_{}.jpg'.format(photo_file.file_name, material_sample.material_id))
                     self.logger.warn('Material sample for material id {} was given but no corresponding entries were found in the cropped mask. Found: {}'
                                      .format(material_sample.material_id, list(np.unique(np_mask))))
+                # TODO: Remove me after testing!!!!! or make me optional or something
+                # Set everything else besides the observed material as background! GENIOUS!
+                else:
+                    np_mask[np.not_equal(np_mask, material_sample.material_id)] = 0
         else:
             raise ValueError('Unknown mask_type: {}'.format(mask_type))
 
