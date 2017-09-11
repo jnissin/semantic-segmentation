@@ -1423,6 +1423,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 per_channel_stddev=self.data_set_information.labeled_per_channel_stddev if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_stddev,
                 use_data_augmentation=self.use_data_augmentation,
                 use_material_samples=self.using_material_samples,
+                use_selective_attention=self.using_selective_attention,
+                use_adaptive_sampling=self.using_adaptive_sampling,
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint)
@@ -1446,6 +1448,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 per_channel_stddev=self.training_data_generator_params.per_channel_stddev,
                 use_data_augmentation=False,
                 use_material_samples=False,
+                use_selective_attention=False,
+                use_adaptive_sampling=False,
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint)
@@ -1469,6 +1473,14 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     @property
     def using_material_samples(self):
         return bool(self._get_config_value('use_material_samples'))
+
+    @property
+    def using_selective_attention(self):
+        return bool(self._get_config_value('use_selective_attention'))
+
+    @property
+    def using_adaptive_sampling(self):
+        return bool(self._get_config_value('use_adaptive_sampling'))
 
     @property
     def using_mean_teacher_method(self):

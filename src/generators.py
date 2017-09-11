@@ -162,9 +162,11 @@ class SegmentationDataGeneratorParameters(DataGeneratorParameters):
                  material_class_information,
                  mask_cval=None,
                  use_material_samples=False,
+                 use_selective_attention=False,
+                 use_adaptive_sampling=False,
                  num_crop_reattempts=0,
                  **kwargs):
-        # type: (list[MaterialClassInformation], np.ndarray, bool, int) -> None
+        # type: (list[MaterialClassInformation], np.ndarray, bool, bool, bool, int) -> None
 
         """
         Builds a wrapper for SegmentationDataGenerator parameters
@@ -173,6 +175,8 @@ class SegmentationDataGeneratorParameters(DataGeneratorParameters):
             :param material_class_information: material class information list
             :param mask_cval: fill color value for masks [0,255], otherwise zeros matching mask encoding are used
             :param use_material_samples: should material samples be used
+            :param use_selective_attention: should we use selective attention (mark everything else as bg besides the material sample material)
+            :param use_adaptive_sampling: should we use adaptive sampling (adapt sampling probability according to pixels seen per category)
         # Returns
             Nothing
         """
@@ -181,6 +185,8 @@ class SegmentationDataGeneratorParameters(DataGeneratorParameters):
         self.material_class_information = material_class_information
         self.mask_cval = mask_cval
         self.use_material_samples = use_material_samples
+        self.use_selective_attention = use_selective_attention
+        self.use_adaptive_sampling = use_adaptive_sampling
         self.num_crop_reattempts = num_crop_reattempts
 
 
@@ -560,8 +566,11 @@ class SegmentationDataGenerator(DataGenerator):
         # Unwrap segmentation data generator specific parameters
         self.material_class_information = params.material_class_information
         self.use_material_samples = params.use_material_samples
+        self.use_selective_attention = params.use_selective_attention
+        self.use_adaptive_sampling = params.use_adaptive_sampling
         self.mask_cval = params.mask_cval
         self.num_crop_reattempts = params.num_crop_reattempts
+        self.num_classes = len(self.material_class_information)
 
         super(SegmentationDataGenerator, self).__init__(batch_data_format, params)
 
@@ -612,6 +621,16 @@ class SegmentationDataGenerator(DataGenerator):
             self.label_generation_function = SegmentationDataGenerator.default_label_generator_for_unlabeled_photos
         else:
             self.label_generation_function = label_generation_function
+
+        self.logger.log('Use material samples: {}'.format(self.use_material_samples))
+        self.logger.log('Use selective attention: {}'.format(self.use_selective_attention))
+        self.logger.log('Use adaptive sampling: {}'.format(self.use_adaptive_sampling))
+
+        if self.use_selective_attention and not self.use_material_samples:
+            raise ValueError('Selective attention can only be used with material samples - enable material samples')
+
+        if self.use_adaptive_sampling and not self.use_material_samples:
+            raise ValueError('Adaptive sampling can only be used with material samples - enable material samples')
 
     def get_all_photos(self):
         # type: () -> list[ImageFile]
@@ -680,6 +699,15 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Unzip the photo mask pairs
         X, Y = zip(*labeled_data)
+
+        # If we are using material samples and adaptive sampling - report the pixels seen
+        # of different materials in this batch to balance sampling
+        if self.use_material_samples and self.use_adaptive_sampling:
+            y_flattened = np.array(Y).astype(dtype=np.int32).squeeze().ravel()
+            pixels_per_material = np.bincount(y_flattened, minlength=self.num_classes).astype(dtype=np.uint64)
+
+            with self.lock:
+                self.labeled_data_iterator.update_sampling_probabilities(pixels_per_material)
 
         # Create the weights for each ground truth segmentation
         W = []
@@ -770,31 +798,26 @@ class SegmentationDataGenerator(DataGenerator):
                                                                       resize_shape=resize_shape,
                                                                       retry_crops=True)
 
+        # Only do it if the material is actually found - otherwise print a warning
+        if material_sample is not None:
+            material_pixels_mask = np.equal(np_mask[:, :, 0], material_sample.material_r_color)
+
+            # Sanity check: material samples are supposed to guarantee material instances
+            if not np.any(material_pixels_mask):
+                self.logger.log_image(np_photo, file_name='{}_crop_missing_{}.jpg'.format(photo_file.file_name, material_sample.material_id))
+                self.logger.warn('Material sample for material id {} was given but no corresponding entries were found in the cropped mask. Found r colors: {}'
+                                 .format(material_sample.material_id, list(np.unique(np_mask[:, :, 0]))))
+            else:
+                # If we are using selective attention mark everything else as zero (background) besides
+                # the red channel representing the current material sample
+                if self.use_selective_attention:
+                    np_mask[np.logical_not(material_pixels_mask)] = 0
+
         # Expand the mask image to the one-hot encoded shape: H x W x NUM_CLASSES
         if mask_type == SegmentationMaskEncodingType.ONE_HOT:
             np_mask = dataset_utils.one_hot_encode_mask(np_mask, self.material_class_information)
-
-            # Sanity check: material samples are supposed to guarantee material instances
-            # One-hot encoded mask
-            if material_sample is not None:
-                if not np.any(np.not_equal(np_mask[:, :, material_sample.material_id], 0)):
-                    self.logger.log_image(np_photo, file_name='{}_crop_missing_{}.jpg'.format(photo_file.file_name, material_sample.material_id))
-                    self.logger.warn('Material sample for material id {} was given but no corresponding entries were found in the cropped mask. Found: {}'
-                                     .format(material_sample.material_id, list(np.unique(np.argmax(np_mask)))))
         elif mask_type == SegmentationMaskEncodingType.INDEX:
             np_mask = dataset_utils.index_encode_mask(np_mask, self.material_class_information)
-
-            # Sanity check: material samples are supposed to guarantee material instances
-            # Index encoded mask
-            if material_sample is not None:
-                if not np.any(np.equal(np_mask, material_sample.material_id)):
-                    self.logger.log_image(np_photo, file_name='{}_crop_missing_{}.jpg'.format(photo_file.file_name, material_sample.material_id))
-                    self.logger.warn('Material sample for material id {} was given but no corresponding entries were found in the cropped mask. Found: {}'
-                                     .format(material_sample.material_id, list(np.unique(np_mask))))
-                # TODO: Remove me after testing!!!!! or make me optional or something
-                # Set everything else besides the observed material as background! GENIOUS!
-                else:
-                    np_mask[np.not_equal(np_mask, material_sample.material_id)] = 0
         else:
             raise ValueError('Unknown mask_type: {}'.format(mask_type))
 

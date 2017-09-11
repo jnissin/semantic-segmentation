@@ -367,6 +367,7 @@ def np_apply_random_transform(images,
                                           preserve_range=True).astype(img_dtype)
 
             # Fix the temporary cvalue to the real cvalue
+            # TODO: This can very rarely leave some -900 values which are handled with clipping below - improve by checking all channels?
             if img_data_format == 'channels_first':
                 mask = images[i][0, :, :] == temp_cval
             elif img_data_format == 'channels_last':

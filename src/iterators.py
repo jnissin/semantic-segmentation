@@ -123,7 +123,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         # Calculate uniform probabilities for all classes that have non zero samples
         self.iter_mode = iter_mode
-        self._material_category_sampling_probabilities = [0.0] * len(material_samples)
+        self._material_category_sampling_probabilities = np.zeros(len(material_samples), dtype=np.float64)
         self._num_non_zero_classes = sum(1 for material_category in material_samples if len(material_category) > 0)
 
         self.logger.debug_log('Samples per material category: {}'.format([len(material_category) for material_category in material_samples]))
@@ -176,6 +176,9 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         # Keep track of the current sample (next sample to be given) in each material category
         self.num_material_classes = len(material_samples)
         self._current_samples = [0] * self.num_material_classes
+        self._material_category_pixels_seen = np.zeros(self.num_material_classes, dtype=np.uint64)
+        self._material_category_ignore_mask = np.equal(self._material_category_sampling_probabilities, 0.0)
+        self._sampling_probability_update_mask = np.logical_not(self._material_category_ignore_mask)
 
     def get_next_batch(self):
         # type: () -> (list[tuple[int]], int, int)
@@ -200,6 +203,36 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             return self._get_next_batch_uniform()
 
         raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
+
+    def update_sampling_probabilities(self, pixels_seen_per_category):
+        # type: (np.ndarray) -> None
+
+        if len(pixels_seen_per_category) != self.num_material_classes:
+            raise ValueError('Pixels seen per category dimension does not match with num classes: {} vs {}'
+                             .format(len(pixels_seen_per_category), self.num_material_classes))
+
+        # Accumulate to the stored value
+        pixels_seen_per_category = pixels_seen_per_category.astype(np.uint64)
+        pixels_seen_per_category[self._material_category_ignore_mask] = 0
+        self._material_category_pixels_seen += pixels_seen_per_category
+        self._material_category_pixels_seen[self._material_category_ignore_mask] = 0
+
+        # Make sure no category has zeros for the coming division
+        total_pixels_seen_per_category = self._material_category_pixels_seen + pixels_seen_per_category
+        total_pixels_seen_per_category = np.clip(total_pixels_seen_per_category, 1, np.iinfo(total_pixels_seen_per_category.dtype).max)
+
+        # Calculate the inverse proportions
+        inv_proportions = np.sum(total_pixels_seen_per_category).astype(np.float64)/total_pixels_seen_per_category.astype(np.float64)
+        inv_proportions[self._material_category_ignore_mask] = 0.0
+
+        # Scale so that everything sums to one and ensure that the ignored classes have a probability of 0
+        updated_probabilities = inv_proportions/np.sum(inv_proportions)
+        self._material_category_sampling_probabilities = updated_probabilities
+        self._material_category_sampling_probabilities[self._material_category_ignore_mask] = 0.0
+
+        # Sanity check
+        self.logger.debug_log('Material category pixels seen: {}'.format(self._material_category_pixels_seen))
+        self.logger.debug_log('Material category sampling probabilities updated to: {} - sum {}'.format(self._material_category_sampling_probabilities, np.sum(self._material_category_sampling_probabilities)))
 
     def _get_next_batch_uniform(self):
         sample_categories = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self._material_category_sampling_probabilities)

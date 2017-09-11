@@ -239,7 +239,6 @@ class ModelBase(object):
             :return: a WeightTransferInformation object
         """
 
-        num_transferred_layers = 0
         num_frozen_layers = 0
         freezing_layers = freeze_from_layer_index is not None and freeze_to_layer_index is not None
         scaling_lr_layers = scale_lr_from_layer_index is not None and scale_lr_to_layer_index is not None
@@ -272,15 +271,21 @@ class ModelBase(object):
 
         # Assumes indexing is the same for both models for the specified
         # layer range
-        for i in range(from_layer_index, to_layer_index):
-            self._model.layers[i].set_weights(from_model.layers[i].get_weights())
+        to_model_weights = self._model.get_weights()
+        from_model_weights = from_model.get_weights()
 
-            if freezing_layers:
-                if freeze_from_layer_index <= i < freeze_to_layer_index:
-                    self._model.layers[i].trainable = False
-                    num_frozen_layers += 1
+        # Transfer weights
+        to_model_weights[from_layer_index:to_layer_index] = from_model_weights[from_layer_index:to_layer_index]
+        num_transferred_layers = to_layer_index-from_layer_index
+        self._model.set_weights(to_model_weights)
 
-            num_transferred_layers += 1
+        # Freeze layers if any
+        if freezing_layers:
+            for i in range(freeze_from_layer_index, freeze_to_layer_index):
+                self._model.layers[i].trainable = False
+                num_frozen_layers += 1
+        else:
+            num_frozen_layers = 0
 
         # Create learning rate scaler params
         lr_scalers = dict()
