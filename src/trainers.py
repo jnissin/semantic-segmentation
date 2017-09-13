@@ -271,6 +271,11 @@ class TrainerBase:
         return bool(self._get_config_value('continue_from_last_checkpoint'))
 
     @property
+    def optimizer_checkpoint_file_path(self):
+        # type: () -> str
+        return self._get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
+
+    @property
     def input_shape(self):
         # type: () -> list
         return self._get_config_value('input_shape')
@@ -563,7 +568,7 @@ class TrainerBase:
         if self.continue_from_optimizer_checkpoint and self.initial_epoch == 0:
             self.logger.warn('Cannot continue from optimizer checkpoint if initial epoch is 0. Ignoring optimizer checkpoint.')
         elif self.continue_from_optimizer_checkpoint and self.initial_epoch != 0:
-            optimizer_configuration_file_path = self._get_config_value('optimizer_checkpoint_file_path')
+            optimizer_configuration_file_path = self.optimizer_checkpoint_file_path
             self.logger.log('Loading optimizer configuration from file: {}'.format(optimizer_configuration_file_path))
 
             try:
@@ -571,8 +576,7 @@ class TrainerBase:
                     data = f.read()
                     optimizer_configuration = json.loads(data)
             except IOError as e:
-                self.logger.log('Could not load optimizer configuration from file: {}, error: {}. Continuing without config.'
-                         .format(optimizer_configuration_file_path, e.message))
+                self.logger.log('Could not load optimizer configuration from file: {}, error: {}. Continuing without config.'.format(optimizer_configuration_file_path, e.message))
                 optimizer_configuration = None
 
         if optimizer_name == 'adam':
@@ -1675,6 +1679,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     def handle_early_exit(self):
         super(SegmentationTrainer, self).handle_early_exit()
         self.logger.log('Early exit handler complete - ready for exit')
+        self.logger.close_log()
 
     def modify_batch_data(self, step_index, x, y, validation=False):
         # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
@@ -2171,6 +2176,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
     def handle_early_exit(self):
         super(ClassificationTrainer, self).handle_early_exit()
         self.logger.log('Early exit handler complete - ready for exit')
+        self.logger.close_log()
 
     def modify_batch_data(self, step_index, x, y, validation=False):
         # type: (int, list[np.array[np.float32]], np.array, bool) -> (list[np.array[np.float32]], np.array)
