@@ -117,7 +117,14 @@ def get_model(model_name,
         model_wrapper = SegNetBasicModel(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_lambda_loss_type=model_lambda_loss_type)
+            model_lambda_loss_type=model_lambda_loss_type,
+            encoder_only=False)
+    elif model_name == 'segnet-encoder-only':
+        model_wrapper = SegNetBasicModel(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            model_lambda_loss_type=model_lambda_loss_type,
+            encoder_only=True)
     elif model_name == 'yolonet':
         model_wrapper = YOLONetModel(
             input_shape=input_shape,
@@ -698,10 +705,14 @@ class SegNetBasicModel(ModelBase):
     def __init__(self,
                  input_shape,
                  num_classes,
+                 encoder_only=False,
                  model_lambda_loss_type=ModelLambdaLossType.NONE):
 
+        self.encoder_only = encoder_only
+        name = "SegNet-Basic" if not self.encoder_only else "SegNet-Basic-Encoder-Only"
+
         super(SegNetBasicModel, self).__init__(
-            name="SegNet-Basic",
+            name=name,
             input_shape=input_shape,
             num_classes=num_classes,
             model_lambda_loss_type=model_lambda_loss_type)
@@ -716,6 +727,18 @@ class SegNetBasicModel(ModelBase):
         conv3, pool3 = UNetModel.get_encoder_block('encoder_block3', 3, 256, pool2)
         conv4, pool4 = UNetModel.get_encoder_block('encoder_block4', 3, 512, pool3)
         #conv5, pool5 = UNetModel.get_encoder_block('encoder_block5', 3, 1024, conv4)
+
+        if self.encoder_only:
+            # In order to avoid increasing the number of variables with a huge dense layer
+            # use average pooling with a pool size of the previous layer's spatial
+            # dimension
+            pool_size = K.int_shape(pool4)[1:3]
+
+            encoder = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(pool4)
+            encoder = Flatten(name='flatten')(encoder)
+            encoder = Dense(self.num_classes, name='logits')(encoder)
+            return [encoder]
+
 
         """
         Decoder path

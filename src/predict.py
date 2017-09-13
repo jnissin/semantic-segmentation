@@ -4,12 +4,15 @@ import json
 import os
 import time
 import argparse
+import math
 
 import matplotlib as mpl
 import numpy as np
 import pydensecrf.utils as dcrf_utils
 from keras.preprocessing.image import load_img, img_to_array, array_to_img
 from matplotlib import pyplot as plt
+
+from scipy import ndimage
 
 from utils import dataset_utils
 from utils import prediction_utils
@@ -80,7 +83,7 @@ def np_softmax(X, theta=1.0, axis=None):
 ##############################################
 
 class PredictionImage(object):
-    def __init__(self, image_path, data_set_information):
+    def __init__(self, image_path, data_set_information, scale_factor=1.0, div2_constraint=4, labeled_only=False):
         print 'Loading image from: {}'.format(image_path)
         self.pil_image = load_img(image_path)
         self.file_name = os.path.basename(image_path)
@@ -88,10 +91,24 @@ class PredictionImage(object):
         print 'Loaded image of size: {}'.format(self.pil_image.size)
         self.np_image = img_to_array(self.pil_image)
 
-        print 'Normalizing image data'
-        self.np_image = image_utils.np_normalize_image_channels(self.np_image, data_set_information.per_channel_mean, data_set_information.per_channel_stddev)
+        print 'Pre-processing image data with div2 constraint: {} labeled only: {}'.format(div2_constraint, labeled_only)
+        per_channel_mean = data_set_information.labeled_per_channel_mean if labeled_only else data_set_information.per_channel_mean
+        per_channel_stddev = data_set_information.labeled_per_channel_stddev if labeled_only else data_set_information.per_channel_stddev
 
-        div2_constraint = 4
+        self.original_shape = self.np_image.shape[:2]
+        self.scale_factor = scale_factor
+        self.scaled = False
+
+        if self.scale_factor != 1.0:
+            target_height = int(np.round(self.np_image.shape[0] * self.scale_factor))
+            target_width = int(np.round(self.np_image.shape[1] * self.scale_factor))
+            target_shape = (target_height, target_width)
+            print 'Scaling image with scale factor: {}, from shape: {} to shape: {}'.format(scale_factor, self.original_shape, target_shape)
+            self.np_image = image_utils.np_scale_image(self.np_image, sfactor=scale_factor, interp='bicubic')
+            self.scaled = True
+
+        self.np_image = image_utils.np_normalize_image_channels(self.np_image, per_channel_mean=per_channel_mean, per_channel_stddev=per_channel_stddev)
+        div2_constraint = div2_constraint
 
         self.padded = False
         self.v_pad_before, self.v_pad_after, self.h_pad_before, self.h_pad_after = 0, 0, 0, 0
@@ -99,7 +116,7 @@ class PredictionImage(object):
         if dataset_utils.count_trailing_zeroes(self.np_image.shape[0]) < div2_constraint or \
                         dataset_utils.count_trailing_zeroes(self.np_image.shape[1]) < div2_constraint:
             self.np_image, self.v_pad_before, self.v_pad_after, self.h_pad_before, self.h_pad_after =\
-                pad_image(self.np_image, div2_constraint, data_set_information.per_channel_mean)
+                pad_image_to_div2_constraint(self.np_image, div2_constraint, data_set_information.per_channel_mean)
             self.padded = True
 
 
@@ -125,7 +142,7 @@ def get_latest_weights_file_path(weights_folder_path):
     return None
 
 
-def pad_image(image_array, div2_constraint, cval):
+def pad_image_to_div2_constraint(image_array, div2_constraint, cval):
     padded_height = dataset_utils.get_closest_higher_number_with_n_trailing_zeroes(image_array.shape[0], div2_constraint)
     padded_width = dataset_utils.get_closest_higher_number_with_n_trailing_zeroes(image_array.shape[1], div2_constraint)
     padded_shape = (padded_height, padded_width)
@@ -173,8 +190,8 @@ def get_new_figure(target_width, target_height, window_title):
     return figure
 
 
-def build_topk_segmentation_plot(flattened_masks, prediction_image):
-    # type: (list[np.ndarray], PredictionImage) -> None
+def build_topk_segmentation_plot(flattened_masks, original_pil_image, file_name):
+    # type: (list[np.ndarray], PIL.Image) -> None
 
     top_k = len(flattened_masks)
     cbar_shrink = 0.75
@@ -184,10 +201,10 @@ def build_topk_segmentation_plot(flattened_masks, prediction_image):
     # Columns of 3 images (side-by-side)
     cols = min(top_k, max_images_per_row)
     rows = (top_k/max_images_per_row) + 1 if top_k%max_images_per_row != 0 else (top_k/max_images_per_row)
-    target_width = (float(prediction_image.pil_image.width)/DPI) * cols
-    target_height = (float(prediction_image.pil_image.height)/DPI) * rows
+    target_width = (float(original_pil_image.width)/DPI) * cols
+    target_height = (float(original_pil_image.height)/DPI) * rows
 
-    figure = get_new_figure(target_width, target_height, 'Top {} segmentation of {}'.format(top_k, prediction_image.file_name))
+    figure = get_new_figure(target_width, target_height, 'Top {} segmentation of {}'.format(top_k, file_name))
 
     for i in range(0, top_k):
         flattened_mask = flattened_masks[i][0]
@@ -210,8 +227,8 @@ def build_topk_segmentation_plot(flattened_masks, prediction_image):
         norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
         # Create the original image as background and combine with the segmentation mask
-        plt_img = plt.imshow(prediction_image.pil_image, interpolation='bilinear', origin='upper')
-        plt_img = plt.imshow(segmented_img, alpha=segmentation_map_alpha, interpolation='bilinear', origin='upper', cmap=cmap, norm=norm)
+        plt_img = plt.imshow(original_pil_image, interpolation='bicubic', origin='upper')
+        plt_img = plt.imshow(segmented_img, alpha=segmentation_map_alpha, interpolation='bicubic', origin='upper', cmap=cmap, norm=norm)
 
         # Set the color bar to the
         cbar = plt.colorbar(plt_img, cmap=cmap, boundaries=bounds, ticks=ticks, norm=norm, shrink=cbar_shrink)
@@ -220,15 +237,15 @@ def build_topk_segmentation_plot(flattened_masks, prediction_image):
     plt.tight_layout()
 
 
-def build_topk_accuracy_plot(flattened_masks, prediction_image, ground_truth_mask):
+def build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_name, ground_truth_mask):
     # Provide accuracy correct / num unignored pixels
 
-    top_k = len(flattened_masks)
+    top_k = len(flattened_predictions)
     cbar_shrink = 0.75
     max_images_per_row = 3
     segmentation_map_alpha = 0.80
-    image_height = prediction_image.pil_image.height
-    image_width = prediction_image.pil_image.width
+    image_height = original_pil_image.height
+    image_width = original_pil_image.width
 
     # Encode values and colors for the different classes: ignored, incorrect and correct pixels
     ignored_val = 0
@@ -245,7 +262,7 @@ def build_topk_accuracy_plot(flattened_masks, prediction_image, ground_truth_mas
     target_width = (float(image_width)/DPI) * cols
     target_height = (float(image_height)/DPI) * rows
 
-    figure = get_new_figure(target_width, target_height, 'Top {} segmentation accuracy of {}'.format(top_k, prediction_image.file_name))
+    figure = get_new_figure(target_width, target_height, 'Top {} segmentation accuracy of {}'.format(top_k, file_name))
     num_non_ignored_pixels = np.count_nonzero(ground_truth_mask)
     num_total_pixels = image_width*image_height
     ignore_mask = ground_truth_mask == 0
@@ -256,7 +273,7 @@ def build_topk_accuracy_plot(flattened_masks, prediction_image, ground_truth_mas
     # Create a mask with three classes: 0: ignored (bg), 2: incorrect, 1: correct
     for i in range(0, top_k):
         # The material id's are encoded in the red channel of the flattened mask
-        flattened_mask = flattened_masks[i][0][:, :, 0]
+        flattened_mask = flattened_predictions[i][0][:, :, 0]
         correct_in_mask = flattened_mask == ground_truth_mask
 
         # Accumulate the results from the i first layers i.e. check whether the correct answer is in the top k guesses
@@ -280,8 +297,8 @@ def build_topk_accuracy_plot(flattened_masks, prediction_image, ground_truth_mas
         figure.add_subplot(rows, cols, i+1, title='Top {} accuracy {:.2f}%'.format(i+1, topk_accuracy))
 
         # Create the original image as background and combine with the segmentation mask
-        plt_img = plt.imshow(prediction_image.pil_image, interpolation='bilinear', origin='upper')
-        plt_img = plt.imshow(topk_img, alpha=segmentation_map_alpha, interpolation='bilinear', origin='upper')
+        plt_img = plt.imshow(original_pil_image, interpolation='bicubic', origin='upper')
+        plt_img = plt.imshow(topk_img, alpha=segmentation_map_alpha, interpolation='bicubic', origin='upper')
 
     plt.tight_layout()
 
@@ -316,6 +333,8 @@ def main():
     ap.add_argument('--crf', required=False, type=int, default=0, help="Number of CRF iterations to use")
     ap.add_argument('-k', '--topk', required=False, type=int, default=1, help="Number of top K predictions to show")
     ap.add_argument('--bgweight', required=False, type=float, default=1.0, help="Weight for the background class predictions")
+    ap.add_argument('--labeledonly', required=False, type=bool, default=False, help="Was the model trained using labeled only data")
+    ap.add_argument('--ensembling', required=False, type=bool, default=False, help="Should we use dimensional ensembling?")
     args = vars(ap.parse_args())
 
     model_name = args['model']
@@ -327,6 +346,8 @@ def main():
     crf_iterations = args['crf']
     top_k = args['topk']
     background_class_prediction_weight = args['bgweight']
+    labeled_only = args['labeledonly']
+    ensembling = args['ensembling']
 
     # Read the configuration file
     global CONFIG
@@ -345,9 +366,16 @@ def main():
     data_set_information = dataset_utils.load_segmentation_data_set_information(data_set_information_path)
     print 'Data set information loaded'
 
+    # Read the div2 constraint
+    div2_constraint = get_config_value('div2_constraint')
+
     # Load the model
     num_classes = len(material_class_information)
     input_shape = get_config_value('input_shape')
+
+    # If we are using ensembling the network has to be fully convolutional
+    if ensembling and (input_shape[0] is not None and input_shape[1] is not None):
+        raise ValueError('Cannot use dimensional ensembling if the input shape is not variable')
 
     print 'Loading model {} instance with input shape: {}, num classes: {}'.format(model_name, input_shape, num_classes)
     model_wrapper = get_model(model_name, input_shape, num_classes)
@@ -363,43 +391,106 @@ def main():
     model.load_weights(weights_path)
 
     # Load the image file
-    prediction_image = PredictionImage(input_image_path, data_set_information)
+    print 'Using ensembling: {}'.format(ensembling)
 
-    # The model is expecting a batch size, even if it's one so append
-    # one new dimension to the beginning to mark batch size of one
-    print 'Predicting segmentation for image with shape: {}'.format(prediction_image.np_image.shape)
-    start_time = time.time()
-    expanded_mask = model.predict(prediction_image.np_image[np.newaxis, :])
-    end_time = time.time()
-    print 'Prediction finished in time: {} s'.format(end_time - start_time)
+    # Create the prediction images
+    prediction_images = []
 
-    # Select the only image from the batch i.e. remove single-dimensional
-    # entries from the shape array
-    expanded_mask = expanded_mask.squeeze()
+    # If using ensembling create the different sized versions
+    if ensembling:
+        # TODO: Figure out whether scale factors or or set sdim sizes are better
+        ENSEMBLING_SCALE_FACTORS = [1.0 / math.sqrt(2.0), 1.0, math.sqrt(2.0)]
 
-    if prediction_image.padded:
-        print 'Cropping predictions back to original image shape'
-        expanded_mask = image_utils.np_crop_image(expanded_mask,
-                                    prediction_image.h_pad_before,
-                                    prediction_image.v_pad_before,
-                                    prediction_image.np_image.shape[1] - prediction_image.h_pad_after,
-                                    prediction_image.np_image.shape[0] - prediction_image.v_pad_after)
+        for sfactor in ENSEMBLING_SCALE_FACTORS:
+            prediction_images.append(
+                PredictionImage(input_image_path, data_set_information, scale_factor=sfactor, div2_constraint=div2_constraint, labeled_only=labeled_only))
+    # If not using ensembling we are using only scale factor of 1.0
+    else:
+        prediction_images.append(
+            PredictionImage(input_image_path, data_set_information, scale_factor=1.0, div2_constraint=div2_constraint, labeled_only=labeled_only))
 
-        print 'Size after cropping: {}'.format(expanded_mask.shape)
+    predictions = []
 
-    # Weight the background class activations to reduce the salt'n'pepper noise
-    # likely caused by the class imbalance in the training data
-    expanded_mask[:, :, 0] = expanded_mask[:, :, 0] * background_class_prediction_weight
+    for prediction_image in prediction_images:
+        print 'Predicting segmentation for image with shape: {}'.format(prediction_image.np_image.shape)
+        start_time = time.time()
+
+        # The model is expecting a batch size, even if it's one so append
+        # one new dimension to the beginning to mark batch size of one - squeeze when done
+        prediction = model.predict(prediction_image.np_image[np.newaxis, :])
+
+        # Select the only image from the batch i.e. remove single-dimensional
+        # entries from the shape array
+        prediction = prediction.squeeze()
+
+        predictions.append(prediction)
+
+        end_time = time.time()
+        print 'Prediction finished in time: {} s'.format(end_time - start_time)
+
+    # Undo the transformations to the images: scaling and padding
+    # And apply background class prediction weight
+    for i, prediction_image in enumerate(prediction_images):
+        # First remove the padding from possible div2 constraint
+        if prediction_image.padded:
+            print 'Cropping padding regions from predictions'
+            predictions[i] = image_utils.np_crop_image(predictions[i],
+                                        prediction_image.h_pad_before,
+                                        prediction_image.v_pad_before,
+                                        prediction_image.np_image.shape[1] - prediction_image.h_pad_after,
+                                        prediction_image.np_image.shape[0] - prediction_image.v_pad_after)
+
+            print 'Shape after cropping: {}'.format(predictions[i].shape)
+
+        # Scale back to original size
+        if prediction_image.scaled:
+            sfactor = 1.0 / prediction_image.scale_factor
+            print 'Scaling predictions back to original image shape: {} with scale factor: {}'.format(prediction_image.original_shape, sfactor)
+            scaled_prediction = ndimage.zoom(predictions[i],
+                                             zoom=(sfactor, sfactor, 1.0),
+                                             order=image_utils.ImageInterpolation.BICUBIC.value,
+                                             mode='constant',
+                                             cval=-1.0).astype(predictions[i].dtype)
+
+            # TODO: Fix these off by one issues due to rounding
+            if scaled_prediction.shape[0] > prediction_image.original_shape[0]:
+                hdiff = scaled_prediction.shape[0] - prediction_image.original_shape[0]
+                scaled_prediction = scaled_prediction[hdiff:, :, :]
+
+            if scaled_prediction.shape[1] > prediction_image.original_shape[1]:
+                wdiff = scaled_prediction.shape[1] - prediction_image.original_shape[1]
+                scaled_prediction = scaled_prediction[:, wdiff:, :]
+
+            if scaled_prediction.shape[0] < prediction_image.original_shape[0] or scaled_prediction.shape[1] < prediction_image.original_shape[1]:
+                scaled_prediction = image_utils.np_pad_image_to_shape(scaled_prediction, prediction_image.original_shape, 0.0)
+
+            predictions[i] = scaled_prediction
+
+        if predictions[i].shape[:2] != prediction_image.original_shape:
+            raise ValueError('Image shape after undoing transformations does not match the original shape: {} vs {}'
+                             .format(predictions[i].shape[:2], prediction_image.original_shape))
+
+        # Weight the background class activations to reduce the salt'n'pepper noise
+        # likely caused by the class imbalance in the training data
+        predictions[i][:, :, 0] *= background_class_prediction_weight
+
+    # Take the mean of all the predictions as the final prediction
+    final_prediction = np.mean(np.array(predictions), axis=0)
+
+    original_pil_image = prediction_images[-1].pil_image
+    file_name = prediction_images[-1].file_name
 
     # Run CRF if we are using it for post-processing
+    # TODO: Before or after voting (averaging)? The padding and would at least have to be removed before - a lot more expensive to run for each
+    # any CRF is run
     if crf_iterations > 0:
         # Must use the unnormalized image data
-        original_image_array = img_to_array(prediction_image.pil_image)
+        original_image_array = img_to_array(original_pil_image)
         crf = prediction_utils.get_dcrf(original_image_array, num_classes)
 
         # Turn the output of the last convolutional layer to softmax probabilities
         # and then to unary.
-        softmax = np_softmax(expanded_mask, axis=-1)
+        softmax = np_softmax(final_prediction, axis=-1)
         softmax = softmax.transpose((2, 0, 1))
         unary = dcrf_utils.unary_from_softmax(softmax)
 
@@ -416,12 +507,12 @@ def main():
         print 'CRF inference finished in time: {} s'.format(crf_end_time - crf_start_time)
 
         # Reshape the outcome
-        expanded_mask = np.reshape(Q, np.flip(expanded_mask.shape, 0), order='A')
-        expanded_mask = np.transpose(expanded_mask, (2, 1, 0))
+        final_prediction = np.reshape(Q, np.flip(final_prediction.shape, 0), order='A')
+        final_prediction = np.transpose(final_prediction, (2, 1, 0))
 
-    flattened_masks = prediction_utils.top_k_flattened_masks(expanded_mask, top_k, material_class_information, True)
+    flattened_predictions = prediction_utils.top_k_flattened_masks(final_prediction, top_k, material_class_information, True)
     print 'Building top k segmentation plot'
-    build_topk_segmentation_plot(flattened_masks, prediction_image)
+    build_topk_segmentation_plot(flattened_predictions, original_pil_image, file_name)
 
     if ground_truth_image_path:
         print 'Reading ground truth image from: {}'.format(ground_truth_image_path)
@@ -429,13 +520,13 @@ def main():
         ground_truth_np_img = img_to_array(ground_truth_pil_image)
         ground_truth_mask = dataset_utils.index_encode_mask(np_mask_img=ground_truth_np_img, material_class_information=material_class_information)
         print 'Building top k segmentation accuracy plot'
-        build_topk_accuracy_plot(flattened_masks, prediction_image, ground_truth_mask)
+        build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_name, ground_truth_mask)
 
     # Show all the plots
     plt.show()
 
     if output_path is not None:
-        save_topk_segmentations(flattened_masks, output_path)
+        save_topk_segmentations(flattened_predictions, output_path)
 
 
 if __name__ == '__main__':

@@ -509,16 +509,24 @@ def np_resize_image_with_padding(np_img, shape, cval, interp='bilinear'):
     if sfactor == 1:
         np_img_resized = np_img
     else:
-        target_shape = (int(round(sfactor*np_img.shape[0])), int(round(sfactor*np_img.shape[1])))
-
-        # Do the resizing using PIL because scipy/numpy lacks interpolation
-        pil_img = array_to_img(np_img, scale=False)
-        func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
-        pil_img = pil_img.resize(size=(target_shape[1], target_shape[0]), resample=func[interp])
-        np_img_resized = img_to_array(pil_img)
+        np_img_resized = np_scale_image(np_img, sfactor=sfactor, interp=interp)
 
     # Pad to the final desired shape afterwards
     np_img_resized = np_pad_image_to_shape(np_img_resized, shape=shape, cval=cval)
+
+    return np_img_resized
+
+
+def np_scale_image(np_img, sfactor, interp='bilinear'):
+    # type: (np.ndarray, float) -> np.ndarray
+
+    target_shape = (int(round(sfactor * np_img.shape[0])), int(round(sfactor * np_img.shape[1])))
+
+    # Do the resizing using PIL because scipy/numpy lacks interpolation
+    pil_img = array_to_img(np_img, scale=False)
+    func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
+    pil_img = pil_img.resize(size=(target_shape[1], target_shape[0]), resample=func[interp])
+    np_img_resized = img_to_array(pil_img)
 
     return np_img_resized
 
@@ -551,7 +559,7 @@ def np_pad_image_to_shape(np_img, shape, cval):
 
 
 def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cval):
-    # type: (np.array, int, int, int, int, np.array) -> np.array
+    # type: (np.array, int, int, int, int, np.ndarray) -> np.ndarray
 
     """
     Pads the given Numpy array to a given shape and fills the padding with cval
