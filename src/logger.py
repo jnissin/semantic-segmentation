@@ -18,21 +18,24 @@ class LogLevel(Enum):
 
 class Logger(object):
 
-    def __init__(self, log_file_path, log_images_folder_path=None, use_timestamp=True, log_to_stdout_default=True):
+    def __init__(self, log_file_path, log_images_folder_path=None, use_timestamp=True, log_to_stdout_default=True, stdout_only=False):
         # type: (str, bool, bool) -> None
 
         self.log_file_path = log_file_path
         self.log_file = None
         self.use_timestamp = use_timestamp
         self.log_to_stdout_default = log_to_stdout_default
+        self.stdout_only = stdout_only
 
         # Create log images folder if it doesn't exist
         if log_images_folder_path is not None:
             self.log_images_folder_path = log_images_folder_path
         else:
-            self.log_images_folder_path = os.path.join(os.path.dirname(log_file_path), 'log_images/')
+            if not self.stdout_only:
+                self.log_images_folder_path = os.path.join(os.path.dirname(log_file_path), 'log_images/')
 
-        general_utils.create_path_if_not_existing(self.log_images_folder_path)
+        if self.log_images_folder_path is not None:
+            general_utils.create_path_if_not_existing(self.log_images_folder_path)
 
     @property
     def log_folder_path(self):
@@ -45,10 +48,10 @@ class Logger(object):
            log_level == LogLevel.PROFILE and not settings.PROFILE:
             return
 
-        log_to_stdout = log_to_stdout or self.log_to_stdout_default
+        log_to_stdout = log_to_stdout or self.log_to_stdout_default or self.stdout_only
 
         # If log file is not open - open
-        if not self.log_file:
+        if not self.log_file and not self.stdout_only:
             self.open_log()
 
         # Add timestamp
@@ -59,10 +62,11 @@ class Logger(object):
         message = '{} {}'.format(log_level.value, message)
 
         # Log to file - make sure there is a newline
-        if not message.endswith('\n'):
-            self.log_file.write(message + '\n')
-        else:
-            self.log_file.write(message)
+        if not self.stdout_only:
+            if not message.endswith('\n'):
+                self.log_file.write(message + '\n')
+            else:
+                self.log_file.write(message)
 
         # Log to stdout - no newline needed
         if log_to_stdout:
@@ -72,8 +76,11 @@ class Logger(object):
         self.log(message, log_level=LogLevel.WARNING, log_to_stdout=log_to_stdout)
 
     def log_image(self, np_image, file_name, scale=True, format='JPEG'):
-        image = array_to_img(np_image, scale=scale)
-        image.save(os.path.join(self.log_images_folder_path, file_name), format=format)
+        if self.log_images_folder_path is not None:
+            image = array_to_img(np_image, scale=scale)
+            image.save(os.path.join(self.log_images_folder_path, file_name), format=format)
+        else:
+            self.log('Attempting to use log_image when log_images_folder_path is None, stdout_only: {}'.format(self.stdout_only), LogLevel.WARNING)
 
     def debug_log(self, message, log_to_stdout=False):
         if settings.DEBUG:

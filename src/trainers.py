@@ -5,6 +5,7 @@ import json
 import random
 import datetime
 import time
+import shutil
 import numpy as np
 
 from enum import Enum
@@ -143,6 +144,11 @@ class TrainerBase:
         self.logger.log('############################################################\n\n')
         self.logger.log('Using Keras version: {}'.format(keras.__version__))
         self.logger.log('Using Tensorflow version: {}'.format(K.tf.__version__))
+
+        # Create a copy of the config file for future reference
+        copy_config_file_path = os.path.join(self.logger.log_folder_path, os.path.basename(config_file_path))
+        self.logger.log('Creating a copy of the used configuration file to model data directory: {}'.format(copy_config_file_path))
+        shutil.copy(config_file_path, copy_config_file_path)
 
         # Seed the random in order to be able to reproduce the results
         # Note: both random and np.random
