@@ -83,10 +83,14 @@ def np_softmax(X, theta=1.0, axis=None):
 ##############################################
 
 class PredictionImage(object):
-    def __init__(self, image_path, data_set_information, scale_factor=1.0, div2_constraint=4, labeled_only=False):
+    def __init__(self, image_path, data_set_information, sdim=None, scale_factor=1.0, div2_constraint=4, labeled_only=False):
         print 'Loading image from: {}'.format(image_path)
         self.pil_image = load_img(image_path)
         self.file_name = os.path.basename(image_path)
+
+        if sdim is not None:
+            print 'Scaling to sdim requirement: {}'.format(sdim)
+            self.pil_image = pil_resize_image_to_sdim(self.pil_image, sdim, interp='bicubic')
 
         print 'Loaded image of size: {}'.format(self.pil_image.size)
         self.np_image = img_to_array(self.pil_image)
@@ -118,6 +122,20 @@ class PredictionImage(object):
             self.np_image, self.v_pad_before, self.v_pad_after, self.h_pad_before, self.h_pad_after =\
                 pad_image_to_div2_constraint(self.np_image, div2_constraint, data_set_information.per_channel_mean)
             self.padded = True
+
+
+def pil_resize_image_to_sdim(pil_image, sdim, interp='nearest'):
+    func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
+    scale_factor = float(sdim) / float(min(pil_image.width, pil_image.height))
+
+    # If no scaling is required
+    if scale_factor == 1.0:
+        return pil_image
+
+    target_width = int(round(scale_factor * pil_image.width))
+    target_height = int(round(scale_factor * pil_image.height))
+    resized = pil_image.resize((target_width, target_height), resample=func[interp])
+    return resized
 
 
 def read_config_json(path):
@@ -335,6 +353,7 @@ def main():
     ap.add_argument('--bgweight', required=False, type=float, default=1.0, help="Weight for the background class predictions")
     ap.add_argument('--labeledonly', required=False, type=bool, default=False, help="Was the model trained using labeled only data")
     ap.add_argument('--ensembling', required=False, type=bool, default=False, help="Should we use dimensional ensembling?")
+    ap.add_argument('--sdim', required=False, type=int, help='Scale to this sdim before using the image')
     args = vars(ap.parse_args())
 
     model_name = args['model']
@@ -348,6 +367,7 @@ def main():
     background_class_prediction_weight = args['bgweight']
     labeled_only = args['labeledonly']
     ensembling = args['ensembling']
+    sdim = args['sdim']
 
     # Read the configuration file
     global CONFIG
@@ -399,33 +419,30 @@ def main():
     # If using ensembling create the different sized versions
     if ensembling:
         # TODO: Figure out whether scale factors or or set sdim sizes are better
-        ENSEMBLING_SCALE_FACTORS = [1.0 / math.sqrt(2.0), 1.0, math.sqrt(2.0)]
+        ENSEMBLING_SCALE_FACTORS = [1.0/math.sqrt(2.0), 1.0, math.sqrt(2)] # [1.0, 1.5, 2.0]
+        print 'Using ensembling scale factors: {}'.format(ENSEMBLING_SCALE_FACTORS)
 
         for sfactor in ENSEMBLING_SCALE_FACTORS:
             prediction_images.append(
-                PredictionImage(input_image_path, data_set_information, scale_factor=sfactor, div2_constraint=div2_constraint, labeled_only=labeled_only))
+                PredictionImage(input_image_path, data_set_information, sdim=sdim, scale_factor=sfactor, div2_constraint=div2_constraint, labeled_only=labeled_only))
     # If not using ensembling we are using only scale factor of 1.0
     else:
         prediction_images.append(
-            PredictionImage(input_image_path, data_set_information, scale_factor=1.0, div2_constraint=div2_constraint, labeled_only=labeled_only))
+            PredictionImage(input_image_path, data_set_information, sdim=sdim, scale_factor=1.0, div2_constraint=div2_constraint, labeled_only=labeled_only))
 
     predictions = []
 
     for prediction_image in prediction_images:
         print 'Predicting segmentation for image with shape: {}'.format(prediction_image.np_image.shape)
-        start_time = time.time()
 
         # The model is expecting a batch size, even if it's one so append
         # one new dimension to the beginning to mark batch size of one - squeeze when done
+        start_time = time.time()
         prediction = model.predict(prediction_image.np_image[np.newaxis, :])
-
-        # Select the only image from the batch i.e. remove single-dimensional
-        # entries from the shape array
         prediction = prediction.squeeze()
-
         predictions.append(prediction)
-
         end_time = time.time()
+
         print 'Prediction finished in time: {} s'.format(end_time - start_time)
 
     # Undo the transformations to the images: scaling and padding
@@ -517,6 +534,10 @@ def main():
     if ground_truth_image_path:
         print 'Reading ground truth image from: {}'.format(ground_truth_image_path)
         ground_truth_pil_image = load_img(ground_truth_image_path)
+
+        if sdim is not None:
+            ground_truth_pil_image = pil_resize_image_to_sdim(ground_truth_pil_image, sdim=sdim, interp='nearest')
+
         ground_truth_np_img = img_to_array(ground_truth_pil_image)
         ground_truth_mask = dataset_utils.index_encode_mask(np_mask_img=ground_truth_np_img, material_class_information=material_class_information)
         print 'Building top k segmentation accuracy plot'
