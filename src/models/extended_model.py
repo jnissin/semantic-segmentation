@@ -461,7 +461,6 @@ class ExtendedModel(Model):
                     x, y = trainer.modify_batch_data(steps_done, x, y, validation)
 
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
-                print 'Batch: {} finished'.format(steps_done)
 
                 if isinstance(x, list):
                     batch_size = len(x[0])
