@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Request 1 Tesla K80 or P100. The 'hsw' constraint guarantees K80 or P100 because they are the only GPU nodes with hsw processors
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:teslap100:1
 #SBATCH --constraint=hsw
 #SBATCH -p gpu
 #SBATCH --mem 16G
