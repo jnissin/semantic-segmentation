@@ -911,8 +911,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            np_photo = self._resize_image(np_photo, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
-            np_mask = self._resize_image(np_mask, resize_shape=resize_shape, cval=self.mask_cval, interp='nearest')
+            np_photo = self._resize_image(np_photo, resize_shape=resize_shape, cval=photo_cval, interp='bicubic')
+            np_mask = self._resize_image(np_mask, resize_shape=resize_shape, cval=mask_cval, interp='nearest')
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors

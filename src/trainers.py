@@ -1538,7 +1538,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             raise ValueError('No training data found')
 
         # Unlabeled training set - skip construction if unlabeled per batch is zero or this is a supervised segmentation trainer
-        if self.num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
+        if self.num_unlabeled_per_batch > 0 and not self.is_supervised_only_trainer:
             self.logger.log('Creating unlabeled training set from: {}'.format(self.path_to_unlabeled_photos))
             stime = time.time()
             training_set_unlabeled = UnlabeledImageDataSet('training_set_unlabeled',
@@ -2000,7 +2000,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             raise ValueError('No training data found')
 
         # Unlabeled training set - skip construction if unlabeled per batch is zero or this is a supervised segmentation trainer
-        if self.num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
+        if self.num_unlabeled_per_batch > 0 and not self.is_supervised_only_trainer:
             self.logger.log('Creating unlabeled training set from: {}'.format(self.path_to_unlabeled_photos))
             stime = time.time()
             training_set_unlabeled = UnlabeledImageDataSet(name='training_set_unlabeled',

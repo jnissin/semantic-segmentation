@@ -33,7 +33,7 @@
     "num_crop_reattempts": 5,
 
     "num_labeled_per_batch": 10,
-    "num_unlabeled_per_batch": 0,
+    "num_unlabeled_per_batch": 10,
     "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": null,
     "validation_resize_shape": [512, 512],

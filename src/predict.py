@@ -326,7 +326,8 @@ def save_topk_segmentations(flattened_masks, output_path):
     if output_path is None:
         return
 
-    for i, flattened_mask in enumerate(flattened_masks):
+    for i in range(0, len(flattened_masks)):
+        flattened_mask = flattened_masks[i][0]
         segmented_img = array_to_img(flattened_mask, scale=False)
         save_file = '{}_top_{}.png'.format(os.path.basename(output_path).split('.')[0], i + 1)
         save_path = os.path.join(os.path.dirname(output_path), save_file)

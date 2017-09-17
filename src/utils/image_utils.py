@@ -71,7 +71,7 @@ class ImageTransform:
         """
 
         p = np.array(coordinates)
-        p_rank = len(p.shape)
+        p_rank = p.ndim
 
         if not 1 <= p_rank <= 2:
             raise ValueError('The coordinates must be either of rank 1 or 2')
@@ -566,7 +566,7 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
     color value.
 
     # Arguments:
-        :param np_img: 3 dimensional Numpy array with shape HxWxC
+        :param np_img: 3 or 2 dimensional Numpy array with shape HxWxC
         :param v_pad_before: vertical padding on top
         :param v_pad_after: vertical padding on bottom
         :param h_pad_before: horizontal padding on left
@@ -579,11 +579,15 @@ def np_pad_image(np_img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, c
     # Temporary value for cval for simplicity
     temp_cval = 919191.0
 
-    np_img = np.pad(np_img, [(v_pad_before, v_pad_after), (h_pad_before, h_pad_after), (0, 0)], 'constant',
-                    constant_values=temp_cval)
+    np_img = np.pad(np_img, [(v_pad_before, v_pad_after), (h_pad_before, h_pad_after), (0, 0)], 'constant', constant_values=temp_cval)
 
     # Create a mask for all the temporary cvalues
-    cval_mask = np_img[:, :, 0] == temp_cval
+    if np_img.ndim == 3:
+        cval_mask = np_img[:, :, 0] == temp_cval
+    elif np_img.ndim == 2:
+        cval_mask = np_img[:, :] == temp_cval
+    else:
+        raise ValueError('Unsupported number of dimensions: {}'.format(np_img.ndim))
 
     # Replace the temporary cvalues with real color values
     np_img[cval_mask] = cval
