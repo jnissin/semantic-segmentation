@@ -2,6 +2,7 @@
 
 import math
 import numpy as np
+import threading
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 from enum import Enum
@@ -22,6 +23,7 @@ class DataSetIterator(object):
         self.logger = logger
         self.batch_index = 0                    # The index of the batch within the epoch
         self.step_index = 0                     # The overall index of the batch
+        self.lock = threading.Lock()
 
     def reset(self):
         self.batch_index = 0
@@ -78,25 +80,26 @@ class BasicDataSetIterator(DataSetIterator):
     def get_next_batch(self):
         # type: () -> (np.ndarray[int], int, int)
 
-        super(BasicDataSetIterator, self).get_next_batch()
+        with self.lock:
+            super(BasicDataSetIterator, self).get_next_batch()
 
-        if self.batch_index == 0:
-            self.index_array = np.arange(self.n)
-            if self.shuffle:
-                self.index_array = np.random.permutation(self.n)
+            if self.batch_index == 0:
+                self.index_array = np.arange(self.n)
+                if self.shuffle:
+                    self.index_array = np.random.permutation(self.n)
 
-        current_index = (self.batch_index * self.batch_size) % self.n
+            current_index = (self.batch_index * self.batch_size) % self.n
 
-        if self.n > current_index + self.batch_size:
-            current_batch_size = self.batch_size
-            self.batch_index += 1
-        else:
-            current_batch_size = self.n - current_index
-            self.batch_index = 0
+            if self.n > current_index + self.batch_size:
+                current_batch_size = self.batch_size
+                self.batch_index += 1
+            else:
+                current_batch_size = self.n - current_index
+                self.batch_index = 0
 
-        self.step_index += 1
+            self.step_index += 1
 
-        return self.index_array[current_index: current_index + current_batch_size], current_index, current_batch_size, self.step_index
+            return self.index_array[current_index: current_index + current_batch_size], current_index, current_batch_size, self.step_index
 
     @property
     def num_steps_per_epoch(self):
@@ -193,46 +196,48 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             :return: a batch of material samples as tuples of indices into 2D material sample array
         """
 
-        super(MaterialSampleDataSetIterator, self).get_next_batch()
+        with self.lock:
+            super(MaterialSampleDataSetIterator, self).get_next_batch()
 
-        if self.iter_mode == MaterialSampleIterationMode.UNIQUE:
-            return self._get_next_batch_unique()
-        elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MAX or \
-             self.iter_mode == MaterialSampleIterationMode.UNIFORM_MIN or \
-             self.iter_mode == MaterialSampleIterationMode.UNIFORM_MEAN:
-            return self._get_next_batch_uniform()
+            if self.iter_mode == MaterialSampleIterationMode.UNIQUE:
+                return self._get_next_batch_unique()
+            elif self.iter_mode == MaterialSampleIterationMode.UNIFORM_MAX or \
+                 self.iter_mode == MaterialSampleIterationMode.UNIFORM_MIN or \
+                 self.iter_mode == MaterialSampleIterationMode.UNIFORM_MEAN:
+                return self._get_next_batch_uniform()
 
-        raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
+            raise ValueError('Unknown iteration mode: {}'.format(self.iter_mode))
 
     def update_sampling_probabilities(self, pixels_seen_per_category):
         # type: (np.ndarray) -> None
 
-        if len(pixels_seen_per_category) != self.num_material_classes:
-            raise ValueError('Pixels seen per category dimension does not match with num classes: {} vs {}'
-                             .format(len(pixels_seen_per_category), self.num_material_classes))
+        with self.lock:
+            if len(pixels_seen_per_category) != self.num_material_classes:
+                raise ValueError('Pixels seen per category dimension does not match with num classes: {} vs {}'
+                                 .format(len(pixels_seen_per_category), self.num_material_classes))
 
-        # Accumulate to the stored value
-        pixels_seen_per_category = pixels_seen_per_category.astype(np.uint64)
-        pixels_seen_per_category[self._material_category_ignore_mask] = 0
-        self._material_category_pixels_seen += pixels_seen_per_category
-        self._material_category_pixels_seen[self._material_category_ignore_mask] = 0
+            # Accumulate to the stored value
+            pixels_seen_per_category = pixels_seen_per_category.astype(np.uint64)
+            pixels_seen_per_category[self._material_category_ignore_mask] = 0
+            self._material_category_pixels_seen += pixels_seen_per_category
+            self._material_category_pixels_seen[self._material_category_ignore_mask] = 0
 
-        # Make sure no category has zeros for the coming division
-        total_pixels_seen_per_category = self._material_category_pixels_seen + pixels_seen_per_category
-        total_pixels_seen_per_category = np.clip(total_pixels_seen_per_category, 1, np.iinfo(total_pixels_seen_per_category.dtype).max)
+            # Make sure no category has zeros for the coming division
+            total_pixels_seen_per_category = self._material_category_pixels_seen + pixels_seen_per_category
+            total_pixels_seen_per_category = np.clip(total_pixels_seen_per_category, 1, np.iinfo(total_pixels_seen_per_category.dtype).max)
 
-        # Calculate the inverse proportions
-        inv_proportions = np.sum(total_pixels_seen_per_category).astype(np.float64)/total_pixels_seen_per_category.astype(np.float64)
-        inv_proportions[self._material_category_ignore_mask] = 0.0
+            # Calculate the inverse proportions
+            inv_proportions = np.sum(total_pixels_seen_per_category).astype(np.float64)/total_pixels_seen_per_category.astype(np.float64)
+            inv_proportions[self._material_category_ignore_mask] = 0.0
 
-        # Scale so that everything sums to one and ensure that the ignored classes have a probability of 0
-        updated_probabilities = inv_proportions/np.sum(inv_proportions)
-        self._material_category_sampling_probabilities = updated_probabilities
-        self._material_category_sampling_probabilities[self._material_category_ignore_mask] = 0.0
+            # Scale so that everything sums to one and ensure that the ignored classes have a probability of 0
+            updated_probabilities = inv_proportions/np.sum(inv_proportions)
+            self._material_category_sampling_probabilities = updated_probabilities
+            self._material_category_sampling_probabilities[self._material_category_ignore_mask] = 0.0
 
-        # Sanity check
-        self.logger.debug_log('Material category pixels seen: {}'.format(self._material_category_pixels_seen))
-        self.logger.debug_log('Material category sampling probabilities updated to: {} - sum {}'.format(self._material_category_sampling_probabilities, np.sum(self._material_category_sampling_probabilities)))
+            # Sanity check
+            self.logger.debug_log('Material category pixels seen: {}'.format(self._material_category_pixels_seen))
+            self.logger.debug_log('Material category sampling probabilities updated to: {} - sum {}'.format(self._material_category_sampling_probabilities, np.sum(self._material_category_sampling_probabilities)))
 
     def _get_next_batch_uniform(self):
         sample_categories = np.random.choice(a=self.num_material_classes, size=self.batch_size, p=self._material_category_sampling_probabilities)

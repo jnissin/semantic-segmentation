@@ -122,6 +122,7 @@ class TrainerBase:
         self.model_wrapper = None
 
         self.initial_epoch = 0
+        self.initial_step = 0
         self.last_completed_epoch = -1
 
         # Profiling related variables
@@ -199,6 +200,11 @@ class TrainerBase:
 
         if self.continue_from_last_checkpoint:
             self.initial_epoch = self._load_latest_weights_for_model(self.model, self.model_checkpoint_directory)
+
+            if self.training_data_generator is None or self.training_data_generator.num_steps_per_epoch < 1:
+                raise ValueError('Cannot determine initial step - training data generator is not initialized')
+
+            self.initial_step = self.initial_epoch * self.training_data_generator.num_steps_per_epoch
 
         if self.use_transfer_weights:
             if self.initial_epoch != 0:
@@ -551,6 +557,7 @@ class TrainerBase:
             stepwise_lr_scheduler = StepwiseLearningRateScheduler(lr_schedule=eval(lr_schedule) if lr_schedule is not None else None,
                                                                   b2_schedule=eval(b2_schedule) if b2_schedule is not None else None,
                                                                   last_scheduled_step=last_scheduled_step,
+                                                                  initial_step=self.initial_step,
                                                                   verbose=verbose)
 
             callbacks.append(stepwise_lr_scheduler)

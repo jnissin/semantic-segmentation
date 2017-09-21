@@ -217,7 +217,7 @@ class DataGenerator(object):
     def __init__(self, batch_data_format, params):
         # type: (BatchDataFormat, DataGeneratorParameters) -> None
 
-        self.lock = threading.Lock()
+        #self.lock = threading.Lock()
         self.batch_data_format = batch_data_format
 
         # Unwrap DataGeneratorParameters to member variables
@@ -705,9 +705,8 @@ class SegmentationDataGenerator(DataGenerator):
         if self.use_material_samples and self.use_adaptive_sampling:
             y_flattened = np.array(Y).astype(dtype=np.int32).squeeze().ravel()
             pixels_per_material = np.bincount(y_flattened, minlength=self.num_classes).astype(dtype=np.uint64)
-
-            with self.lock:
-                self.labeled_data_iterator.update_sampling_probabilities(pixels_per_material)
+            # with self.lock
+            self.labeled_data_iterator.update_sampling_probabilities(pixels_per_material)
 
         # Create the weights for each ground truth segmentation
         W = []
@@ -1167,15 +1166,16 @@ class SegmentationDataGenerator(DataGenerator):
             2: Number of unlabeled data in the X and Y (photos and labels).
         """
 
-        with self.lock:
-            crop_shape = self.get_batch_crop_shape()
-            resize_shape = self.get_batch_resize_shape()
-            self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
-            labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_iterator.get_next_batch()
-            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
+        crop_shape = self.get_batch_crop_shape()
+        resize_shape = self.get_batch_resize_shape()
+        self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
 
-            if self.using_unlabeled_data:
-                unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_iterator.get_next_batch()
+        # with self.lock:
+        labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_iterator.get_next_batch()
+        unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
+
+        if self.using_unlabeled_data:
+            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_iterator.get_next_batch()
 
         X, Y, W = self.get_labeled_batch_data(labeled_step_index, labeled_index_array, crop_shape, resize_shape)
         X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(unlabeled_step_index, unlabeled_index_array, crop_shape, resize_shape)
@@ -1432,15 +1432,16 @@ class ClassificationDataGenerator(DataGenerator):
                self.batch_data_format != BatchDataFormat.SUPERVISED
 
     def next(self):
-        with self.lock:
-            crop_shape = self.get_batch_crop_shape()
-            resize_shape = self.get_batch_resize_shape()
-            self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
-            labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_set_iterator.get_next_batch()
-            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
+        crop_shape = self.get_batch_crop_shape()
+        resize_shape = self.get_batch_resize_shape()
+        self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
 
-            if self.using_unlabeled_data:
-                unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_set_iterator.get_next_batch()
+        # with self.lock:
+        labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_set_iterator.get_next_batch()
+        unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
+
+        if self.using_unlabeled_data:
+            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_set_iterator.get_next_batch()
 
         X, Y, W = self.get_labeled_batch_data(labeled_step_index, labeled_index_array, crop_shape=crop_shape, resize_shape=resize_shape)
         X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(unlabeled_step_index, unlabeled_index_array, crop_shape=crop_shape, resize_shape=resize_shape)

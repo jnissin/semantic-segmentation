@@ -960,7 +960,7 @@ def count_trailing_zeroes(num):
     # type: (int) -> int
 
     """
-    Counts the trailing zeroes in the binary of the paramter number.
+    Counts the trailing zeroes in the binary of the parameter number.
 
     # Arguments
         :param num: the number

@@ -92,7 +92,7 @@ class ImageFile(object):
         return self._file_name
 
     def get_image(self, color_channels=3, target_size=None):
-        # type: (int, tuple[int]) -> Image
+        # type: (int, tuple[int, int]) -> Image
 
         """
         Returns a PIL image.
@@ -132,7 +132,7 @@ class ImageFile(object):
             if img.mode != 'RGBA':
                 img = img.convert('RGBA')
 
-        if target_size:
+        if target_size is not None:
             hw_tuple = (target_size[1], target_size[0])
             if img.size != hw_tuple:
                 img = img.resize(hw_tuple)

@@ -18,13 +18,13 @@ class StepwiseLearningRateScheduler(keras.callbacks.Callback):
         verbose: should we print the values on each update
     """
 
-    def __init__(self, lr_schedule, b2_schedule=None, last_scheduled_step=None, verbose=False):
+    def __init__(self, lr_schedule, initial_step=0, b2_schedule=None, last_scheduled_step=None, verbose=False):
         assert(lr_schedule is not None)
 
         super(StepwiseLearningRateScheduler, self).__init__()
         self.lr_schedule = lr_schedule
         self.b2_schedule = b2_schedule
-        self.step_index = 0
+        self.step_index = initial_step
         self.last_scheduled_step = int(last_scheduled_step) if last_scheduled_step is not None else None
         self.stop_reported = False
         self.verbose = verbose
