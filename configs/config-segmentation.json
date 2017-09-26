@@ -61,8 +61,8 @@
 
     "use_data_augmentation": true,
     "use_material_samples": true,
-    "use_selective_attention": false,
-    "use_adaptive_sampling": false,
+    "use_selective_attention": true,
+    "use_adaptive_sampling": true,
 
     "data_augmentation_params": {
       "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/12000.0)**2)), 1.0) ), 1.0 )",
@@ -115,7 +115,7 @@
       "lr_schedule": "lambda x: 5e-3 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
       "b2_schedule": "lambda x: 0.99 if x < 40000 else 0.999",
       "last_scheduled_step": 40000,
-      "verbose": false
+      "verbose": true
     },
 
     "image_data_format": "channels_last",

@@ -32,7 +32,7 @@
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
 
-    "num_labeled_per_batch": 10,
+    "num_labeled_per_batch": 20,
     "num_unlabeled_per_batch": 0,
     "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": null,
@@ -108,7 +108,7 @@
     },
 
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": false,
+    "continue_from_last_checkpoint": true,
     "transfer_weights": false,
     "use_class_weights": true,
     "override_class_weights": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],

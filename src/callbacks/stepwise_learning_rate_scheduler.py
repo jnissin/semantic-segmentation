@@ -29,6 +29,13 @@ class StepwiseLearningRateScheduler(keras.callbacks.Callback):
         self.stop_reported = False
         self.verbose = verbose
 
+        if self.verbose:
+            print 'Initial step: {}'.format(self.step_index)
+
+        if self.last_scheduled_step is not None and self.step_index > self.last_scheduled_step:
+            print 'Continuing from step {} which is after the last scheduled step ({}) has been reached'.format(self.step_index, self.last_scheduled_step)
+            self.stop_reported = True
+
     def on_batch_begin(self, batch, logs=None):
         if not hasattr(self.model.optimizer, 'lr'):
             raise ValueError('Optimizer must have a "lr" attribute.')
