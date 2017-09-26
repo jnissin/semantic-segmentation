@@ -1393,6 +1393,9 @@ class ClassificationDataGenerator(DataGenerator):
                 seed=self.random_seed,
                 logger=self.logger)
 
+        # Create a dummy label vector for unlabeled data (one-hot) all zeros
+        self.dummy_label_vector = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
+
         # Sanity checks
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500 and self._crop_shapes is not None:
             self.logger.warn('Using MINC-2500 data set with cropping - cropping is not applied to MINC-2500 data'.format(self._crop_shapes))
@@ -1531,7 +1534,7 @@ class ClassificationDataGenerator(DataGenerator):
         y[custom_label] = 1.0
 
         # Construct weight vector
-        w = np.array(self.class_weights, dtype=np.float32)
+        w = self.class_weights
 
         return np_image, y, w
 
@@ -1593,8 +1596,8 @@ class ClassificationDataGenerator(DataGenerator):
         y = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
         y[custom_label] = 1.0
 
-        # Construct weight vector
-        w = np.array(self.class_weights, dtype=np.float32)
+        # Construct class weight vector
+        w = self.class_weights
 
         return np_image, y, w
 
@@ -1645,9 +1648,9 @@ class ClassificationDataGenerator(DataGenerator):
         np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
 
         # Create a dummy label vector (one-hot) all zeros
-        y = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
+        y = self.dummy_label_vector
 
-        # Create a dummy weight vector
-        w = np.ones(self.class_weights, dtype=np.float32)
+        # Construct class weight vector
+        w = self.class_weights
 
         return np_image, y, w

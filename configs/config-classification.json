@@ -3,7 +3,7 @@
     "path_to_data_set_information_file": null,
     "path_to_labeled_photos": "data/classification/minc-2500/images",
     "path_to_labeled_masks": null,
-    "path_to_unlabeled_photos": null,
+    "path_to_unlabeled_photos": "data/1024/unlabeled/",
 
     "log_file_path": "model-data/{model_folder}/logs/log.txt",
     "log_to_stdout": true,
@@ -27,13 +27,13 @@
 
     "num_epochs": 100,
     "input_shape": [362, 362, 3],
-    "crop_shape": null,
+    "crop_shape": [362, 362],
     "resize_shape": null,
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
 
     "num_labeled_per_batch": 20,
-    "num_unlabeled_per_batch": 0,
+    "num_unlabeled_per_batch": 20,
     "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": null,
     "validation_resize_shape": null,
@@ -72,13 +72,12 @@
 
     "classification_data_set_params": {
       "path_to_training_set_file": "data/classification/minc-2500/labels/train1.txt",
-      "path_to_training_set_unlabeled_photos": null,
       "path_to_validation_set_file": "data/classification/minc-2500/labels/validate1.txt",
       "path_to_test_set_file": "data/classification/minc-2500/labels/test1.txt",
       "path_to_label_mapping_file": "data/classification/minc_labels_to_custom_labels.csv",
-      "per_channel_mean": null,
+      "per_channel_mean": [0.042277198388347176, -0.05902213174885779, -0.1724008530728984],
       "per_channel_mean_labeled": [0.015220912425156647, -0.082662119450916519, -0.19088522955180201],
-      "per_channel_stddev": null,
+      "per_channel_stddev": [0.5186742624275797, 0.5212654536686483, 0.5509668606954281],
       "per_channel_stddev_labeled": [0.50851146191782581, 0.50487075753170241, 0.53205929852937728]
     },
 
