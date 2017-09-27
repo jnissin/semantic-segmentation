@@ -3,7 +3,7 @@
     "path_to_data_set_information_file": null,
     "path_to_labeled_photos": "data/classification/minc-2500/images",
     "path_to_labeled_masks": null,
-    "path_to_unlabeled_photos": "data/1024/unlabeled/",
+    "path_to_unlabeled_photos": "data/1024/unlabeled.tar.gz",
 
     "log_file_path": "model-data/{model_folder}/logs/log.txt",
     "log_to_stdout": true,
