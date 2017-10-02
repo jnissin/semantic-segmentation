@@ -1,109 +1,521 @@
 # coding=utf-8
 
-import math
 import numpy as np
 import threading
+import os
+import random
 
-from abc import ABCMeta, abstractmethod, abstractproperty
+from keras_extensions.utils.data_utils import Sequence
+
+from abc import ABCMeta, abstractmethod
 from enum import Enum
 
 from logger import Logger
 from utils.dataset_utils import MaterialSample
 
 
-class DataSetIterator(object):
+class ExtendedDictionary(dict):
+    def __init__(self, default, **kwargs):
+        self.default = default
+        super(ExtendedDictionary, self).__init__(**kwargs)
+
+    def __getitem__(self, key):
+        if key in self:
+            return super(ExtendedDictionary, self).__getitem__(key)
+        return self.default
+
+
+class DataSetIterator(Sequence):
+    """
+    Abstract base class of data set iterator. This class supports multiprocess
+    iteration with Keras by implementing the Sequence interface.
+    """
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, n, batch_size, shuffle, seed, logger):
-        self.n = n
-        self.batch_size = min(batch_size, n)    # The batch size could in theory be bigger than the data set size
+    def __init__(self,
+                 data_generator,
+                 n_labeled,
+                 labeled_batch_size,
+                 n_unlabeled,
+                 unlabeled_batch_size,
+                 shuffle,
+                 seed,
+                 logger,
+                 initial_epoch):
+        # type: (DataGenerator, int, int, int, int, bool, int, Logger, int) -> None
+
+        """
+        # Arguments
+            :param data_generator: DataGenerator, a data generator that returns batches of data when provided with batch indices
+            :param n_labeled: integer, total number of labeled samples in the data set to loop over
+            :param labeled_batch_size: integer, size of labeled data in batch
+            :param n_unlabeled: integer, total number of unlabeled samples in the data set to loop over
+            :param unlabeled_batch_size: integer, size of unlabeled data in batch
+            :param shuffle: boolean, whether to shuffle the data between epochs.
+            :param seed: random seeding for data shuffling.
+            :param logger: logger instance for logging
+            :param initial_epoch: initial epoch
+        # Returns
+            Nothing
+        """
+        self.data_generator = data_generator                                    # DataGenerator instance
+        self.n_labeled = n_labeled                                              # Size of the labeled data set (n samples)
+        self.n_unlabeled = n_unlabeled                                          # Size of the unlabeled data set (n samples)
+        self.labeled_batch_size = min(labeled_batch_size, n_labeled)            # The batch size could in theory be bigger than the data set size
+        self.unlabeled_batch_size = min(unlabeled_batch_size, n_unlabeled)
         self.shuffle = shuffle
         self.seed = seed
         self.logger = logger
-        self.batch_index = 0                    # The index of the batch within the epoch
-        self.step_index = 0                     # The overall index of the batch
-        self.lock = threading.Lock()
+        self.initial_epoch = initial_epoch
+
+        # The following member variables only work when not used in multiprocessing context
+        self.global_step_index = self.initial_epoch * self.num_steps_per_epoch  # The global step index (how many batches have been processed altogether)
+        self._lock = None
+
+        # Handle the initial random seeding
+        np.random.seed(self.seed)
+        random.seed(self.seed)
 
     def reset(self):
-        self.batch_index = 0
-        self.step_index = 0
+        self.global_step_index = self.initial_epoch * self.num_steps_per_epoch
 
-    @abstractmethod
-    def get_next_batch(self):
-        if self.seed is not None:
-            np.random.seed(self.seed + self.step_index)
-
-    @abstractproperty
-    def num_steps_per_epoch(self):
-        pass
-
-    def _get_number_of_batches(self, data_set_size, batch_size):
-        # type: (int, int) -> int
+    @property
+    def epoch_index(self):
+        # type: () -> int
 
         """
-        Returns the number of batches for the given data set size and batch size.
-        The function assumes that all data will be used every epoch and the last batch size
-        can be smaller than the others.
+        The index of the epoch. Only works when using non-multiprocessing context.
 
         # Arguments
-            :param data_set_size: data set size
-            :param batch_size: batch size
+            None
         # Returns
-            :return: the number of batches from this dataset
+            :return: index of the epoch
         """
-        num_batches = int(math.ceil(float(data_set_size) / float(batch_size)))
-        return num_batches
+
+        return self.global_step_index / self.num_steps_per_epoch
+
+    @property
+    def unlabeled_epoch_index(self):
+        if self.using_unlabeled_data:
+            return self.global_step_index / self.unlabeled_steps_per_epoch
+        return 0
+
+    @property
+    def batch_index(self):
+        # type: () -> int
+
+        """
+        The index of the batch within the current epoch.
+        Only works when using non-multiprocessing context.
+
+        # Arguments
+            None
+        # Returns
+            :return: index of the batch within the current epoch
+        """
+
+        return self.global_step_index % self.num_steps_per_epoch
+
+    @property
+    def unlabeled_batch_index(self):
+        if self.using_unlabeled_data:
+            return self.global_step_index % self.unlabeled_steps_per_epoch
+        return 0
+
+    @property
+    def num_steps_per_epoch(self):
+        # type: () -> int
+
+        """
+        Number of steps per epoch.
+
+        # Arguments
+            None
+        # Returns
+            :return: number of steps per epoch
+        """
+
+        return int(np.ceil(self.n_labeled / float(self.labeled_batch_size)))
+
+    @property
+    def unlabeled_steps_per_epoch(self):
+        if self.using_unlabeled_data:
+            return int(np.ceil(self.n_unlabeled / float(self.unlabeled_batch_size)))
+        return 0
+
+    @property
+    def lock(self):
+        # type: () -> threading.Lock
+
+        """
+        Threading lock. Only works when using non-multiprocessing context. Otherwise,
+        should not be accessed.
+
+        # Arguments
+            None
+        # Returns
+            :return: a thread lock
+        """
+
+        if self._lock is None:
+            self._lock = threading.Lock()
+
+        return self._lock
+
+    @property
+    def using_unlabeled_data(self):
+        # type: () -> bool
+
+        """
+        Boolean describing whether the iterator uses unlabeled data.
+
+        # Arguments
+            None
+        # Returns
+            :return: true if using unlabeled false otherwise.
+        """
+
+        return self.n_unlabeled > 0 and self.unlabeled_batch_size > 0
+
+    @property
+    def total_batch_size(self):
+        # type: () -> int
+        """
+        How many samples are within a single batch in total (labeled + unlabeled)
+
+        # Arguments
+            None
+        # Returns
+            :return: number of samples per batch (may be smaller if data is uneven)
+        """
+        return self.labeled_batch_size + self.unlabeled_batch_size
+
+    def __len__(self):
+        """
+        Length is defined as the length of the sequence which corresponds to the number of
+        batches (steps) in a single epoch.
+
+        # Arguments
+            None
+        # Returns
+            :return: The number of batches (steps) per epoch
+        """
+
+        return self.num_steps_per_epoch
+
+    @abstractmethod
+    def get_batch(self, e_idx, b_idx):
+        # type: (int, int) -> (list, list)
+        """
+        This method returns a batch when given the epoch index and batch index (within the epoch).
+        Note: this method is deterministic i.e. always returns the same batch given the epoch index
+        and the batch index.
+
+        # Arguments
+            :param e_idx: Epoch index
+            :param b_idx: Batch index
+
+        # Returns
+            :return: A batch of data
+        """
+
+        raise NotImplementedError('This method is not implemented in the abstract DataSetIterator')
+
+    @abstractmethod
+    def next(self):
+        # type: () -> (list, list)
+
+        """
+        This method returns the next batch in the sequence.
+
+        # Arguments
+            None
+        # Returns
+            :return: The next batch of data
+        """
+
+        raise NotImplementedError('This method is not implemented in the abstract DataSetIterator')
+
+    def on_epoch_end(self):
+        # type: () -> ()
+
+        """
+        A callback method that is called at the end of every epoch. This way we can e.g. shuffle
+        the data between epochs.
+
+        # Arguments
+            None
+        # Returns
+            Nothing
+        """
+        raise NotImplementedError('This method is not implemented in the abstract DataSetIterator')
+
+    def __next__(self, *args, **kwargs):
+        # type: () -> (list, list)
+
+        """
+        This method returns the next batch in the sequence.
+
+        # Arguments
+            None
+        # Returns
+            :return: The next batch of data
+        """
+
+        return self.next(*args, **kwargs)
+
+    def __iter__(self):
+        # type: () -> (list, list)
+
+        """
+        This method is needed if we want to do something like: for x, y in data_gen.flow()
+
+        # Arguments
+            None
+        # Returns
+            :return: A batch of data as a tuple (X, Y) or (X, Y, S_WEIGHTS)
+        """
+
+        # Needed if we want to do something like:
+        # for x, y in data_gen.flow()
+        return self
 
 
 class BasicDataSetIterator(DataSetIterator):
     """
-    A class for iterating over a data set in batches.
+    A class for iterating a basic data set with normal indexing and no special
+    class balancing.
     """
 
-    def __init__(self, n, batch_size, shuffle, seed, logger):
-        # type: (int, int, bool, int, Logger) -> None
+    QUEUED_EPOCHS = 4
+
+    def __init__(self, data_generator, n_labeled, n_unlabeled, labeled_batch_size, unlabeled_batch_size, shuffle, seed, logger=None, initial_epoch=0):
+        # type: (DataGenerator, int, int, int, int, bool, int, Logger, int) -> None
+
+        super(BasicDataSetIterator, self).__init__(data_generator=data_generator,
+                                                   n_labeled=n_labeled,
+                                                   n_unlabeled=n_unlabeled,
+                                                   labeled_batch_size=labeled_batch_size,
+                                                   unlabeled_batch_size=unlabeled_batch_size,
+                                                   shuffle=shuffle,
+                                                   seed=seed,
+                                                   logger=logger,
+                                                   initial_epoch=initial_epoch)
+
+        self.__index_generator = None
+
+        # Generate the initial data
+        self.labeled_epoch_queue = ExtendedDictionary(default=np.arange(n_labeled) if not self.shuffle else None)
+        self.unlabeled_epoch_queue = ExtendedDictionary(default=np.arange(n_unlabeled) if not self.shuffle else None)
+
+        # We only need to generate data if we shuffle between epochs
+        if self.shuffle:
+            for i in range(0, BasicDataSetIterator.QUEUED_EPOCHS):
+                e_idx = self.initial_epoch+i
+                self.labeled_epoch_queue[e_idx] = self._create_index_array_for_epoch(e_idx=e_idx, n=self.n_labeled)
+
+                # Note: unlabeled data follows separate indexing
+                if self.using_unlabeled_data:
+                    ul_e_idx = self.unlabeled_epoch_index + i
+                    self.unlabeled_epoch_queue[ul_e_idx] = self._create_index_array_for_epoch(e_idx=ul_e_idx, n=self.n_unlabeled)
+
+    @property
+    def _index_generator(self):
+        if self.__index_generator is None:
+            self.__index_generator = self._flow_index()
+
+        return self.__index_generator
+
+    def _get_index_array_for_epoch(self, epoch_queue, e_idx, n):
+        # type: (ExtendedDictionary, int, int, bool) -> np.ndarray
 
         """
+        Generates the batch sample indices for a specific epoch.
+
         # Arguments
-            :param n: Integer, total number of samples in the dataset to loop over.
-            :param batch_size: Integer, size of a batch.
-            :param shuffle: Boolean, whether to shuffle the data between epochs.
-            :param seed: Random seeding for data shuffling.
-            :param logger: Logger instance for logging
+            :param epoch_queue: a dictionary of epoch indices to sample index arrays
+            :param e_idx: epoch index
+            :param n: number of samples in batch
+        # Returns
+            :return: sample indices for the specified epoch
+        """
+
+        if e_idx not in epoch_queue and self.shuffle:
+            self._update_epoch_queue(epoch_queue=epoch_queue, n=n, r_e_idx=e_idx)
+
+        return epoch_queue[e_idx]
+
+    def _create_index_array_for_epoch(self, e_idx, n):
+        # type: (int, int, bool) -> np.ndarray
+
+        """
+        Generates the batch sample indices for a specific epoch.
+
+        # Arguments
+            :param e_idx: epoch index
+            :param n: number of samples in batch
+        # Returns
+            :return: sample indices for the specified epoch
+        """
+
+        if self.shuffle:
+            np.random.seed(self.seed + e_idx)
+            index_array = np.random.permutation(n)
+        else:
+            index_array = np.arange(n)
+
+        return index_array
+
+    def _update_epoch_queue(self, epoch_queue, n, r_e_idx):
+        # type: (ExtendedDictionary, int, int) -> ()
+
+        """
+        Moves the epoch queue window ahead by half the number of queued epochs.
+        For example if the queue had epochs 0,1,2,3 after this call the queue
+        would have epochs 2,3,4,5.
+
+        # Arguments
+            :param epoch_queue: the epoch queue
+            :param n: number of elements per epoch
+            :param r_e_idx: requested epoch index
         # Returns
             Nothing
         """
-        super(BasicDataSetIterator, self).__init__(n=n, batch_size=batch_size, shuffle=shuffle, seed=seed, logger=logger)
-        self.index_array = np.arange(self.n)
+        keys = epoch_queue.keys()
+        keys.sort()
+        max_key = max(keys)
+        min_key = min(keys)
+        window_move_size = len(keys) / 2
 
-    def get_next_batch(self):
-        # type: () -> (np.ndarray[int], int, int)
+        # Check whether there is a bug and we are trying to request an epoch from the past - warn but don't crash
+        if r_e_idx < min_key:
+            self.logger.warn('Requested a past epoch: min key: {}, requested epoch: {}'.format(min_key, r_e_idx))
+            epoch_queue[r_e_idx] = self._create_index_array_for_epoch(e_idx=r_e_idx, n=n)
+        # Otherwise move the queued epochs window by half forward
+        else:
+            # Remove the old first half of the queued epochs
+            for i in range(0, window_move_size):
+                k = keys[i]
+                if k in epoch_queue:
+                    del epoch_queue[k]
 
-        with self.lock:
-            super(BasicDataSetIterator, self).get_next_batch()
+            # Add a new half in to the queued epochs
+            for i in range(0, window_move_size):
+                k = max_key+i+1
+                epoch_queue[k] = self._create_index_array_for_epoch(e_idx=k, n=n)
 
-            if self.batch_index == 0:
-                self.index_array = np.arange(self.n)
-                if self.shuffle:
-                    self.index_array = np.random.permutation(self.n)
+        # Final sanity check
+        if r_e_idx not in epoch_queue:
+            self.logger.warn('Requested for an epoch ({}) outside the sliding window distance: {}'.format(r_e_idx, window_move_size))
+            epoch_queue[r_e_idx] = self._create_index_array_for_epoch(e_idx=r_e_idx, n=n)
 
-            current_index = (self.batch_index * self.batch_size) % self.n
+    def _get_batch_parameters(self, n, batch_size, idx):
+        current_index = (idx * batch_size) % n
+        is_last_batch = False
 
-            if self.n > current_index + self.batch_size:
-                current_batch_size = self.batch_size
-                self.batch_index += 1
+        if n > idx + batch_size:
+            samples_in_batch = batch_size
+        else:
+            samples_in_batch = n - current_index
+            is_last_batch = True
+
+        return current_index, samples_in_batch, is_last_batch
+
+    def _flow_index(self):
+        # type: () -> (list[int])
+
+        """
+        Generates batch indices continuously. Increases the global step index on every call.
+
+        # Arguments
+            None
+        # Returns
+            :return: A list of indices (for a data batch)
+        """
+
+        # Ensure we start from a clean table with batch idx at zero and global step idx
+        # at 0
+        self.reset()
+
+        while 1:
+            b_idx = self.batch_index
+            e_idx = self.epoch_index
+
+            # Get labeled data
+            labeled_index_array = self._get_index_array_for_epoch(self.labeled_epoch_queue, e_idx=e_idx, n=self.n_labeled)
+            labeled_current_index, labeled_samples_in_batch, _ = self._get_batch_parameters(self.n_labeled, self.labeled_batch_size, b_idx)
+            labeled_batch = labeled_index_array[labeled_current_index:labeled_current_index + labeled_samples_in_batch]
+
+            # Get unlabeled data
+            if self.using_unlabeled_data:
+                unlabeled_index_array = self._get_index_array_for_epoch(epoch_queue=self.unlabeled_epoch_queue, e_idx=self.unlabeled_epoch_index, n=self.n_unlabeled)
+                ul_current_index, ul_samples_in_batch, ul_batch = self._get_batch_parameters(self.n_unlabeled, self.unlabeled_batch_size, self.unlabeled_batch_index)
+                unlabeled_batch = unlabeled_index_array[ul_current_index:ul_current_index + ul_samples_in_batch]
             else:
-                current_batch_size = self.n - current_index
-                self.batch_index = 0
+                unlabeled_batch = None
 
-            self.step_index += 1
+            self.global_step_index += 1
 
-            return self.index_array[current_index: current_index + current_batch_size], current_index, current_batch_size, self.step_index
+            yield labeled_batch, unlabeled_batch
 
-    @property
-    def num_steps_per_epoch(self):
-        return self._get_number_of_batches(self.n, self.batch_size)
+    def get_batch(self, e_idx, b_idx):
+        # type: (int, int) -> (list, list)
+
+        if b_idx >= len(self):
+            raise ValueError('Asked to retrieve element {idx}, but the Sequence has length {length}'.format(idx=b_idx, length=len(self)))
+
+        # Calculate the global step index
+        g_idx = self.num_steps_per_epoch * e_idx + b_idx
+
+        # Get labeled data
+        labeled_index_array = self._get_index_array_for_epoch(self.labeled_epoch_queue, e_idx=e_idx, n=self.n_labeled)
+        labeled_current_index, labeled_samples_in_batch, _ = self._get_batch_parameters(self.n_labeled, self.labeled_batch_size, b_idx)
+        labeled_batch = labeled_index_array[labeled_current_index:labeled_current_index + labeled_samples_in_batch]
+
+        # Get unlabeled data
+        if self.using_unlabeled_data:
+            ul_steps_per_epoch = int(np.ceil(self.n_unlabeled / float(self.unlabeled_batch_size)))
+            ul_b_idx = g_idx % ul_steps_per_epoch
+            ul_e_idx = g_idx/ul_steps_per_epoch
+            unlabeled_index_array = self._get_index_array_for_epoch(epoch_queue=self.unlabeled_epoch_queue, e_idx=ul_e_idx, n=self.n_unlabeled)
+            ul_current_index, ul_samples_in_batch, ul_batch = self._get_batch_parameters(self.n_unlabeled, self.unlabeled_batch_size, ul_b_idx)
+            unlabeled_batch = unlabeled_index_array[ul_current_index:ul_current_index + ul_samples_in_batch]
+        else:
+            unlabeled_batch = None
+
+        # Use the data generator to generate the data
+        self.logger.debug_log('b_idx: {}, e_idx: {}, g_idx: {}, pid: {}'.format(b_idx, e_idx, g_idx, os.getpid()))
+        return self.data_generator.get_data_batch(step_idx=g_idx,
+                                                  labeled_batch=labeled_batch,
+                                                  unlabeled_batch=unlabeled_batch)
+
+    def next(self):
+        # type: () -> (list, list)
+
+        """
+        Legacy support for threaded iteration.
+
+        # Arguments
+            None
+        # Returns
+            :return: A batch of data
+        """
+
+        # Keeps under lock only the mechanism which advances
+        # the indexing of each batch.
+        with self.lock:
+            step_idx = self.global_step_index
+            labeled_batch, unlabeled_batch = next(self._index_generator)
+
+        # The data generation is not under lock so it can be carried out in parallel
+        return self.data_generator.get_data_batch(step_idx=step_idx,
+                                                  labeled_batch=labeled_batch,
+                                                  unlabeled_batch=unlabeled_batch)
+
+    def on_epoch_end(self):
+        pass
+
 
 
 class MaterialSampleIterationMode(Enum):
@@ -183,7 +595,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         self._material_category_ignore_mask = np.equal(self._material_category_sampling_probabilities, 0.0)
         self._sampling_probability_update_mask = np.logical_not(self._material_category_ignore_mask)
 
-    def get_next_batch(self):
+    def get_next_batch(self, idx=None):
         # type: () -> (list[tuple[int]], int, int)
 
         """
@@ -270,27 +682,27 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         else:
             self.batch_index = 0
 
-        self.step_index += 1
+        self.global_step_index += 1
 
-        return batch, current_index, current_batch_size, self.step_index
+        return batch, current_index, current_batch_size, self.global_step_index
 
     def _get_next_batch_unique(self):
         if self.batch_index == 0 and self.shuffle:
             np.random.shuffle(self._material_samples_flattened)
 
-        current_index = (self.batch_index * self.batch_size) % self.n
+        current_index = (self.batch_index * self.batch_size) % self.n_labeled
 
-        if self.n > current_index + self.batch_size:
+        if self.n_labeled > current_index + self.batch_size:
             current_batch_size = self.batch_size
             self.batch_index += 1
         else:
-            current_batch_size = self.n - current_index
+            current_batch_size = self.n_labeled - current_index
             self.batch_index = 0
 
-        self.step_index += 1
+        self.global_step_index += 1
 
         batch = self._material_samples_flattened[current_index: current_index + current_batch_size]
-        return batch, current_index, current_batch_size, self.step_index
+        return batch, current_index, current_batch_size, self.global_step_index
 
     @property
     def num_steps_per_epoch(self):

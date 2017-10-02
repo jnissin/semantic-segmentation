@@ -15,19 +15,20 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 import keras
 import keras.backend as K
 from keras.optimizers import Optimizer
-from extended_optimizers import SGD, Adam
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau, EarlyStopping
+
+from keras_extensions.extended_optimizers import SGD, Adam
+from keras_extensions.extended_model import ExtendedModel
 
 from tensorflow.python.client import timeline
 
 from callbacks.optimizer_checkpoint import OptimizerCheckpoint
 from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
-from models.extended_model import ExtendedModel
 from generators import DataGenerator, SegmentationDataGenerator, MINCDataSet, ClassificationDataGenerator
 from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters, BatchDataFormat
 
 from utils import dataset_utils
-from models.models import ModelLambdaLossType, get_model
+from models import ModelLambdaLossType, get_model
 from utils import image_utils
 from utils import general_utils
 
@@ -121,8 +122,8 @@ class TrainerBase:
         self.validation_data_generator = None
         self.model_wrapper = None
 
-        self.initial_epoch = 0
-        self.initial_step = 0
+        self._initial_epoch = None
+        self._initial_step = None
         self.last_completed_epoch = -1
 
         # Profiling related variables
@@ -163,8 +164,16 @@ class TrainerBase:
 
         # Get data augmentation parameters
         self.data_augmentation_parameters = self._get_data_augmentation_parameters()
+
+        # Initialize data sets
         self.training_set_labeled, self.training_set_unlabeled, self.validation_set, self.test_set = self._get_data_sets()
+
+        # Initialize data generators
         self.training_data_generator, self.validation_data_generator = self._get_data_generators()
+
+        # Get the iterator references
+        self.training_data_iterator = self.training_data_generator.get_data_set_iterator()
+        self.validation_data_iterator = self.validation_data_generator.get_data_set_iterator()
 
         # Initialize model
         self._init_model()
@@ -199,16 +208,14 @@ class TrainerBase:
         self.model.summary()
 
         if self.continue_from_last_checkpoint:
-            self.initial_epoch = self._load_latest_weights_for_model(self.model, self.model_checkpoint_directory)
+            self._load_latest_weights_for_model(self.model, self.model_checkpoint_directory)
 
-            if self.training_data_generator is None or self.training_data_generator.num_steps_per_epoch < 1:
+            if self.training_data_generator is None or self.training_data_iterator.num_steps_per_epoch < 1:
                 raise ValueError('Cannot determine initial step - training data generator is not initialized')
-
-            self.initial_step = self.initial_epoch * self.training_data_generator.num_steps_per_epoch
 
         if self.use_transfer_weights:
             if self.initial_epoch != 0:
-                self.logger.warn('Cannot transfer weights when continuing from last checkpoint. Skipping weight transfer')
+                self.logger.warn('Should not transfer weights when continuing from last checkpoint. Skipping weight transfer')
                 lr_scalers = dict()
             else:
                 lr_scalers = self._transfer_weights(to_model_wrapper=self.model_wrapper)
@@ -276,6 +283,39 @@ class TrainerBase:
     def continue_from_last_checkpoint(self):
         # type: () -> bool
         return bool(self._get_config_value('continue_from_last_checkpoint'))
+
+    @property
+    def initial_epoch(self):
+        # type: () -> int
+        if self._initial_epoch is None:
+            if self.continue_from_last_checkpoint:
+                try:
+                    weight_file_path = self._get_latest_weights_file_path(self.model_checkpoint_directory)
+
+                    if weight_file_path is not None:
+                        weight_file = weight_file_path.split('/')[-1]
+
+                        if weight_file:
+                            # Parse the epoch number: <str>.<epoch>-<val_loss>.<str>
+                            epoch_val_loss = weight_file.split('.')[1].rsplit('-', 1)
+                            # Initial epoch is the next epoch so add one
+                            self._initial_epoch = int(epoch_val_loss[0]) + 1
+                except Exception as e:
+                    self._initial_epoch = 0
+            else:
+                self._initial_epoch = 0
+
+        return self._initial_epoch
+
+    @property
+    def initial_step(self):
+        # type: () -> int
+        if self._initial_step is None:
+            if self.training_data_iterator is None:
+                raise ValueError('Training data iterator is not set')
+
+            self._initial_step = self._initial_epoch * self.training_data_iterator.num_steps_per_epoch
+        return self._initial_step
 
     @property
     def continue_from_optimizer_checkpoint(self):
@@ -486,7 +526,7 @@ class TrainerBase:
 
             tensorboard_checkpoint_callback = TensorBoard(
                 log_dir=keras_tensorboard_log_path,
-                histogram_freq=1,
+                histogram_freq=0,
                 write_graph=True,
                 write_images=True,
                 write_grads=False,  # Note: writing grads for a bit network takes about an hour
@@ -667,30 +707,54 @@ class TrainerBase:
         else:
             return np.zeros(noise_shape)
 
-    def _get_latest_weights_file_path(self, weights_folder_path):
+    def _get_latest_weights_file_path(self, weights_directory_path, include_early_stop=False):
+        # Try to find weights from the checkpoint path
+        if os.path.isdir(weights_directory_path):
+            weights_folder_path = weights_directory_path
+        else:
+            weights_folder_path = os.path.dirname(weights_directory_path)
+
         weight_files = dataset_utils.get_files(weights_folder_path)
 
+        # Filter early stop if need be
+        if not include_early_stop:
+            weight_files = [f for f in weight_files if 'early_stop' not in f]
+
         if len(weight_files) > 0:
-            weight_files.sort()
-            weight_file = weight_files[-1]
+
+            # Find the file with the maximum epoch index: <str>.<epoch>-<val_loss>.<str>
+            max_file_idx = -1
+            max_epoch = -100
+
+            for idx, f in enumerate(weight_files):
+                if os.path.isfile(os.path.join(weights_folder_path, f)) and (".hdf5" in f):
+                    try:
+                        epoch_and_val_loss = f.split('.')[1].rsplit('-', 1)
+                        epoch = int(epoch_and_val_loss[0])
+
+                        if epoch > max_epoch:
+                            max_epoch = epoch
+                            max_file_idx = idx
+                    except Exception as e:
+                        continue
+
+            # Not found
+            if max_file_idx < 0:
+                return None
+
+            weight_file = weight_files[max_file_idx]
 
             if os.path.isfile(os.path.join(weights_folder_path, weight_file)) and (".hdf5" in weight_file):
                 return os.path.join(weights_folder_path, weight_file)
 
         return None
 
-    def _load_latest_weights_for_model(self, model, weights_directory_path):
+    def _load_latest_weights_for_model(self, model, weights_directory_path, include_early_stop=False):
         initial_epoch = 0
 
         try:
-            # Try to find weights from the checkpoint path
-            if os.path.isdir(weights_directory_path):
-                weights_folder = weights_directory_path
-            else:
-                weights_folder = os.path.dirname(weights_directory_path)
-
-            self.logger.log('Searching for existing weights from checkpoint path: {}'.format(weights_folder))
-            weight_file_path = self._get_latest_weights_file_path(weights_folder)
+            self.logger.log('Searching for existing weights from checkpoint path: {}'.format(weights_directory_path))
+            weight_file_path = self._get_latest_weights_file_path(weights_directory_path, include_early_stop=include_early_stop)
 
             if weight_file_path is None:
                 self.logger.log('Could not locate any suitable weight files from the given path')
@@ -702,9 +766,10 @@ class TrainerBase:
                 self.logger.log('Loading network weights from file: {}'.format(weight_file_path))
                 model.load_weights(weight_file_path)
 
-                # Parse the epoch number: <epoch>-<val_loss>
-                epoch_val_loss = weight_file.split('.')[1]
-                initial_epoch = int(epoch_val_loss.split('-')[0]) + 1
+                # Parse the epoch number: <str>.<epoch>-<val_loss>.<str>
+                epoch_val_loss = weight_file.split('.')[1].rsplit('-', 1)
+                # Initial epoch is the next epoch so add one
+                initial_epoch = int(epoch_val_loss[0]) + 1
                 self.logger.log('Continuing training from epoch: {}'.format(initial_epoch))
             else:
                 self.logger.log('No existing weights were found')
@@ -896,6 +961,7 @@ class MeanTeacherTrainerBase(TrainerBase):
 
         # If we are using the mean teacher method - read the configuration and initialize the instance variables
         self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
+        self.teacher_validation_data_iterator = self.teacher_validation_data_generator.get_data_set_iterator()
         self._init_teacher_model()
 
         # Trigger property initializations - raise errors if properties don't exist
@@ -1135,12 +1201,12 @@ class MeanTeacherTrainerBase(TrainerBase):
             # Default to -1.0 validation loss if nothing else is given
             val_loss = -1.0
 
-            if self.teacher_validation_data_generator is not None:
+            if self.teacher_validation_data_generator is not None and self.teacher_validation_data_iterator is not None:
                 # Evaluate the mean teacher on the validation data
-                validation_steps_per_epoch = self.teacher_validation_data_generator.num_steps_per_epoch
+                validation_steps_per_epoch = self.teacher_validation_data_iterator.num_steps_per_epoch
 
                 val_outs = self.teacher_model.evaluate_generator(
-                    generator=self.teacher_validation_data_generator,
+                    generator=self.teacher_validation_data_iterator,
                     steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
                     workers=dataset_utils.get_number_of_parallel_jobs())
 
@@ -1426,11 +1492,11 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     @property
     def training_data_generator_params(self):
         if self._training_data_generator_params is None:
+            # Note: the initial epoch is an index but the property is a number starting from 1
             self._training_data_generator_params = SegmentationDataGeneratorParameters(
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
                 num_crop_reattempts=self.num_crop_reattempts,
-                logger=self.logger,
                 random_seed=self.random_seed,
                 crop_shapes=self.crop_shape,
                 resize_shapes=self.resize_shape,
@@ -1444,7 +1510,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 use_adaptive_sampling=self.using_adaptive_sampling,
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
-                div2_constraint=self.div2_constraint)
+                div2_constraint=self.div2_constraint,
+                initial_epoch=self.initial_epoch-1)
 
         return self._training_data_generator_params
 
@@ -1455,7 +1522,6 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
                 num_crop_reattempts=self.num_crop_reattempts,
-                logger=self.logger,
                 random_seed=self.random_seed,
                 crop_shapes=self.validation_crop_shape,
                 resize_shapes=self.validation_resize_shape,
@@ -1656,7 +1722,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         # Labeled data set size determines the epochs
         training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
         validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
-        num_workers = dataset_utils.get_number_of_parallel_jobs()
+        num_workers = dataset_utils.get_number_of_parallel_jobs()-1
 
         if self.using_unlabeled_training_data:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
@@ -1933,9 +1999,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
     @property
     def training_data_generator_params(self):
         if self._training_data_generator_params is None:
+            # Note: the initial epoch is an index but the property is a number starting from 1
             self._training_data_generator_params = DataGeneratorParameters(
                 num_color_channels=self.num_color_channels,
-                logger=self.logger,
                 random_seed=self.random_seed,
                 crop_shapes=self.crop_shape,
                 resize_shapes=self.resize_shape,
@@ -1946,7 +2012,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 use_data_augmentation=self.use_data_augmentation,
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
-                div2_constraint=self.div2_constraint)
+                div2_constraint=self.div2_constraint,
+                initial_epoch=self.initial_epoch-1)
 
         return self._training_data_generator_params
 
@@ -1955,7 +2022,6 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         if self._validation_data_generator_params is None:
             self._validation_data_generator_params = DataGeneratorParameters(
                 num_color_channels=self.num_color_channels,
-                logger=self.logger,
                 random_seed=self.random_seed,
                 crop_shapes=self.validation_crop_shape,
                 resize_shapes=self.validation_resize_shape,
@@ -2090,9 +2156,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         assert isinstance(self.model, ExtendedModel)
 
         # Labeled data set size determines the epochs
-        training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
-        validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
-        num_workers = dataset_utils.get_number_of_parallel_jobs()
+        training_steps_per_epoch = self.training_data_iterator.num_steps_per_epoch
+        validation_steps_per_epoch = self.validation_data_iterator.num_steps_per_epoch
+        num_workers = dataset_utils.get_number_of_parallel_jobs()-1
 
         if self.using_unlabeled_training_data:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
@@ -2112,15 +2178,16 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         # Note: the student model should not be evaluated using the validation data generator
         # the generator input will not be meaning
         history = self.model.fit_generator(
-            generator=self.training_data_generator,
+            generator=self.training_data_iterator,
             steps_per_epoch=training_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
             epochs=self.num_epochs if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS,
             initial_epoch=self.initial_epoch,
-            validation_data=self.validation_data_generator,
+            validation_data=self.validation_data_iterator,
             validation_steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
             verbose=1,
             trainer=self,
             callbacks=callbacks,
+            use_multiprocessing=True,
             workers=num_workers)
 
         return history

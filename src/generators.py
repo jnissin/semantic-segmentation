@@ -1,13 +1,16 @@
 # coding=utf-8
 
+import time
 import random
 import numpy as np
-import threading
+
 from enum import Enum
 from typing import Callable
 from abc import ABCMeta, abstractmethod, abstractproperty
+
 import keras.backend as K
 from keras.preprocessing.image import img_to_array, array_to_img
+
 from PIL import Image
 
 from utils import dataset_utils
@@ -15,18 +18,33 @@ from utils import image_utils
 from utils.image_utils import ImageInterpolation, ImageTransform
 from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSample
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
-from iterators import BasicDataSetIterator, MaterialSampleDataSetIterator, MaterialSampleIterationMode
+from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator, MaterialSampleIterationMode
+from logger import Logger
 
 
 #######################################
 # UTILITY CLASSES
 #######################################
 
-
 class DataAugmentationParameters:
     """
     This class helps to maintain the data augmentation parameters for data generators.
     """
+
+    """
+    This static data store helps make unpickable parameters such as ramp-up
+    functions pickable
+    """
+
+    DATA_STORE = {}
+
+    @staticmethod
+    def _get_ds_item(key):
+        return DataAugmentationParameters.DATA_STORE.get(key, None)
+
+    @staticmethod
+    def _set_ds_item(key, value):
+        DataAugmentationParameters.DATA_STORE[key] = value
 
     def __init__(self,
                  augmentation_probability_function,
@@ -60,7 +78,7 @@ class DataAugmentationParameters:
         if augmentation_probability_function is None:
             raise ValueError('Augmentation probability function cannot be None - needs to be an evaluatable lambda function string')
 
-        self.augmentation_probability_function = eval(augmentation_probability_function)
+        self._augmentation_probability_function_str = augmentation_probability_function
         self.rotation_range = rotation_range
         self.zoom_range = zoom_range
         self.width_shift_range = width_shift_range
@@ -69,7 +87,13 @@ class DataAugmentationParameters:
         self.horizontal_flip = horizontal_flip
         self.vertical_flip = vertical_flip
         self.fill_mode = fill_mode
-        self.gaussian_noise_stddev_function = eval(gaussian_noise_stddev_function) if gaussian_noise_stddev_function is not None else None
+        self._gaussian_noise_stddev_function_str = gaussian_noise_stddev_function
+
+        if self._augmentation_probability_function_str is not None:
+            DataAugmentationParameters._set_ds_item(self._augmentation_probability_function_str, eval(self._augmentation_probability_function_str))
+
+        if self._gaussian_noise_stddev_function_str is not None:
+            DataAugmentationParameters._set_ds_item(self._gaussian_noise_stddev_function_str, eval(self._gaussian_noise_stddev_function_str))
 
         # Zoom range can either be a tuple or a scalar
         if zoom_range is None:
@@ -94,6 +118,20 @@ class DataAugmentationParameters:
         if gamma_adjust_range is not None and np.min(self.gamma_adjust_range) < 0.0:
             raise ValueError('Gamma should always be a positive value, now got range: {}'.format(list(gamma_adjust_range)))
 
+    @property
+    def augmentation_probability_function(self):
+        if self._augmentation_probability_function_str is not None:
+            return DataAugmentationParameters._get_ds_item(self._augmentation_probability_function_str)
+
+        return None
+
+    @property
+    def gaussian_noise_stddev_function(self):
+        if self._gaussian_noise_stddev_function_str is not None:
+            return DataAugmentationParameters._get_ds_item(self._gaussian_noise_stddev_function_str)
+
+        return None
+
 
 class DataGeneratorParameters(object):
     """
@@ -102,7 +140,6 @@ class DataGeneratorParameters(object):
 
     def __init__(self,
                  num_color_channels,
-                 logger,
                  random_seed=None,
                  crop_shapes=None,
                  resize_shapes=None,
@@ -114,13 +151,13 @@ class DataGeneratorParameters(object):
                  use_data_augmentation=False,
                  data_augmentation_params=None,
                  shuffle_data_after_epoch=True,
-                 div2_constraint=0):
+                 div2_constraint=0,
+                 initial_epoch=0):
         """
         Builds a wrapper for DataGenerator parameters
 
         # Arguments
             :param num_color_channels: number of channels in the photos; 1, 3 or 4
-            :param logger: a Logger instance for logging text and images
             :param random_seed: an integer random seed
             :param crop_shapes: size of the crop or None if no cropping should be applied
             :param resize_shapes: size of the desired resized images, None if no resizing should be applied
@@ -133,12 +170,12 @@ class DataGeneratorParameters(object):
             :param data_augmentation_params: parameters for data augmentation
             :param shuffle_data_after_epoch: should the data be shuffled after every epoch
             :param div2_constraint: how many times does the image/crop need to be divisible by two
+            :param initial_epoch: number of the initial epoch
         # Returns
             Nothing
         """
 
         self.num_color_channels = num_color_channels
-        self.logger = logger
         self.random_seed = random_seed
         self.crop_shapes = crop_shapes
         self.resize_shapes = resize_shapes
@@ -151,6 +188,7 @@ class DataGeneratorParameters(object):
         self.data_augmentation_params = data_augmentation_params
         self.shuffle_data_after_epoch = shuffle_data_after_epoch
         self.div2_constraint = div2_constraint
+        self.initial_epoch = initial_epoch
 
 
 class SegmentationDataGeneratorParameters(DataGeneratorParameters):
@@ -210,6 +248,9 @@ class DataGenerator(object):
     """
     Abstract class which declares necessary methods for different DataGenerators. Also,
     unwraps the DataGeneratorParameters to class member variables.
+
+    The DataGenerator class should be pickable i.e. everything should work when the class
+    is copied to multiple different processes.
     """
 
     __metaclass__ = ABCMeta
@@ -217,12 +258,10 @@ class DataGenerator(object):
     def __init__(self, batch_data_format, params):
         # type: (BatchDataFormat, DataGeneratorParameters) -> None
 
-        #self.lock = threading.Lock()
         self.batch_data_format = batch_data_format
 
         # Unwrap DataGeneratorParameters to member variables
         self.num_color_channels = params.num_color_channels
-        self.logger = params.logger
         self.random_seed = params.random_seed
         self._crop_shapes = params.crop_shapes
         self._resize_shapes = params.resize_shapes
@@ -235,8 +274,10 @@ class DataGenerator(object):
         self.data_augmentation_params = params.data_augmentation_params
         self.shuffle_data_after_epoch = params.shuffle_data_after_epoch
         self.div2_constraint = params.div2_constraint
+        self.initial_epoch = params.initial_epoch
 
         # Other member variables
+        self._logger = None
         self.img_data_format = K.image_data_format()
 
         # Use the given random seed for reproducibility
@@ -301,6 +342,13 @@ class DataGenerator(object):
                (self._resize_shapes[1] is not None and dataset_utils.count_trailing_zeroes(self._resize_shapes[1]) < self.div2_constraint):
                 raise ValueError('A resize shape {} does not satisfy the div2 constraint of {}'.format(self._resize_shapes, self.div2_constraint))
 
+    @property
+    def logger(self):
+        if self._logger is None:
+            self._logger = Logger(log_file_path=None, stdout_only=True)
+
+        return self._logger
+
     def get_batch_crop_shape(self):
         if self.using_random_crop_sizes:
             shape = self._crop_shapes[np.random.randint(0, len(self._crop_shapes))]
@@ -317,6 +365,20 @@ class DataGenerator(object):
 
         return self._resize_shapes
 
+    @abstractproperty
+    def using_unlabeled_data(self):
+        # type: () -> bool
+
+        """
+        Returns whether the DataGenerator is using unlabeled data.
+
+        # Arguments
+            None
+        # Returns
+            :return: true if using unlabeled data false otherwise
+        """
+        raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
+
     @abstractmethod
     def get_all_photos(self):
         # type: () -> list[ImageFile]
@@ -332,31 +394,35 @@ class DataGenerator(object):
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
     @abstractmethod
-    def next(self):
-        # type: () -> ()
+    def get_data_batch(self, step_idx, labeled_batch, unlabeled_batch):
+        # type: (int, list, list) -> (np.ndarray, np.ndarray)
 
         """
-        This method should yield batches of data. The arguments for derived classes might vary.
+        Returns a batch of data as numpy arrays. Either a tuple of (X, Y) or (X, Y, SW).
 
         # Arguments
-            None
+            :param step_idx: global step index
+            :param labeled_batch: index array describing the labeled data in the batch
+            :param unlabeled_batch: index array describing the unlabeled data in the batch
         # Returns
-            None
+            :return: A batch of data
         """
-        raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
+        # Sanity check for unlabeled data usage
+        if not self.using_unlabeled_data and unlabeled_batch is not None:
+            if len(unlabeled_batch) != 0:
+                self.logger.warn('Not using unlabeled data but unlabeled batch indices were provided')
 
-    @abstractproperty
-    def num_steps_per_epoch(self):
-        # type: () -> int
+        if self.using_unlabeled_data:
+            if unlabeled_batch is None or len(unlabeled_batch) == 0:
+                self.logger.warn('Using unlabeled data but no unlabeled data indices were provided')
 
-        """
-        This method returns the number of batches in epoch.
+        # Random seed - use the initial random seed and the global step
+        np.random.seed(self.random_seed + step_idx)
+        random.seed(self.random_seed + step_idx)
 
-        # Arguments
-            None
-        # Returns
-            :return: Number of batches (steps) per epoch
-        """
+    @abstractmethod
+    def get_data_set_iterator(self):
+        # type: () -> DataSetIterator
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
     def _resize_image(self, np_image, resize_shape, cval, interp):
@@ -510,6 +576,7 @@ class DataGenerator(object):
         channel_shift_ranges = [self.data_augmentation_params.channel_shift_range] * num_images if override_channel_shift_ranges is None else override_channel_shift_ranges
         gamma_adjust_ranges = [self.data_augmentation_params.gamma_adjust_range] * num_images if override_gamma_adjust_ranges is None else override_gamma_adjust_ranges
 
+        stime = time.time()
         images, transform = image_utils.np_apply_random_transform(images=images,
                                                                   cvals=cvals,
                                                                   fill_mode=self.data_augmentation_params.fill_mode,
@@ -1177,8 +1244,10 @@ class SegmentationDataGenerator(DataGenerator):
         if self.using_unlabeled_data:
             unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_iterator.get_next_batch()
 
+        stime = time.time()
         X, Y, W = self.get_labeled_batch_data(labeled_step_index, labeled_index_array, crop_shape, resize_shape)
         X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(unlabeled_step_index, unlabeled_index_array, crop_shape, resize_shape)
+        self.logger.debug_log('Data generation took: {}s'.format(time.time()-stime))
         X = X + X_unlabeled
         Y = Y + Y_unlabeled
         W = W + W_unlabeled
@@ -1378,21 +1447,6 @@ class ClassificationDataGenerator(DataGenerator):
 
         super(ClassificationDataGenerator, self).__init__(batch_data_format, params)
 
-        self.labeled_data_set_iterator = BasicDataSetIterator(
-            n=self.labeled_data_set.size,
-            batch_size=self.num_labeled_per_batch,
-            shuffle=self.shuffle_data_after_epoch,
-            seed=self.random_seed,
-            logger=self.logger)
-
-        if self.unlabeled_data_set is not None and self.unlabeled_data_set.size > 0 and self.num_unlabeled_per_batch > 0:
-            self.unlabeled_data_set_iterator = BasicDataSetIterator(
-                n=self.unlabeled_data_set.size,
-                batch_size=self.num_unlabeled_per_batch,
-                shuffle=self.shuffle_data_after_epoch,
-                seed=self.random_seed,
-                logger=self.logger)
-
         # Create a dummy label vector for unlabeled data (one-hot) all zeros
         self.dummy_label_vector = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
 
@@ -1412,9 +1466,18 @@ class ClassificationDataGenerator(DataGenerator):
 
         return photos
 
-    @property
-    def num_steps_per_epoch(self):
-        return self.labeled_data_set_iterator.num_steps_per_epoch
+    def get_data_set_iterator(self):
+        # type: () -> DataSetIterator
+        return BasicDataSetIterator(
+            data_generator=self,
+            n_labeled=self.labeled_data_set.size,
+            labeled_batch_size=self.num_labeled_per_batch,
+            n_unlabeled=self.unlabeled_data_set.size if self.using_unlabeled_data else 0,
+            unlabeled_batch_size=self.num_unlabeled_per_batch if self.using_unlabeled_data else 0,
+            shuffle=self.shuffle_data_after_epoch,
+            seed=self.random_seed,
+            logger=self.logger,
+            initial_epoch=self.initial_epoch)
 
     @property
     def using_unlabeled_data(self):
@@ -1430,24 +1493,22 @@ class ClassificationDataGenerator(DataGenerator):
         """
         return self.unlabeled_data_set is not None and \
                self.unlabeled_data_set.size > 0 and \
-               self.unlabeled_data_set_iterator is not None and \
                self.num_unlabeled_per_batch > 0 and \
                self.batch_data_format != BatchDataFormat.SUPERVISED
 
-    def next(self):
+    def get_data_batch(self, step_idx, labeled_batch, unlabeled_batch):
+        super(ClassificationDataGenerator, self).get_data_batch(step_idx, labeled_batch, unlabeled_batch)
+
         crop_shape = self.get_batch_crop_shape()
         resize_shape = self.get_batch_resize_shape()
         self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
 
-        # with self.lock:
-        labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_set_iterator.get_next_batch()
-        unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
+        self.logger.debug_log('Generating batch data for step {}: labeled: {}, unlabeled: {}'.format(step_idx, labeled_batch, unlabeled_batch))
+        stime = time.time()
+        X, Y, W = self.get_labeled_batch_data(step_idx, labeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
+        X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(step_idx, unlabeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
+        self.logger.debug_log('Data generation took: {}s'.format(time.time() - stime))
 
-        if self.using_unlabeled_data:
-            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_set_iterator.get_next_batch()
-
-        X, Y, W = self.get_labeled_batch_data(labeled_step_index, labeled_index_array, crop_shape=crop_shape, resize_shape=resize_shape)
-        X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(unlabeled_step_index, unlabeled_index_array, crop_shape=crop_shape, resize_shape=resize_shape)
         X = X + X_unlabeled
         Y = Y + Y_unlabeled
         W = W + W_unlabeled
@@ -1487,15 +1548,14 @@ class ClassificationDataGenerator(DataGenerator):
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
 
+        data = []
+
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500:
-            data = [self.get_labeled_sample_minc_2500(step_index=step_index,
-                                                      sample_index=sample_index,
-                                                      resize_shape=resize_shape) for sample_index in index_array]
+            for sample_index in index_array:
+                data.append(self.get_labeled_sample_minc_2500(step_index=step_index, sample_index=sample_index, resize_shape=resize_shape))
         elif self.labeled_data_set.data_set_type == MINCDataSetType.MINC:
-            data = [self.get_labeled_sample_minc(step_index=step_index,
-                                                 sample_index=sample_index,
-                                                 crop_shape=crop_shape,
-                                                 resize_shape=resize_shape) for sample_index in index_array]
+            for sample_index in index_array:
+                data.append(self.get_labeled_sample_minc(step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape))
         else:
             raise ValueError('Unknown data set type: {}'.format(self.labeled_data_set.data_set_type))
 
@@ -1606,10 +1666,11 @@ class ClassificationDataGenerator(DataGenerator):
             return [], [], []
 
         # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        unlabeled_data = [self.get_unlabeled_sample(step_index=step_index,
-                                                    sample_index=sample_index,
-                                                    crop_shape=crop_shape,
-                                                    resize_shape=resize_shape) for sample_index in index_array]
+        unlabeled_data = []
+
+        for sample_index in index_array:
+            unlabeled_data.append(self.get_unlabeled_sample(step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape))
+
         X_unlabeled, Y_unlabeled, W_unlabeled = zip(*unlabeled_data)
 
         return list(X_unlabeled), list(Y_unlabeled), list(W_unlabeled)
@@ -1636,7 +1697,6 @@ class ClassificationDataGenerator(DataGenerator):
             images, _ = self._apply_data_augmentation_to_images(images=[np_image],
                                                                 cvals=[self.photo_cval],
                                                                 interpolations=[ImageInterpolation.BICUBIC])
-
             # Unpack the photo
             np_image, = images
 

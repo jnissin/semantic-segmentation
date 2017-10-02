@@ -157,10 +157,12 @@ class ImageSet(object):
         self._file_name_to_image_file = dict()
         self._file_name_to_image_file_no_ext = dict()
         self._tar_file = None
-        self._tar_read_lock = threading.Lock()
+        self._tar_read_lock = None
 
         if os.path.isfile(path_to_archive) and tarfile.is_tarfile(path_to_archive):
+            # Instantiate the tar file and a tar file read lock (doesn't support multi-threading)
             self._tar_file = tarfile.open(name=path_to_archive, mode=mode)
+            self._tar_read_lock = threading.Lock()
 
             if self._tar_file is None:
                 raise ValueError('Could not open tar archive from path: {}'.format(path_to_archive))

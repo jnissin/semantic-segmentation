@@ -10,8 +10,6 @@ except ImportError:
 import warnings
 import numpy as np
 
-from keras.utils import Sequence
-from keras.utils import OrderedEnqueuer
 from keras.engine.training import Model
 from keras.engine.training import GeneratorEnqueuer
 from keras.engine.training import _standardize_input_data
@@ -20,6 +18,8 @@ from keras import backend as K
 from keras import callbacks as cbks
 from keras.legacy import interfaces
 
+from utils.data_utils import Sequence
+from utils.data_utils import OrderedEnqueuer
 
 from ..logger import Logger, LogLevel
 
@@ -38,6 +38,7 @@ class ExtendedModel(Model):
 
     fit_generator_stopped = False
     logger = None
+    enqueuer = None
 
     def log(self, message, log_level=LogLevel.INFO):
         # type: (str, LogLevel) -> None
@@ -48,7 +49,11 @@ class ExtendedModel(Model):
             print '{}: {}'.format(log_level.value, message)
 
     def stop_fit_generator(self):
-        self.fit_generator_stopped = True
+        if not self.fit_generator_stopped:
+            if self.enqueuer is not None:
+                self.enqueuer.stop()
+
+            self.fit_generator_stopped = True
 
     def predict_on_batch(self, x, use_training_phase_layers=False):
         """Returns predictions for a single batch of samples.
@@ -88,6 +93,7 @@ class ExtendedModel(Model):
                       max_queue_size=10,
                       workers=1,
                       use_multiprocessing=False,
+                      shuffle=True,
                       initial_epoch=0,
                       trainer=None):
         """Fits the model on data yielded batch-by-batch by a Python generator.
@@ -138,6 +144,9 @@ class ExtendedModel(Model):
                 non picklable arguments to the generator
                 as they can't be passed
                 easily to children processes.
+            shuffle: Whether to shuffle the data at the beginning of each
+                epoch. Only used with instances of `Sequence` (
+                keras.utils.Sequence).
             initial_epoch: epoch at which to start training
                 (useful for resuming a previous training run)
             trainer: reference to a TrainerBase inherited object
@@ -235,18 +244,22 @@ class ExtendedModel(Model):
                             ' and multiple workers may duplicate your data.'
                             ' Please consider using the`keras.utils.Sequence'
                             ' class.'))
-        enqueuer = None
+        self.enqueuer = None
 
         try:
             if is_sequence:
-                enqueuer = OrderedEnqueuer(generator,
-                                           use_multiprocessing=use_multiprocessing)
+                # Note: initial epoch - 1 because indexing starts from 0
+                self.enqueuer = OrderedEnqueuer(generator,
+                                                use_multiprocessing=use_multiprocessing,
+                                                shuffle=shuffle,
+                                                initial_epoch=initial_epoch-1,
+                                                max_epoch=epochs)
             else:
-                enqueuer = GeneratorEnqueuer(generator,
-                                             use_multiprocessing=use_multiprocessing,
-                                             wait_time=wait_time)
-            enqueuer.start(workers=workers, max_queue_size=max_queue_size)
-            output_generator = enqueuer.get()
+                self.enqueuer = GeneratorEnqueuer(generator,
+                                                  use_multiprocessing=use_multiprocessing,
+                                                  wait_time=wait_time)
+            self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            output_generator = self.enqueuer.get()
 
             callback_model.stop_training = False
             while epoch < epochs:
@@ -360,8 +373,8 @@ class ExtendedModel(Model):
                     break
 
         finally:
-            if enqueuer is not None:
-                enqueuer.stop()
+            if self.enqueuer is not None:
+                self.enqueuer.stop()
 
         # Extended functionality: notify trainer
         if trainer is not None:
@@ -375,8 +388,8 @@ class ExtendedModel(Model):
                            max_queue_size=10,
                            workers=1,
                            use_multiprocessing=False,
-                           trainer=None,
-                           validation=False):
+                           validation=False,
+                           trainer=None):
         """Evaluates the model on a data generator.
 
         The generator should return the same kind of data
@@ -393,6 +406,7 @@ class ExtendedModel(Model):
             max_queue_size: maximum size for the generator queue
             workers: maximum number of processes to spin up
                 when using process based threading
+            trainer: a reference to TrainerBase inherited object to augment batch data if need be
             use_multiprocessing: if True, use process based threading.
                 Note that because
                 this implementation relies on multiprocessing,
@@ -400,8 +414,6 @@ class ExtendedModel(Model):
                 non picklable arguments to the generator
                 as they can't be passed
                 easily to children processes.
-            trainer: a reference to TrainerBase inherited object to augment batch data if need be
-            validation: is this a validation run evaluation
 
         # Returns
             Scalar test loss (if the model has a single output and no metrics)
@@ -431,7 +443,8 @@ class ExtendedModel(Model):
         try:
             if is_sequence:
                 enqueuer = OrderedEnqueuer(generator,
-                                           use_multiprocessing=use_multiprocessing)
+                                           use_multiprocessing=use_multiprocessing,
+                                           max_epoch=1)
             else:
                 enqueuer = GeneratorEnqueuer(generator,
                                              use_multiprocessing=use_multiprocessing,

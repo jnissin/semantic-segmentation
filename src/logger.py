@@ -23,6 +23,7 @@ class Logger(object):
 
         self.log_file_path = log_file_path
         self.log_file = None
+        self.log_images_folder_path = None
         self.use_timestamp = use_timestamp
         self.log_to_stdout_default = log_to_stdout_default
         self.stdout_only = stdout_only
@@ -34,7 +35,7 @@ class Logger(object):
             if not self.stdout_only:
                 self.log_images_folder_path = os.path.join(os.path.dirname(log_file_path), 'log_images/')
 
-        if self.log_images_folder_path is not None:
+        if not self.stdout_only and self.log_images_folder_path is not None:
             general_utils.create_path_if_not_existing(self.log_images_folder_path)
 
     @property

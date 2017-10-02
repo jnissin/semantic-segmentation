@@ -20,10 +20,10 @@ from keras.layers import Input
 from layers.pooling import MaxPoolingWithArgmax2D
 from layers.pooling import MaxUnpooling2D
 
-from extended_model import ExtendedModel
+from keras_extensions.extended_model import ExtendedModel
 
-from .. import losses
-from ..logger import Logger
+import losses
+from logger import Logger
 
 ##############################################
 # ENUM MODEL TYPES

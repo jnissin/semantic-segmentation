@@ -2,6 +2,7 @@
 
 from keras import backend as K
 from keras.optimizers import Optimizer
+from keras.legacy import interfaces
 
 
 class SGD(Optimizer):
@@ -15,21 +16,22 @@ class SGD(Optimizer):
         momentum: float >= 0. Parameter updates momentum.
         decay: float >= 0. Learning rate decay over each update.
         nesterov: boolean. Whether to apply Nesterov momentum.
-        lr_scalers: layer specific learning rate scaling factors, a dict of {layer_idx (int): lr_scale (float)}
     """
 
     def __init__(self, lr=0.01, momentum=0., decay=0.,
                  nesterov=False, lr_scalers={}, **kwargs):
         super(SGD, self).__init__(**kwargs)
-        self.iterations = K.variable(0., name='iterations')
-        self.lr = K.variable(lr, name='lr')
-        self.momentum = K.variable(momentum, name='momentum')
-        self.decay = K.variable(decay, name='decay')
+        with K.name_scope(self.__class__.__name__):
+            self.iterations = K.variable(0., name='iterations')
+            self.lr = K.variable(lr, name='lr')
+            self.momentum = K.variable(momentum, name='momentum')
+            self.decay = K.variable(decay, name='decay')
         self.initial_decay = decay
         self.nesterov = nesterov
         self.lr_scalers = lr_scalers
 
-    def get_updates(self, params, constraints, loss):
+    @interfaces.legacy_get_updates_support
+    def get_updates(self, loss, params):
         grads = self.get_gradients(loss, params)
         self.updates = []
 
@@ -56,10 +58,9 @@ class SGD(Optimizer):
             else:
                 new_p = p + v
 
-            # apply constraints
-            if p in constraints:
-                c = constraints[p]
-                new_p = c(new_p)
+            # Apply constraints.
+            if getattr(p, 'constraint', None) is not None:
+                new_p = p.constraint(new_p)
 
             self.updates.append(K.update(p, new_p))
         return self.updates
@@ -85,7 +86,7 @@ class Adam(Optimizer):
         beta_2: float, 0 < beta < 1. Generally close to 1.
         epsilon: float >= 0. Fuzz factor.
         decay: float >= 0. Learning rate decay over each update.
-        lr_scalers: layer specific learning rate scaling factors, a dict of {layer_idx (int): lr_scale (float)}
+
     # References
         - [Adam - A Method for Stochastic Optimization](http://arxiv.org/abs/1412.6980v8)
     """
@@ -93,16 +94,18 @@ class Adam(Optimizer):
     def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999,
                  epsilon=1e-8, decay=0., lr_scalers={}, **kwargs):
         super(Adam, self).__init__(**kwargs)
-        self.iterations = K.variable(0, name='iterations')
-        self.lr = K.variable(lr, name='lr')
-        self.beta_1 = K.variable(beta_1, name='beta_1')
-        self.beta_2 = K.variable(beta_2, name='beta_2')
+        with K.name_scope(self.__class__.__name__):
+            self.iterations = K.variable(0, name='iterations')
+            self.lr = K.variable(lr, name='lr')
+            self.beta_1 = K.variable(beta_1, name='beta_1')
+            self.beta_2 = K.variable(beta_2, name='beta_2')
+            self.decay = K.variable(decay, name='decay')
         self.epsilon = epsilon
-        self.decay = K.variable(decay, name='decay')
         self.initial_decay = decay
         self.lr_scalers = lr_scalers
 
-    def get_updates(self, params, constraints, loss):
+    @interfaces.legacy_get_updates_support
+    def get_updates(self, loss, params):
         grads = self.get_gradients(loss, params)
         self.updates = [K.update_add(self.iterations, 1)]
 
@@ -131,10 +134,11 @@ class Adam(Optimizer):
             self.updates.append(K.update(v, v_t))
 
             new_p = p_t
-            # apply constraints
-            if p in constraints:
-                c = constraints[p]
-                new_p = c(new_p)
+
+            # Apply constraints.
+            if getattr(p, 'constraint', None) is not None:
+                new_p = p.constraint(new_p)
+
             self.updates.append(K.update(p, new_p))
         return self.updates
 

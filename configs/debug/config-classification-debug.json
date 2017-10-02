@@ -3,7 +3,7 @@
     "path_to_data_set_information_file": null,
     "path_to_labeled_photos": "data/classification/minc-2500/images",
     "path_to_labeled_masks": null,
-    "path_to_unlabeled_photos": "data/512/unlabeled.tar.gz",
+    "path_to_unlabeled_photos": "data/debug/512/unlabeled/",
 
     "log_file_path": "model-data/{model_folder}/logs/log.txt",
     "log_to_stdout": true,
@@ -32,8 +32,8 @@
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
 
-    "num_labeled_per_batch": 20,
-    "num_unlabeled_per_batch": 20,
+    "num_labeled_per_batch": 10,
+    "num_unlabeled_per_batch": 10,
     "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": null,
     "validation_resize_shape": null,
@@ -58,7 +58,7 @@
     "use_material_samples": true,
 
     "data_augmentation_params": {
-      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/12000.0)**2)), 1.0) ), 1.0 )",
+      "augmentation_probability_function": "lambda x: 0.8",
       "rotation_range": 40.0,
       "zoom_range": 0.25,
       "width_shift_range": 0.05,
@@ -71,9 +71,9 @@
     },
 
     "classification_data_set_params": {
-      "path_to_training_set_file": "data/classification/minc-2500/labels/train1.txt",
-      "path_to_validation_set_file": "data/classification/minc-2500/labels/validate1.txt",
-      "path_to_test_set_file": "data/classification/minc-2500/labels/test1.txt",
+      "path_to_training_set_file": "data/classification/minc-2500/labels/train_debug.txt",
+      "path_to_validation_set_file": "data/classification/minc-2500/labels/validate_debug.txt",
+      "path_to_test_set_file": "data/classification/minc-2500/labels/test_debug.txt",
       "path_to_label_mapping_file": "data/classification/minc_labels_to_custom_labels.csv",
       "per_channel_mean": [0.042277198388347176, -0.05902213174885779, -0.1724008530728984],
       "per_channel_mean_labeled": [0.015220912425156647, -0.082662119450916519, -0.19088522955180201],
