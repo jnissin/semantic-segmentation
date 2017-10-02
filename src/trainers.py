@@ -1215,8 +1215,13 @@ class MeanTeacherTrainerBase(TrainerBase):
                 # Parse all validation metrics to a single string
                 metrics_names = self.teacher_model.metrics_names
                 val_outs_str = ""
+
                 for i in range(0, len(val_outs)):
                     val_outs_str = val_outs_str + "val_{}: {}, ".format(metrics_names[i], val_outs[i])
+
+                    if metrics_names[i] == 'loss':
+                        val_loss = val_outs[i]
+
                 val_outs_str = val_outs_str[0:-2]
 
                 self.logger.log('Epoch {}: Teacher model {}'.format(epoch_index, val_outs_str))
@@ -1908,7 +1913,10 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         self._training_data_generator_params = None
         self._validation_data_generator_params = None
 
-        super(ClassificationTrainer, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
+        super(ClassificationTrainer, self).__init__(trainer_type=trainer_type,
+                                                    model_name=model_name,
+                                                    model_folder_name=model_folder_name,
+                                                    config_file_path=config_file_path)
 
     @property
     def path_to_labeled_photos(self):
