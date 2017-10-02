@@ -288,6 +288,8 @@ class TrainerBase:
     def initial_epoch(self):
         # type: () -> int
         if self._initial_epoch is None:
+            self._initial_epoch = 0
+
             if self.continue_from_last_checkpoint:
                 try:
                     weight_file_path = self._get_latest_weights_file_path(self.model_checkpoint_directory)
@@ -302,8 +304,6 @@ class TrainerBase:
                             self._initial_epoch = int(epoch_val_loss[0]) + 1
                 except Exception as e:
                     self._initial_epoch = 0
-            else:
-                self._initial_epoch = 0
 
         return self._initial_epoch
 
@@ -1208,10 +1208,18 @@ class MeanTeacherTrainerBase(TrainerBase):
                 val_outs = self.teacher_model.evaluate_generator(
                     generator=self.teacher_validation_data_iterator,
                     steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
-                    workers=dataset_utils.get_number_of_parallel_jobs())
+                    workers=max(dataset_utils.get_number_of_parallel_jobs()-1, 1),
+                    use_multiprocessing=True,
+                    validation=True)
 
-                val_loss = val_outs[0]
-                self.logger.log('Epoch {}: Teacher model val_loss: {}'.format(epoch_index, val_loss))
+                # Parse all validation metrics to a single string
+                metrics_names = self.teacher_model.metrics_names
+                val_outs_str = ""
+                for i in range(0, len(val_outs)):
+                    val_outs_str = val_outs_str + "val_{}: {}, ".format(metrics_names[i], val_outs[i])
+                val_outs_str = val_outs_str[0:-2]
+
+                self.logger.log('Epoch {}: Teacher model {}'.format(epoch_index, val_outs_str))
 
             self.logger.log('Epoch {}: EMA coefficient {}, consistency cost coefficient: {}'
                             .format(epoch_index, self.ema_smoothing_coefficient_function(step_index),
@@ -1511,7 +1519,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                initial_epoch=self.initial_epoch-1)
+                initial_epoch=max(self.initial_epoch-1, 0))
 
         return self._training_data_generator_params
 
@@ -1722,7 +1730,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         # Labeled data set size determines the epochs
         training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
         validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
-        num_workers = dataset_utils.get_number_of_parallel_jobs()-1
+        num_workers = max(dataset_utils.get_number_of_parallel_jobs()-1, 1)
 
         if self.using_unlabeled_training_data:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
@@ -2013,7 +2021,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                initial_epoch=self.initial_epoch-1)
+                initial_epoch=max(self.initial_epoch-1, 0))
 
         return self._training_data_generator_params
 

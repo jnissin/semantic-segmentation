@@ -252,7 +252,7 @@ class ExtendedModel(Model):
                 self.enqueuer = OrderedEnqueuer(generator,
                                                 use_multiprocessing=use_multiprocessing,
                                                 shuffle=shuffle,
-                                                initial_epoch=initial_epoch-1,
+                                                initial_epoch=max(initial_epoch-1, 0),
                                                 max_epoch=epochs)
             else:
                 self.enqueuer = GeneratorEnqueuer(generator,
