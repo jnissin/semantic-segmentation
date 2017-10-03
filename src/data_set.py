@@ -64,8 +64,6 @@ class ImageFile(object):
             self.type = ImageFileType.TAR
         elif file_path is not None:
             self._file_name = os.path.basename(file_path)
-            if self._file_path is 'l':
-                self._file_name = self.file_name.split('_')[0] + '/'+ self._file_name
             self.type = ImageFileType.FILE_PATH
 
     def __eq__(self, other):
@@ -125,7 +123,7 @@ class ImageFile(object):
         elif self.type == ImageFileType.FILE_PATH:
             p = None
             if self._file_path is 'l':
-                p = SHARED_L
+                p = SHARED_L + '/' + self.file_name.split('_')[0]
             else:
                 p = SHARED_UL
 
