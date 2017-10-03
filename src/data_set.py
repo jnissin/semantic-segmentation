@@ -22,6 +22,9 @@ class ImageFileType(Enum):
     TAR = 0,
     FILE_PATH = 1
 
+SHARED_UL = '/scratch/work/jhnissin/semantic-segmentation/data/1024/unlabeled'
+SHARED_L = '/scratch/work/jhnissin/semantic-segmentation/data/classification/minc-2500/images'
+
 
 class ImageFile(object):
 
@@ -48,7 +51,7 @@ class ImageFile(object):
         if file_path is not None and (tar_file is not None or tar_info is not None):
             raise ValueError('You cannot provide both file path and tar information')
 
-        self._file_path = file_path
+        self._file_path = 'l' if 'minc' in file_path else 'u'
         self._tar_file = tar_file
         self._tar_info = tar_info
         self._tar_read_lock = tar_read_lock
@@ -118,8 +121,13 @@ class ImageFile(object):
                 img = Image.open(f)
                 img.load()
         elif self.type == ImageFileType.FILE_PATH:
-            img = Image.open(self._file_path)
-        else:
+            p = None
+            if self._file_path is 'l':
+                p = SHARED_L
+            else:
+                p = SHARED_UL
+
+            img = Image.open(os.path.join(p, self._file_name))
             raise ValueError('Cannot open ImageFileType: {}'.format(self.type))
 
         if color_channels == 1:
