@@ -331,7 +331,9 @@ class ExtendedModel(Model):
 
                     # Extended functionality: notify trainer
                     if trainer is not None:
+                        s_time = time.time()
                         trainer.on_batch_end(step_index)
+                        self.log('Trainer on_batch_end took: {}s'.format(time.time()-s_time))
 
                     # Construct epoch logs.
                     epoch_logs = {}
