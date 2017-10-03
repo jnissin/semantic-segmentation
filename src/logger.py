@@ -2,11 +2,13 @@
 
 import os
 import datetime
+
 from enum import Enum
 
-import settings
-from utils import general_utils
 from keras.preprocessing.image import array_to_img
+
+from utils import general_utils
+import settings
 
 
 class LogLevel(Enum):

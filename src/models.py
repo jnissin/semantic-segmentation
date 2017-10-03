@@ -1,7 +1,7 @@
 # coding=utf-8
 
 from abc import ABCMeta, abstractmethod
-from enum import Enum, unique
+from enum import Enum
 
 import keras.backend as K
 
@@ -21,9 +21,9 @@ from layers.pooling import MaxPoolingWithArgmax2D
 from layers.pooling import MaxUnpooling2D
 
 from keras_extensions.extended_model import ExtendedModel
+from logger import Logger
 
 import losses
-from logger import Logger
 
 ##############################################
 # ENUM MODEL TYPES
@@ -47,7 +47,7 @@ class ModelLambdaLossType(Enum):
 class WeightTransferInformation(object):
 
     def __init__(self, num_transferred_layers, last_transferred_layer_name, num_frozen_layers=0, last_frozen_layer_name=None, lr_scalers=dict()):
-        # type: (int, str, int, str) -> None
+        # type: (int, str, int, str, dict) -> None
 
         self.num_transferred_layers = num_transferred_layers
         self.last_transferred_layer_name = last_transferred_layer_name
@@ -58,6 +58,7 @@ class WeightTransferInformation(object):
     @property
     def num_lr_scaling_layers(self):
         return len(self.lr_scalers)
+
 
 #############################################
 # UTILITY FUNCTIONS

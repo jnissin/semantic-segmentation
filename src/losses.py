@@ -1,6 +1,7 @@
 # coding=utf-8
 
 import numpy as np
+
 from keras import backend as K
 
 import settings

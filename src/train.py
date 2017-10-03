@@ -5,8 +5,9 @@ import os
 import signal
 import sys
 
-import settings
 from trainers import SegmentationTrainer, ClassificationTrainer, TrainerBase
+
+import settings
 
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = False
 _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
