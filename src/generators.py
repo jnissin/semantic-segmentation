@@ -1502,12 +1502,12 @@ class ClassificationDataGenerator(DataGenerator):
         crop_shape = self.get_batch_crop_shape()
         resize_shape = self.get_batch_resize_shape()
         self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
+        stime = time.time()
 
         self.logger.debug_log('Generating batch data for step {}: labeled: {}, unlabeled: {}'.format(step_idx, labeled_batch, unlabeled_batch))
-        stime = time.time()
         X, Y, W = self.get_labeled_batch_data(step_idx, labeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
         X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(step_idx, unlabeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
-        self.logger.debug_log('Data generation took: {}s'.format(time.time() - stime))
+        self.logger.log('Raw data generation took: {}s'.format(time.time() - stime))
 
         X = X + X_unlabeled
         Y = Y + Y_unlabeled
@@ -1544,6 +1544,7 @@ class ClassificationDataGenerator(DataGenerator):
         else:
             raise ValueError('Unknown batch data format: {}'.format(self.batch_data_format))
 
+        self.logger.log('Data generation took in total: {}s'.format(time.time() - stime))
         return batch_input_data, batch_output_data
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):

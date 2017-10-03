@@ -294,13 +294,18 @@ class ExtendedModel(Model):
                         batch_size = x.shape[0]
                     batch_logs['batch'] = batch_index
                     batch_logs['size'] = batch_size
+                    s_time = time.time()
                     callbacks.on_batch_begin(batch_index, batch_logs)
+                    self.log('Callbacks on_batch_begin took: {}s'.format(time.time()-s_time))
+
 
                     step_index = steps_done + epoch*steps_per_epoch
 
                     # Extended functionality: notify trainer
                     if trainer is not None:
+                        s_time = time.time()
                         x, y = trainer.modify_batch_data(step_index, x, y)
+                        self.log('Trainer modify_batch_data took: {}s'.format(time.time()-s_time))
 
                     # Extended functionality: stop if early stopping has been initiated
                     if self.fit_generator_stopped:
@@ -313,14 +318,16 @@ class ExtendedModel(Model):
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
 
-                    self.log('Train on batch took: {} s'.format(time.time()-s_time), log_level=LogLevel.PROFILE)
+                    self.log('Train on batch took: {} s'.format(time.time()-s_time), log_level=LogLevel.INFO)
 
                     if not isinstance(outs, list):
                         outs = [outs]
                     for l, o in zip(out_labels, outs):
                         batch_logs[l] = o
 
+                    s_time = time.time()
                     callbacks.on_batch_end(batch_index, batch_logs)
+                    self.log('Callbacks on_batch_end took: {}s'.format(time.time()-s_time))
 
                     # Extended functionality: notify trainer
                     if trainer is not None:
@@ -347,7 +354,7 @@ class ExtendedModel(Model):
                                 use_multiprocessing=use_multiprocessing,
                                 validation=True)
 
-                            self.log('Validation evaluation took: {}'.format(time.time()-s_time), log_level=LogLevel.PROFILE)
+                            self.log('Validation evaluation took: {}'.format(time.time()-s_time), log_level=LogLevel.INFO)
                         else:
                             # No need for try/except because
                             # data has already been validated.
