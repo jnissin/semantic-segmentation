@@ -22,22 +22,23 @@ from keras_extensions.extended_model import ExtendedModel
 
 from tensorflow.python.client import timeline
 
+from utils import dataset_utils
+from utils import image_utils
+from utils import general_utils
+
 from callbacks.optimizer_checkpoint import OptimizerCheckpoint
 from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
 from generators import DataGenerator, SegmentationDataGenerator, MINCDataSet, ClassificationDataGenerator
 from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters, BatchDataFormat
 
-from utils import dataset_utils
-from models import ModelLambdaLossType, get_model
-from utils import image_utils
-from utils import general_utils
-
+from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
-from utils.dataset_utils import MaterialClassInformation, SegmentationDataSetInformation
+from models import ModelLambdaLossType
+
+import models
 import losses
 import metrics
 import settings
-from logger import Logger
 
 
 #############################################
@@ -199,11 +200,11 @@ class TrainerBase:
         self.logger.log('Creating model {} instance with type: {}, input shape: {}, num classes: {}'
                         .format(self.model_name, model_lambda_loss_type, self.input_shape, self.num_classes))
 
-        self.model_wrapper = get_model(self.model_name,
-                                       self.input_shape,
-                                       self.num_classes,
-                                       logger=self.logger,
-                                       model_lambda_loss_type=model_lambda_loss_type)
+        self.model_wrapper = models.get_model(self.model_name,
+                                              self.input_shape,
+                                              self.num_classes,
+                                              logger=self.logger,
+                                              model_lambda_loss_type=model_lambda_loss_type)
 
         self.model.summary()
 
@@ -795,9 +796,9 @@ class TrainerBase:
 
         self.logger.log('Creating transfer model: {} with input shape: {}, num classes: {}'
                         .format(transfer_model_name, transfer_model_input_shape, transfer_model_num_classes))
-        transfer_model_wrapper = get_model(transfer_model_name,
-                                           transfer_model_input_shape,
-                                           transfer_model_num_classes)
+        transfer_model_wrapper = models.get_model(transfer_model_name,
+                                                  transfer_model_input_shape,
+                                                  transfer_model_num_classes)
         transfer_model = transfer_model_wrapper.model
         transfer_model.summary()
 
@@ -979,7 +980,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             teacher_model_lambda_loss_type = self._get_teacher_model_lambda_loss_type()
 
             self.logger.log('Creating teacher model {} instance with lambda loss type: {}, input shape: {}, num classes: {}'.format(self.model_name, teacher_model_lambda_loss_type, self.input_shape, self.num_classes))
-            self.teacher_model_wrapper = get_model(self.model_name, self.input_shape, self.num_classes, logger=self.logger, model_lambda_loss_type=teacher_model_lambda_loss_type)
+            self.teacher_model_wrapper = models.get_model(self.model_name, self.input_shape, self.num_classes, logger=self.logger, model_lambda_loss_type=teacher_model_lambda_loss_type)
             self.teacher_model.summary()
 
             if self.continue_from_last_checkpoint:
