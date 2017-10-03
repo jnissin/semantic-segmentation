@@ -128,6 +128,7 @@ class ImageFile(object):
                 p = SHARED_UL
 
             img = Image.open(os.path.join(p, self._file_name))
+        else:
             raise ValueError('Cannot open ImageFileType: {}'.format(self.type))
 
         if color_channels == 1:
