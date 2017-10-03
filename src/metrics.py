@@ -87,7 +87,6 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
         num_correct_samples = K.tf.reduce_sum(K.tf.cast(K.tf.equal(labels, predictions), dtype=K.tf.float32))
         num_incorrect_samples = K.tf.reduce_sum(K.tf.cast(K.tf.not_equal(labels, predictions), dtype=K.tf.float32))
         num_samples = num_correct_samples + num_incorrect_samples - num_ignored_samples
-
         return num_correct_samples / num_samples
 
     return acc
