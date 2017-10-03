@@ -6,12 +6,11 @@ import multiprocessing
 import random
 import threading
 import time
+import os
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
 
 import numpy as np
-
-from keras.utils.data_utils import SequenceEnqueuer
 
 try:
     import queue
@@ -51,8 +50,14 @@ class Sequence(object):
         raise NotImplementedError
 
 
-def get_index(ds, e_idx, b_idx):
-    # type: (Sequence, int, int) -> (list, list)
+# Global variables to be shared across processes
+_SHARED_SEQUENCE = None
+_MANAGER = multiprocessing.Manager()
+_SHARED_DICT = _MANAGER.dict()
+
+
+def get_index(e_idx, b_idx):
+    # type: (int, int) -> (list, list)
 
     """Quick fix for Python2, otherwise, it cannot be pickled.
 
@@ -64,7 +69,85 @@ def get_index(ds, e_idx, b_idx):
     # Returns
         The value at index `i`.
     """
-    return ds.get_batch(e_idx=e_idx, b_idx=b_idx)
+    global _SHARED_SEQUENCE
+    return _SHARED_SEQUENCE.get_batch(e_idx=e_idx, b_idx=b_idx)
+
+
+def _update_sequence(seq):
+    """Update current process with a new Sequence.
+    # Arguments
+        seq: Sequence object
+    """
+    global _SHARED_SEQUENCE, _SHARED_DICT
+    if not multiprocessing.current_process().pid in _SHARED_DICT:
+        _SHARED_SEQUENCE = seq
+        _SHARED_DICT[multiprocessing.current_process().pid] = 0
+
+
+def process_init():
+    print('MULTIPROCESS: Hello from process: {}'.format(os.getpid()))
+    #os.system("taskset -p 0xff %d" % os.getpid())
+
+
+class SequenceEnqueuer(object):
+    """Base class to enqueue inputs.
+
+    The task of an Enqueuer is to use parallelism to speed up preprocessing.
+    This is done with processes or threads.
+
+    # Examples
+
+    ```python
+    enqueuer = SequenceEnqueuer(...)
+    enqueuer.start()
+    datas = enqueuer.get()
+    for data in datas:
+        # Use the inputs; training, evaluating, predicting.
+        # ... stop sometime.
+    enqueuer.close()
+    ```
+
+    The `enqueuer.get()` should be an infinite stream of datas.
+
+    """
+
+    @abstractmethod
+    def is_running(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def start(self, workers=1, max_queue_size=10):
+        """Starts the handler's workers.
+
+        # Arguments
+            workers: number of worker threads
+            max_queue_size: queue size
+                (when full, threads could block on `put()`).
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def stop(self, timeout=None):
+        """Stop running threads and wait for them to exit, if necessary.
+
+        Should be called by the same thread which called start().
+
+        # Arguments
+            timeout: maximum time to wait on thread.join()
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def get(self):
+        """Creates a generator to extract data from the queue.
+
+        Skip the data if it is `None`.
+
+        # Returns
+            Generator yielding tuples `(inputs, targets)`
+                or `(inputs, targets, sample_weights)`.
+        """
+        raise NotImplementedError
 
 
 class OrderedEnqueuer(SequenceEnqueuer):
@@ -106,9 +189,11 @@ class OrderedEnqueuer(SequenceEnqueuer):
                 (when full, workers could block on `put()`)
         """
         if self.use_multiprocessing:
-            self.executor = multiprocessing.Pool(workers)
+            self.executor = multiprocessing.Pool(workers, process_init)
         else:
             self.executor = ThreadPool(workers)
+
+        self.workers = workers
         self.queue = queue.Queue(max_queue_size)
         self.stop_signal = threading.Event()
         self.run_thread = threading.Thread(target=self._run)
@@ -118,6 +203,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
     def _run(self):
         """Function to submit request to the executor and queue the `Future` objects."""
         sequence = list(range(len(self.sequence)))
+        self._send_sequence()  # Share the initial sequence
 
         while True:
             # Prevent useless epochs from running
@@ -131,12 +217,12 @@ class OrderedEnqueuer(SequenceEnqueuer):
             for b_idx in sequence:
                 if self.stop_signal.is_set():
                     return
-                self.queue.put(
-                    self.executor.apply_async(get_index,
-                                              (self.sequence, self.e_idx, b_idx)), block=True)
-            # Call the internal on epoch end.
-            self.sequence.on_epoch_end()
-            self.e_idx += 1
+
+                self.queue.put(self.executor.apply_async(get_index, (self.e_idx, b_idx)), block=True)
+
+            self.sequence.on_epoch_end()    # Call the internal on epoch end.
+            self._send_sequence()           # Update the pool
+            self.e_idx += 1                 # Increase the internal epoch index
 
     def get(self):
         """Creates a generator to extract data from the queue.
@@ -155,6 +241,25 @@ class OrderedEnqueuer(SequenceEnqueuer):
         except Exception as e:
             self.stop()
             raise StopIteration(e)
+
+    def _send_sequence(self):
+        """Send current Sequence to all workers."""
+        global _SHARED_SEQUENCE
+        global _SHARED_DICT
+
+        _SHARED_SEQUENCE = self.sequence  # For new processes that may spawn
+
+        if not self.use_multiprocessing:
+            # Threads are from the same process so they already share the sequence.
+            return
+
+        _SHARED_DICT.clear()
+
+        while len(_SHARED_DICT) < self.workers and not self.stop_signal.is_set():
+            # Ask the pool to update till everyone is updated.
+            self.executor.apply(_update_sequence, args=(self.sequence,))
+
+        # We're done with the update
 
     def stop(self, timeout=None):
         """Stops running threads and wait for them to exit, if necessary.

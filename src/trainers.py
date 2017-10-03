@@ -892,13 +892,13 @@ class TrainerBase:
     def handle_early_exit(self):
         self.logger.log('Handle early exit method called')
 
-        if not self.save_values_on_early_exit:
-            self.logger.log('Save values on early exit is disabled')
-            return
-
         # Stop training
         self.logger.log('Stopping model training')
         self.model.stop_fit_generator()
+
+        if not self.save_values_on_early_exit:
+            self.logger.log('Save values on early exit is disabled')
+            return
 
         # Save student model weights
         self.logger.log('Saving model weights')
