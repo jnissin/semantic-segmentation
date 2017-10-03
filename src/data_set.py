@@ -22,48 +22,41 @@ class ImageFileType(Enum):
     TAR = 0,
     FILE_PATH = 1
 
-SHARED_UL = '/scratch/work/jhnissin/semantic-segmentation/data/1024/unlabeled'
-SHARED_L = '/scratch/work/jhnissin/semantic-segmentation/data/classification/minc-2500/images'
-
 
 class ImageFile(object):
 
-    def __init__(self, file_path=None, tar_file=None, tar_info=None, tar_read_lock=None):
-        # type: (str, TarFile, TarInfo) -> None
+    def __init__(self, image_path=None, tar_info=None, shared_resources=None):
+        # type: (str, TarInfo, ImageSetSharedResources) -> None
 
         """
         Creates an ImageFile instance either from the file path or from the tar
-        arguments. You must provide either file_path or tar_file and tar_info, but
-        not both.
+        arguments. You must provide either file_path or tar_info. With tar_info
+        you should always provide shared resources, with image_path it's optional, but if
+        not provided image_path is assumed to be absolute path. Otherwise, the image_path
+        is combined with path_to_archive of shared resources.
 
         # Arguments
-            :param file_path: File path to the image file
-            :param tar_file: The TarFile where the image is if it's a member of a tar package
+            :param image_path: File path to the image file
             :param tar_info: The TarInfo of the image
-            :param tar_read_lock: the lock to acquire when reading the image from the tar package
+            :param shared_resources: Shared resources in the image set
         # Returns
             Nothing
         """
 
-        if file_path is None and (tar_file is None or tar_info is None):
-            raise ValueError('You must provide either image_set and tar_info or file_path')
+        if image_path is None and (shared_resources is None or shared_resources.tar_file is None or tar_info is None):
+            raise ValueError('You must provide either an image_path or shared_resources and tar_info')
 
-        if file_path is not None and (tar_file is not None or tar_info is not None):
-            raise ValueError('You cannot provide both file path and tar information')
+        if image_path is not None and tar_info is not None:
+            raise ValueError('You cannot provide both image_path and tar information')
 
-        self._file_path = 'l' if 'minc' in file_path else 'u'
-        self._tar_file = tar_file
+        self._image_path = image_path
+        self._shared_resources = shared_resources
         self._tar_info = tar_info
-        self._tar_read_lock = tar_read_lock
-
-        self._file_name = None
         self.type = ImageFileType.NONE
 
-        if tar_file is not None and tar_info is not None:
-            self._file_name = os.path.basename(tar_info.name)
+        if self.tar_file is not None and tar_info is not None:
             self.type = ImageFileType.TAR
-        elif file_path is not None:
-            self._file_name = os.path.basename(file_path)
+        elif image_path is not None:
             self.type = ImageFileType.FILE_PATH
 
     def __eq__(self, other):
@@ -91,8 +84,44 @@ class ImageFile(object):
         return self.file_name > other.file_name
 
     @property
+    def file_path(self):
+        # Combine the image path with the shared resource path to archive
+        if self._shared_resources is not None and self.image_path is not None:
+            # The shared resource should not have a tar file in this case
+            if self._shared_resources.path_to_archive is not None and self._shared_resources.tar_file is None:
+                return os.path.join(self._shared_resources.path_to_archive, self.image_path)
+        # Assume the image path is the absolute path
+        elif self.image_path is not None:
+            return self.image_path
+
+        return None
+
+    @property
+    def image_path(self):
+        return self._image_path
+
+    @property
+    def tar_info(self):
+        return self.tar_info
+
+    @property
+    def tar_file(self):
+        if self._shared_resources is not None:
+            return self._shared_resources.tar_file
+        return None
+
+    @property
+    def tar_read_lock(self):
+        if self._shared_resources is not None:
+            return self._shared_resources.tar_read_lock
+        return None
+
+    @property
     def file_name(self):
-        return self._file_name
+        if self._image_path is not None:
+            return os.path.basename(self.image_path)
+        elif self._tar_info is not None:
+            return os.path.basename(self.tar_info.name)
 
     def get_image(self, color_channels=3, target_size=None):
         # type: (int, tuple[int, int]) -> Image
@@ -116,18 +145,12 @@ class ImageFile(object):
         # image load the image data before releasing the lock. Regular files
         # can be lazy loaded, opening is enough.
         if self.type == ImageFileType.TAR:
-            with self._tar_read_lock:
-                f = self._tar_file.extractfile(self._tar_info)
+            with self.tar_read_lock:
+                f = self.tar_file.extractfile(self.tar_info)
                 img = Image.open(f)
                 img.load()
         elif self.type == ImageFileType.FILE_PATH:
-            p = None
-            if self._file_path is 'l':
-                p = SHARED_L + '/' + self.file_name.split('_')[0]
-            else:
-                p = SHARED_UL
-
-            img = Image.open(os.path.join(p, self._file_name))
+            img = Image.open(self.file_path)
         else:
             raise ValueError('Cannot open ImageFileType: {}'.format(self.type))
 
@@ -153,6 +176,26 @@ class ImageFile(object):
 # IMAGE SET
 ##############################################
 
+class ImageSetSharedResources(object):
+
+    def __init__(self, tar_file, tar_read_lock, path_to_archive):
+        self._tar_read_lock = tar_read_lock
+        self._tar_file = tar_file
+        self._path_to_archive = path_to_archive
+
+    @property
+    def tar_read_lock(self):
+        return self._tar_read_lock
+
+    @property
+    def tar_file(self):
+        return self._tar_file
+
+    @property
+    def path_to_archive(self):
+        return self._path_to_archive
+
+
 class ImageSet(object):
 
     def __init__(self, name, path_to_archive, file_list=None, mode='r'):
@@ -164,40 +207,42 @@ class ImageSet(object):
         self.mode = mode
         self._image_files = []
         self._file_name_to_image_file = dict()
-        self._file_name_to_image_file_no_ext = dict()
-        self._tar_file = None
-        self._tar_read_lock = None
+        self._image_set_shared_resources = None
 
         if os.path.isfile(path_to_archive) and tarfile.is_tarfile(path_to_archive):
             # Instantiate the tar file and a tar file read lock (doesn't support multi-threading)
-            self._tar_file = tarfile.open(name=path_to_archive, mode=mode)
-            self._tar_read_lock = threading.Lock()
+            tar_file = tarfile.open(name=path_to_archive, mode=mode)
+            tar_read_lock = threading.Lock()
 
-            if self._tar_file is None:
+            if tar_file is None:
                 raise ValueError('Could not open tar archive from path: {}'.format(path_to_archive))
 
+            # Create the shared resources
+            self._image_set_shared_resources = ImageSetSharedResources(path_to_archive=None, tar_file=tar_file, tar_read_lock=tar_read_lock)
+
             # Filter out non files and hidden files
-            tar_file_members = self._tar_file.getmembers()
+            tar_file_members = tar_file.getmembers()
 
             for tar_info in tar_file_members:
                 if tar_info.isfile() and not os.path.basename(tar_info.name).startswith('.'):
-                    img_file = ImageFile(tar_file=self._tar_file, tar_info=tar_info, tar_read_lock=self._tar_read_lock)
+                    img_file = ImageFile(image_path=None, tar_info=tar_info, shared_resources=self._image_set_shared_resources)
                     self._image_files.append(img_file)
                     file_name = os.path.basename(tar_info.name)
-                    file_name_no_ext = os.path.splitext(file_name)[0]
                     self._file_name_to_image_file[file_name] = img_file
-                    self._file_name_to_image_file_no_ext[file_name_no_ext] = img_file
         elif os.path.isdir(path_to_archive):
             image_paths = ImageSet.list_pictures(path_to_archive)
 
+            # Remove the shared part of the path - also: filter hidden files and non-files
+            image_paths = [os.path.relpath(p, start=self.path_to_archive) for p in image_paths if os.path.isfile(p) and not os.path.basename(p).startswith('.')]
+
+            # Create the shared resources
+            self._image_set_shared_resources = ImageSetSharedResources(path_to_archive=self.path_to_archive, tar_file=None, tar_read_lock=None)
+
             for image_path in image_paths:
-                if os.path.isfile(image_path) and not os.path.basename(image_path).startswith('.'):
-                    img_file = ImageFile(file_path=image_path)
-                    self._image_files.append(img_file)
-                    file_name = os.path.basename(image_path)
-                    file_name_no_ext = os.path.splitext(file_name)[0]
-                    self._file_name_to_image_file[file_name] = img_file
-                    self._file_name_to_image_file_no_ext[file_name_no_ext] = img_file
+                img_file = ImageFile(image_path=image_path, tar_info=None, shared_resources=self._image_set_shared_resources)
+                self._image_files.append(img_file)
+                file_name = img_file.file_name
+                self._file_name_to_image_file[file_name] = img_file
         else:
             raise ValueError('The given archive path is not recognized as a tar file or a directory: {}'.format(path_to_archive))
 
@@ -216,12 +261,15 @@ class ImageSet(object):
                 raise ValueError('Could not satisfy the given file list, image files and file list do not match: {} vs {}. Diff: {}'
                                  .format(len(self._image_files), len(self._file_list), diff))
 
-
     @staticmethod
     def list_pictures(directory, ext='jpg|jpeg|bmp|png'):
         return [os.path.join(root, f)
                 for root, _, files in os.walk(directory) for f in files
-                if re.match(r'([\w]+\.(?:' + ext + '))', f)]
+                if ImageSet.is_image_file(f, ext=ext)]
+
+    @staticmethod
+    def is_image_file(f, ext='jpg|jpeg|bmp|png'):
+        return re.match(r'([\w]+\.(?:' + ext + '))', f)
 
     @property
     def image_files(self):
@@ -239,11 +287,23 @@ class ImageSet(object):
         self._image_files.sort()
 
     def get_image_file_by_file_name(self, file_name):
+        # Attempt to find the file name
         ret = self._file_name_to_image_file.get(file_name)
 
+        # If the ImageFile was not found
         if ret is None:
-            file_name_no_ext = os.path.splitext(file_name)[0]
-            ret = self._file_name_to_image_file_no_ext.get(file_name_no_ext)
+            # If the file name has an extension - try with the same name without the extension
+            if ImageSet.is_image_file(file_name):
+                file_name_no_ext = os.path.splitext(file_name)[0]
+                ret = self._file_name_to_image_file.get(file_name_no_ext)
+            # If the file name did not have an extension - try with the same file name but common image extensions
+            else:
+                exts = ['jpg', 'jpeg', 'bmp', 'png']
+                file_name_no_ext = os.path.splitext(file_name)[0]
+                for ext in exts:
+                    ret = self._file_name_to_image_file.get('{}.{}'.format(file_name_no_ext, ext))
+                    if ret is not None:
+                        return ret
 
         return ret
 
