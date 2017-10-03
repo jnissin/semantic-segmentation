@@ -2,9 +2,24 @@
 
 import numpy as np
 
+from enum import Enum
 from keras import backend as K
 
 import settings
+
+
+class ModelLambdaLossType(Enum):
+    """
+    These types are required in order to determine the necessary lambda layer
+    for cost calculation (Keras doesn't support extra parameters to cost functions).
+    """
+    NONE = 0
+    SEGMENTATION_CATEGORICAL_CROSS_ENTROPY = 1
+    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER = 2
+    SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL = 3
+    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL = 4
+    CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY = 5
+    CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 6
 
 
 ##############################################

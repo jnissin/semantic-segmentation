@@ -1,7 +1,6 @@
 # coding=utf-8
 
 from abc import ABCMeta, abstractmethod
-from enum import Enum
 
 import keras.backend as K
 
@@ -24,25 +23,12 @@ from keras_extensions.extended_model import ExtendedModel
 from logger import Logger
 
 import losses
+from losses import ModelLambdaLossType
+
 
 ##############################################
-# ENUM MODEL TYPES
+# UTILITY CLASSES
 ##############################################
-
-
-class ModelLambdaLossType(Enum):
-    """
-    These types are required in order to determine the necessary lambda layer
-    for cost calculation (Keras doesn't support extra parameters to cost functions).
-    """
-    NONE = 0
-    SEGMENTATION_CATEGORICAL_CROSS_ENTROPY = 1
-    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER = 2
-    SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL = 3
-    SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL = 4
-    CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY = 5
-    CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER = 6
-
 
 class WeightTransferInformation(object):
 

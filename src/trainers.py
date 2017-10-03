@@ -33,6 +33,7 @@ from generators import DataGeneratorParameters, SegmentationDataGeneratorParamet
 
 from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
+from losses import ModelLambdaLossType
 
 import models
 import losses
@@ -669,7 +670,7 @@ class TrainerBase:
 
     @abstractmethod
     def _get_model_lambda_loss_type(self):
-        # type: () -> models.ModelLambdaLossType
+        # type: () -> ModelLambdaLossType
         pass
 
     @abstractmethod
@@ -1062,7 +1063,7 @@ class MeanTeacherTrainerBase(TrainerBase):
 
     @abstractmethod
     def _get_teacher_model_lambda_loss_type(self):
-        # type: () -> models.ModelLambdaLossType
+        # type: () -> ModelLambdaLossType
         pass
 
     @abstractmethod
@@ -1826,18 +1827,18 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         return x, y
 
     def _get_model_lambda_loss_type(self):
-        # type: () -> models.ModelLambdaLossType
+        # type: () -> ModelLambdaLossType
 
         if self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED:
-            return models.ModelLambdaLossType.SEGMENTATION_CATEGORICAL_CROSS_ENTROPY
+            return ModelLambdaLossType.SEGMENTATION_CATEGORICAL_CROSS_ENTROPY
         if self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER:
-            return models.ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER            # Same lambda loss as semi-supervised but only with 0 unlabeled data
+            return ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER            # Same lambda loss as semi-supervised but only with 0 unlabeled data
         elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
-            return models.ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER
+            return ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER
         elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL:
-            return models.ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL
+            return ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL
         elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
-            return models.ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
+            return ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
         else:
             raise ValueError('Unsupported combination for a semisupervised trainer - cannot deduce model type')
 
@@ -1853,7 +1854,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                            metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]}
 
     def _get_teacher_model_lambda_loss_type(self):
-        return models.ModelLambdaLossType.NONE
+        return ModelLambdaLossType.NONE
 
     def _get_teacher_model_loss(self):
         return losses.segmentation_sparse_weighted_categorical_cross_entropy(self.class_weights)
@@ -2209,13 +2210,13 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         return history
 
     def _get_model_lambda_loss_type(self):
-        # type: () -> models.ModelLambdaLossType
+        # type: () -> ModelLambdaLossType
         if self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED:
-            return models.ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY
+            return ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY
         elif self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER:       # Same lambda loss as semi-supervised but only with 0 unlabeled data
-            return models.ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
+            return ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
         elif self.trainer_type == TrainerType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER:
-            return models.ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
+            return ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
         else:
             raise ValueError('Unsupported trainer type for ClassificationTrainer - cannot deduce lambda loss type')
 
@@ -2255,8 +2256,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                self.trainer_type == TrainerType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER
 
     def _get_teacher_model_lambda_loss_type(self):
-        # type: () -> models.ModelLambdaLossType
-        return models.ModelLambdaLossType.NONE
+        # type: () -> ModelLambdaLossType
+        return ModelLambdaLossType.NONE
 
     def _get_teacher_model_loss(self):
         # type: () -> Callable
