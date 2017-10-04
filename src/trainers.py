@@ -894,7 +894,8 @@ class TrainerBase:
 
         # Stop training
         self.logger.log('Stopping model training')
-        self.model.stop_fit_generator()
+        if self.model is not None:
+            self.model.stop_training_loop()
 
         if not self.save_values_on_early_exit:
             self.logger.log('Save values on early exit is disabled')

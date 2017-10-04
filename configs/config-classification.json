@@ -111,5 +111,5 @@
     "transfer_weights": false,
     "use_class_weights": true,
     "override_class_weights": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-    "save_values_on_early_exit": false
+    "save_values_on_early_exit": true
 }

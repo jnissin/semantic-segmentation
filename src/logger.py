@@ -40,6 +40,16 @@ class Logger(object):
         if not self.stdout_only and self.log_images_folder_path is not None:
             general_utils.create_path_if_not_existing(self.log_images_folder_path)
 
+    @staticmethod
+    def format_message(message, log_level=LogLevel.INFO, use_timestamp=True):
+        # Add timestamp
+        if use_timestamp:
+            message = '{:%Y-%m-%d %H:%M:%S}: {}'.format(datetime.datetime.now(), message)
+
+        # Add log level
+        message = '{} {}'.format(log_level.value, message)
+        return message
+
     @property
     def log_folder_path(self):
         return os.path.dirname(self.log_file_path)
@@ -51,28 +61,21 @@ class Logger(object):
            log_level == LogLevel.PROFILE and not settings.PROFILE:
             return
 
-        log_to_stdout = log_to_stdout or self.log_to_stdout_default or self.stdout_only
-
-        # If log file is not open - open
-        if not self.log_file and not self.stdout_only:
-            self.open_log()
-
-        # Add timestamp
-        if self.use_timestamp:
-            message = '{:%Y-%m-%d %H:%M:%S}: {}'.format(datetime.datetime.now(), message)
-
-        # Add log level
-        message = '{} {}'.format(log_level.value, message)
+        message = Logger.format_message(message, log_level=log_level, use_timestamp=self.use_timestamp)
 
         # Log to file - make sure there is a newline
         if not self.stdout_only:
+            # If log file is not open - open
+            if not self.log_file:
+                self.open_log()
+
             if not message.endswith('\n'):
                 self.log_file.write(message + '\n')
             else:
                 self.log_file.write(message)
 
         # Log to stdout - no newline needed
-        if log_to_stdout:
+        if log_to_stdout or self.log_to_stdout_default or self.stdout_only:
             print message.strip()
 
     def warn(self, message, log_to_stdout=False):

@@ -6,7 +6,9 @@ import multiprocessing
 import random
 import threading
 import time
+import datetime
 import os
+
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
 
@@ -85,8 +87,7 @@ def _update_sequence(seq):
 
 
 def process_init():
-    print('MULTIPROCESS: Hello from process: {}'.format(os.getpid()))
-    #os.system("taskset -p 0xff %d" % os.getpid())
+    print('INFO {:%Y-%m-%d %H:%M:%S}: Hello from process: {}'.format(datetime.datetime.now(), os.getpid()))
 
 
 class SequenceEnqueuer(object):
