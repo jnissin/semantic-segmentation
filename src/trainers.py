@@ -177,7 +177,7 @@ class TrainerBase:
         self.validation_data_iterator = self.validation_data_generator.get_data_set_iterator()
 
         # Initialize model
-        self._init_model()
+        self.model_wrapper = self._init_model()
 
     def _init_model(self):
         # type: () -> ModelBase
@@ -235,6 +235,8 @@ class TrainerBase:
                            loss_weights=model_loss_weights,
                            metrics=model_metrics,
                            **self._get_compile_kwargs())
+
+        return self.model_wrapper
 
     @abstractmethod
     def _get_data_sets(self):
@@ -954,6 +956,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         # Declare instance variables
         self.teacher_model_wrapper = None
         self.teacher_validation_data_generator = None
+        self.teacher_validation_data_iterator = None
 
         self._mean_teacher_method_config = None
         self._ema_smoothing_coefficient_function = None
@@ -962,9 +965,10 @@ class MeanTeacherTrainerBase(TrainerBase):
         self._teacher_model_checkpoint_file_path = None
 
         # If we are using the mean teacher method - read the configuration and initialize the instance variables
-        self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
-        self.teacher_validation_data_iterator = self.teacher_validation_data_generator.get_data_set_iterator()
-        self._init_teacher_model()
+        if self.using_mean_teacher_method:
+            self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
+            self.teacher_validation_data_iterator = self.teacher_validation_data_generator.get_data_set_iterator()
+            self.teacher_model_wrapper = self._init_teacher_model()
 
         # Trigger property initializations - raise errors if properties don't exist
         if self.using_mean_teacher_method:
@@ -1001,6 +1005,10 @@ class MeanTeacherTrainerBase(TrainerBase):
                                        loss=teacher_model_loss,
                                        metrics=teacher_model_metrics,
                                        **self._get_compile_kwargs())
+
+            return self.teacher_model_wrapper
+
+        return None
 
     @abstractmethod
     def _get_teacher_validation_data_generator(self):

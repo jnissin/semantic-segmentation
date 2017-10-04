@@ -4,8 +4,8 @@
 #SBATCH --gres=gpu:teslap100:1
 #SBATCH --constraint=hsw
 #SBATCH -p gpu
-#SBATCH --mem 16G
-#SBATCH -c 4
+#SBATCH --mem 32G
+#SBATCH -c 8
 #SBATCH -t 02-00:00:00
 #SBATCH -D /scratch/work/jhnissin/semantic-segmentation/
 
@@ -14,4 +14,4 @@ module load anaconda2
 source activate semantic-segmentation
 module load CUDA/8.0.61 cudnn/5.1-CUDA-7.5
 
-srun python -m src.train --model enet-naive-upsampling-encoder-only --mfolder enet-naive-upsampling-encoder-only/supervised-mt --trainer classification_supervised_mean_teacher --config ./configs/config-classification.json --wdir /scratch/work/jhnissin/semantic-segmentation/ --maxjobs 4
+srun python -m src.train --model enet-naive-upsampling-encoder-only --mfolder enet-naive-upsampling-encoder-only/supervised-mt --trainer classification_supervised_mean_teacher --config ./configs/config-classification.json --wdir /scratch/work/jhnissin/semantic-segmentation/ --maxjobs 6
