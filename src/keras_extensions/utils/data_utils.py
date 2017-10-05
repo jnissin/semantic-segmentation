@@ -53,12 +53,27 @@ class Sequence(object):
 
 
 # Global variables to be shared across processes
-_SHARED_SEQUENCE = None
-_MANAGER = multiprocessing.Manager()
-_SHARED_DICT = _MANAGER.dict()
+_SHARED_SEQUENCES = {}
+_MANAGERS = {}
+_SHARED_DICTS = {}
+_UUID_COUNTER = 0
 
 
-def get_index(e_idx, b_idx):
+def _initialize_globals(uuid):
+    """Initialize the inner dictionary to manage processes."""
+    global _SHARED_DICTS, _MANAGERS
+    _MANAGERS[uuid] = multiprocessing.Manager()
+    _SHARED_DICTS[uuid] = _MANAGERS[uuid].dict()
+
+
+def _get_next_uuid():
+    global _UUID_COUNTER
+    uuid = _UUID_COUNTER
+    _UUID_COUNTER += 1
+    return uuid
+
+
+def get_index(uuid, e_idx, b_idx):
     # type: (int, int) -> (list, list)
 
     """Quick fix for Python2, otherwise, it cannot be pickled.
@@ -71,23 +86,24 @@ def get_index(e_idx, b_idx):
     # Returns
         The value at index `i`.
     """
-    global _SHARED_SEQUENCE
-    return _SHARED_SEQUENCE.get_batch(e_idx=e_idx, b_idx=b_idx)
+    global _SHARED_SEQUENCES
+    return _SHARED_SEQUENCES[uuid].get_batch(e_idx=e_idx, b_idx=b_idx)
 
 
-def _update_sequence(seq):
+def _update_sequence(uuid, seq):
     """Update current process with a new Sequence.
     # Arguments
         seq: Sequence object
     """
-    global _SHARED_SEQUENCE, _SHARED_DICT
-    if not multiprocessing.current_process().pid in _SHARED_DICT:
-        _SHARED_SEQUENCE = seq
-        _SHARED_DICT[multiprocessing.current_process().pid] = 0
+    global _SHARED_SEQUENCES, _SHARED_DICTS
+    if not multiprocessing.current_process().pid in _SHARED_DICTS[uuid]:
+        _SHARED_SEQUENCES[uuid] = seq
+        _SHARED_DICTS[uuid][multiprocessing.current_process().pid] = 0
 
 
-def process_init():
-    print('INFO {:%Y-%m-%d %H:%M:%S}: Hello from process: {}'.format(datetime.datetime.now(), os.getpid()))
+def process_init(uuid):
+    # type: (int) -> None
+    print('INFO {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
 
 
 class SequenceEnqueuer(object):
@@ -178,6 +194,9 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.e_idx = initial_epoch
         self.max_epoch = max_epoch
 
+        # Assign a unique id
+        self.uuid = _get_next_uuid()
+
     def is_running(self):
         return self.stop_signal is not None and not self.stop_signal.is_set()
 
@@ -190,7 +209,8 @@ class OrderedEnqueuer(SequenceEnqueuer):
                 (when full, workers could block on `put()`)
         """
         if self.use_multiprocessing:
-            self.executor = multiprocessing.Pool(workers, process_init)
+            _initialize_globals(self.uuid)
+            self.executor = multiprocessing.Pool(workers, process_init, (self.uuid,))
         else:
             self.executor = ThreadPool(workers)
 
@@ -219,7 +239,10 @@ class OrderedEnqueuer(SequenceEnqueuer):
                 if self.stop_signal.is_set():
                     return
 
-                self.queue.put(self.executor.apply_async(get_index, (self.e_idx, b_idx)), block=True)
+                self.queue.put(self.executor.apply_async(get_index, (self.uuid, self.e_idx, b_idx)), block=True)
+
+            while not self.queue.empty():
+                pass  # Wait for the last few batches to be processed
 
             self.sequence.on_epoch_end()    # Call the internal on epoch end.
             self._send_sequence()           # Update the pool
@@ -245,20 +268,19 @@ class OrderedEnqueuer(SequenceEnqueuer):
 
     def _send_sequence(self):
         """Send current Sequence to all workers."""
-        global _SHARED_SEQUENCE
-        global _SHARED_DICT
+        global _SHARED_SEQUENCES, _SHARED_DICTS
 
-        _SHARED_SEQUENCE = self.sequence  # For new processes that may spawn
+        _SHARED_SEQUENCES[self.uuid] = self.sequence  # For new processes that may spawn
 
         if not self.use_multiprocessing:
             # Threads are from the same process so they already share the sequence.
             return
 
-        _SHARED_DICT.clear()
+        _SHARED_DICTS[self.uuid].clear()
 
-        while len(_SHARED_DICT) < self.workers and not self.stop_signal.is_set():
+        while len(_SHARED_DICTS[self.uuid]) < self.workers and not self.stop_signal.is_set():
             # Ask the pool to update till everyone is updated.
-            self.executor.apply(_update_sequence, args=(self.sequence,))
+            self.executor.apply(_update_sequence, args=(self.uuid, self.sequence,))
 
         # We're done with the update
 
@@ -278,6 +300,15 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.executor.close()
         self.executor.join()
         self.run_thread.join(timeout)
+
+        # Clean up any resources shared by the processes
+        global _SHARED_DICTS, _SHARED_SEQUENCES
+        _SHARED_SEQUENCES[self.uuid] = None
+
+        if self.use_multiprocessing:
+            _MANAGERS[self.uuid] = None
+            _SHARED_DICTS[self.uuid].clear()
+            _SHARED_DICTS[self.uuid] = None
 
 
 class GeneratorEnqueuer(SequenceEnqueuer):

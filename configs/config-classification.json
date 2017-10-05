@@ -5,12 +5,13 @@
     "path_to_labeled_masks": null,
     "path_to_unlabeled_photos": "data/1024/unlabeled/",
 
-    "log_file_path": "model-data/{model_folder}/logs/log.txt",
+    "log_folder_path": "model-data/{model_folder}/logs/",
+    "log_file_path": "{log_folder_path}/log.txt",
     "log_to_stdout": true,
 
-    "keras_tensorboard_log_path": "model-data/{model_folder}/logs/tensorboard/",
+    "keras_tensorboard_log_path": "{log_folder_path}/tensorboard/",
     "keras_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-    "keras_csv_log_file_path": "model-data/{model_folder}/logs/per-epoch-data.csv",
+    "keras_csv_log_file_path": "{log_folder_path}/per-epoch-data.csv",
     "optimizer_checkpoint_file_path": "model-data/{model_folder}/checkpoints/optimizer/optimizer-checkpoint.json",
 
     "keras_model_checkpoint": {

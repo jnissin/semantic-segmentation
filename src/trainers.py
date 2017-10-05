@@ -112,6 +112,7 @@ class TrainerBase:
         self.trainer_type = TrainerType[trainer_type.upper()]
         self.model_name = model_name
         self.model_folder_name = model_folder_name
+        self._log_folder_path = None
         self.config = None
         self.logger = None
 
@@ -139,7 +140,7 @@ class TrainerBase:
         self.save_values_on_early_exit = self._get_config_value('save_values_on_early_exit')
 
         # Setup the log file path to enable logging
-        log_file_path = self._get_config_value('log_file_path').format(model_folder=self.model_folder_name)
+        log_file_path = self._populate_path_template(self._get_config_value('log_file_path'))
         log_to_stdout = self._get_config_value('log_to_stdout')
         self.logger = Logger(log_file_path=log_file_path, use_timestamp=True, log_to_stdout_default=log_to_stdout)
 
@@ -328,7 +329,24 @@ class TrainerBase:
     @property
     def optimizer_checkpoint_file_path(self):
         # type: () -> str
-        return self._get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
+        return self._populate_path_template(self._get_config_value('optimizer_checkpoint_file_path'))
+
+    @property
+    def log_folder_path(self):
+        # type: () -> str
+        if self._log_folder_path is None:
+            # Log folder can have the model folder within its path
+            log_folder_path = self._get_config_value('log_folder_path').format(model_folder=self.model_folder_name)
+            log_folder_path = os.path.dirname(log_folder_path) if os.path.isfile(log_folder_path) else log_folder_path
+
+            # If the log folder path already exists create a different path to avoid overwriting logs
+            if os.path.exists(log_folder_path):
+                log_folder_path = '{}-{:%Y-%m-%d-%H:%M}'.format(os.path.dirname(log_folder_path), datetime.datetime.now())
+                print 'Log directory path already exists. Avoiding overwriting by attempting to switch to a new log path: {}'.format(log_folder_path)
+
+            self._log_folder_path = log_folder_path
+
+        return self._log_folder_path
 
     @property
     def input_shape(self):
@@ -435,6 +453,10 @@ class TrainerBase:
     def _set_config_value(self, key, value):
         self.config[key] = value
 
+    def _populate_path_template(self, path, *args, **kwargs):
+        # type: (str) -> str
+        return path.format(model_folder=self.model_folder_name, log_folder_path=self.log_folder_path, **kwargs)
+
     def _get_data_augmentation_parameters(self):
         if self._get_config_value('use_data_augmentation'):
             self.logger.log('Parsing data augmentation parameters')
@@ -487,12 +509,12 @@ class TrainerBase:
 
     def _get_training_callbacks(self):
         keras_model_checkpoint = self._get_config_value('keras_model_checkpoint')
-        keras_tensorboard_log_path = self._get_config_value('keras_tensorboard_log_path').format(model_folder=self.model_folder_name)
-        keras_csv_log_file_path = self._get_config_value('keras_csv_log_file_path').format(model_folder=self.model_folder_name)
+        keras_tensorboard_log_path = self._populate_path_template(self._get_config_value('keras_tensorboard_log_path'))
+        keras_csv_log_file_path = self._populate_path_template(self._get_config_value('keras_csv_log_file_path'))
         early_stopping = self._get_config_value('early_stopping')
         reduce_lr_on_plateau = self._get_config_value('reduce_lr_on_plateau')
         stepwise_learning_rate_scheduler = self._get_config_value('stepwise_learning_rate_scheduler')
-        optimizer_checkpoint_file_path = self._get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name)
+        optimizer_checkpoint_file_path = self._populate_path_template(self._get_config_value('optimizer_checkpoint_file_path'))
 
         callbacks = []
 
@@ -501,7 +523,7 @@ class TrainerBase:
             raise ValueError('Could not find Keras ModelCheckpoint configuration with key keras_model_checkpoint - would be unable to save model weights')
 
         # Make sure the model checkpoints directory exists
-        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
+        keras_model_checkpoint_dir = self._populate_path_template(os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')))
         keras_model_checkpoint_file = os.path.basename(keras_model_checkpoint.get('checkpoint_file_path'))
         keras_model_checkpoint_file_path = os.path.join(keras_model_checkpoint_dir, keras_model_checkpoint_file)
         general_utils.create_path_if_not_existing(keras_model_checkpoint_file_path)
@@ -525,6 +547,7 @@ class TrainerBase:
 
         # Tensorboard checkpoint callback to save on every epoch
         if keras_tensorboard_log_path is not None:
+            # Tensorboard log files have unique names for each run - so no worries about overwriting
             general_utils.create_path_if_not_existing(keras_tensorboard_log_path)
 
             tensorboard_checkpoint_callback = TensorBoard(
@@ -541,6 +564,13 @@ class TrainerBase:
 
         # CSV logger for streaming epoch results
         if keras_csv_log_file_path is not None:
+
+            # Don't overwrite existing CSV files
+            if os.path.exists(keras_csv_log_file_path):
+                new_keras_csv_log_file_path = '{}-{:%Y-%m-%d-%H:%M}'.format(keras_csv_log_file_path, datetime.datetime.now())
+                self.logger.warn('Previous keras_csv_log_file_path log already exists in: {} - switching to path: {}'.format(keras_csv_log_file_path, new_keras_csv_log_file_path))
+                keras_csv_log_file_path = new_keras_csv_log_file_path
+
             general_utils.create_path_if_not_existing(keras_csv_log_file_path)
 
             csv_logger_callback = CSVLogger(
@@ -842,13 +872,13 @@ class TrainerBase:
     @property
     def model_checkpoint_directory(self):
         keras_model_checkpoint = self._get_config_value('keras_model_checkpoint')
-        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
+        keras_model_checkpoint_dir = self._populate_path_template(os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')))
         return keras_model_checkpoint_dir
 
     @property
     def model_checkpoint_file_path(self):
         keras_model_checkpoint = self._get_config_value('keras_model_checkpoint')
-        keras_model_checkpoint_dir = os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')).format(model_folder=self.model_folder_name)
+        keras_model_checkpoint_dir = self._populate_path_template(os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')))
         keras_model_checkpoint_file = os.path.basename(keras_model_checkpoint.get('checkpoint_file_path'))
         keras_model_checkpoint_file_path = os.path.join(keras_model_checkpoint_dir, keras_model_checkpoint_file)
         return keras_model_checkpoint_file_path
@@ -863,7 +893,7 @@ class TrainerBase:
         if settings.PROFILE:
             self.logger.profile_log('Training in profiling mode')
 
-            graph_def_file_folder = self.logger.log_folder_path
+            graph_def_file_folder = self.log_folder_path
             self.logger.profile_log('Writing Tensorflow GraphDef to: {}'.format(os.path.join(graph_def_file_folder, "graph_def")))
             K.tf.train.write_graph(K.get_session().graph_def, graph_def_file_folder, "graph_def", as_text=True)
             self.logger.profile_log('Writing Tensorflow GraphDef complete')
@@ -912,7 +942,7 @@ class TrainerBase:
         self.save_optimizer_settings(model=self.model, file_extension='.early-stop')
 
     def save_model_weights(self, epoch_index, val_loss, file_extension=''):
-        file_path = self.model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
+        file_path = self._populate_path_template(self.model_checkpoint_file_path, epoch=epoch_index, val_loss=val_loss) + file_extension
 
         # Make sure the directory exists
         general_utils.create_path_if_not_existing(file_path)
@@ -921,7 +951,7 @@ class TrainerBase:
         self.model.save_weights(file_path, overwrite=True)
 
     def save_optimizer_settings(self, model, file_extension=''):
-        file_path = self._get_config_value('optimizer_checkpoint_file_path').format(model_folder=self.model_folder_name) + file_extension
+        file_path = self._populate_path_template(self._get_config_value('optimizer_checkpoint_file_path')) + file_extension
 
         with open(file_path, 'w') as log_file:
             optimizer_config = model.optimizer.get_config()
@@ -937,7 +967,7 @@ class TrainerBase:
 
     def save_profiling_timeline(self):
         if settings.PROFILE:
-            profiling_timeline_file_path = os.path.join(self.logger.log_folder_path, 'profiling_timeline.json')
+            profiling_timeline_file_path = os.path.join(self.log_folder_path, 'profiling_timeline.json')
             self.logger.profile_log('Saving profiling data to: {}'.format(profiling_timeline_file_path))
             self.profiling_timeliner.save(profiling_timeline_file_path)
 
@@ -1053,7 +1083,7 @@ class MeanTeacherTrainerBase(TrainerBase):
     @property
     def teacher_weights_directory_path(self):
         if self.using_mean_teacher_method and self._teacher_weights_directory_path is None:
-            self._teacher_weights_directory_path = os.path.dirname(self.mean_teacher_method_config['teacher_model_checkpoint_file_path']).format(model_folder=self.model_folder_name)
+            self._teacher_weights_directory_path = self._populate_path_template(os.path.dirname(self.mean_teacher_method_config['teacher_model_checkpoint_file_path']))
             self.logger.log('Teacher weights directory path: {}'.format(self._teacher_weights_directory_path))
 
         return self._teacher_weights_directory_path
@@ -1100,7 +1130,7 @@ class MeanTeacherTrainerBase(TrainerBase):
                 file_name_format = os.path.basename(self.model_checkpoint_file_path)
                 teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
 
-            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
+            file_path = self._populate_path_template(teacher_model_checkpoint_file_path).format(epoch=epoch_index, val_loss=val_loss) + file_extension
 
             # Make sure the directory exists
             general_utils.create_path_if_not_existing(file_path)
@@ -1267,7 +1297,7 @@ class MeanTeacherTrainerBase(TrainerBase):
                 file_name_format = os.path.basename(self.model_checkpoint_file_path)
                 teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
 
-            file_path = teacher_model_checkpoint_file_path.format(model_folder=self.model_folder_name, epoch=epoch_index, val_loss=val_loss) + file_extension
+            file_path = self._populate_path_template(teacher_model_checkpoint_file_path, epoch=epoch_index, val_loss=val_loss) + file_extension
 
             # Make sure the directory exists
             general_utils.create_path_if_not_existing(file_path)
