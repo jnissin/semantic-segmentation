@@ -273,9 +273,7 @@ def _classification_weighted_categorical_crossentropy_loss(class_weights):
     def loss(y_true, y_pred):
         epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
         softmax = K.tf.nn.softmax(y_pred)
-
-        softmax = K.tf.clip_by_value(y_pred, epsilon, 1.0)
-
+        softmax = K.tf.clip_by_value(softmax, epsilon, 1.0)
         xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
         xent = -K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=-1))
 

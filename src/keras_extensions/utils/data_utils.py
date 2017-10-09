@@ -12,6 +12,8 @@ import os
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
 
+from src import settings
+
 import numpy as np
 
 try:
@@ -101,9 +103,10 @@ def _update_sequence(uuid, seq):
         _SHARED_DICTS[uuid][multiprocessing.current_process().pid] = 0
 
 
-def process_init(uuid):
+def _process_init(uuid):
     # type: (int) -> None
-    print('INFO {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
+    if settings.DEBUG:
+        print('INFO {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
 
 
 class SequenceEnqueuer(object):
@@ -210,7 +213,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         """
         if self.use_multiprocessing:
             _initialize_globals(self.uuid)
-            self.executor = multiprocessing.Pool(workers, process_init, (self.uuid,))
+            self.executor = multiprocessing.Pool(workers, _process_init, (self.uuid,))
         else:
             self.executor = ThreadPool(workers)
 

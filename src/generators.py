@@ -1057,14 +1057,15 @@ class SegmentationDataGenerator(DataGenerator):
                     # If the mask has something else besides background
                     valid_crop_found = not np.all(np.equal(mask_crop[:, :, 0], 0))
 
-                    if not valid_crop_found:
-                        self.logger.debug_log('Only background found within crop area of shape {}'.format(crop_shape))
+                    # Warn if the crop contains only zero and the mask is not all zero
+                    if not valid_crop_found and not np.all(np.equal(np_mask, 0)):
+                        self.logger.debug_log('Only background found within crop area of shape: {}'.format(crop_shape))
                 else:
                     # If the mask contains pixels of the desired material
                     valid_crop_found = np.any(np.equal(mask_crop[:, :, 0], material_sample.material_r_color))
 
                     if not valid_crop_found:
-                        self.logger.debug_log('Material not found within crop area of shape {} for material id {} and material red color {}'
+                        self.logger.debug_log('Material not found within crop area of shape: {} for material id: {} and material red color: {}'
                                               .format(crop_shape, material_sample.material_id, material_sample.material_r_color))
 
                 # If a valid crop was found or this is the last attempt or we should not retry crops

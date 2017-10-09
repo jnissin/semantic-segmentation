@@ -16,6 +16,16 @@ from logger import Logger
 from enums import BatchDataFormat
 
 
+_DATA_SET_ITERATOR_UUID = 0
+
+
+def _get_next_data_set_iterator_uuid():
+    global _DATA_SET_ITERATOR_UUID
+    uuid = _DATA_SET_ITERATOR_UUID
+    _DATA_SET_ITERATOR_UUID += 1
+    return uuid
+
+
 class ExtendedDictionary(dict):
     def __init__(self, default, **kwargs):
         self.default = default
@@ -178,16 +188,6 @@ class BatchIndexBuffer(object):
         return batch
 
 
-_DATA_SET_ITERATOR_UUID = 0
-
-
-def _get_next_data_set_iterator_uuid():
-    global _DATA_SET_ITERATOR_UUID
-    uuid = _DATA_SET_ITERATOR_UUID
-    _DATA_SET_ITERATOR_UUID += 1
-    return uuid
-
-
 class DataSetIterator(Sequence):
     """
     Abstract base class of data set iterator. This class supports multiprocess
@@ -231,7 +231,7 @@ class DataSetIterator(Sequence):
         self.seed = seed
         self.logger = logger
         self.initial_epoch = initial_epoch
-        self.uuid = _get_next_data_set_iterator_uuid()
+        self._uuid = _get_next_data_set_iterator_uuid()
 
         # The following member variables only work when not used in multiprocessing context
         self.global_step_index = self.initial_epoch * self.num_steps_per_epoch  # The global step index (how many batches have been processed altogether)
@@ -243,6 +243,11 @@ class DataSetIterator(Sequence):
 
     def reset(self):
         self.global_step_index = self.initial_epoch * self.num_steps_per_epoch
+
+    @property
+    def uuid(self):
+        # type: () -> int
+        return self._uuid
 
     @property
     def epoch_index(self):
@@ -1140,7 +1145,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         if self._balance_pixel_samples:
             pixels_per_material_category = self._calculate_pixels_per_material_in_batch(batch_data=batch_data)
-            self.logger.log('e_idx: {}, b_idx: {}, material pixels: {}'.format(e_idx, b_idx, list(pixels_per_material_category)))
+            self.logger.debug_log('e_idx: {}, b_idx: {}, material pixels: {}'.format(e_idx, b_idx, list(pixels_per_material_category)))
             self._update_material_category_sampling_probabilities(pixels_per_material_category)
 
         return batch_data
