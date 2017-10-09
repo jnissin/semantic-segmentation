@@ -106,7 +106,7 @@ def _update_sequence(uuid, seq):
 def _process_init(uuid):
     # type: (int) -> None
     if settings.DEBUG:
-        print('INFO {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
+        print('DEBUG {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
 
 
 class SequenceEnqueuer(object):
