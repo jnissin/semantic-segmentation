@@ -29,7 +29,8 @@ from utils import general_utils
 from callbacks.optimizer_checkpoint import OptimizerCheckpoint
 from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
 from generators import DataGenerator, SegmentationDataGenerator, MINCDataSet, ClassificationDataGenerator
-from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters, BatchDataFormat
+from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters
+from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
 
 from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
@@ -306,6 +307,7 @@ class TrainerBase:
                             epoch_val_loss = weight_file.split('.')[1].rsplit('-', 1)
                             # Initial epoch is the next epoch so add one
                             self._initial_epoch = int(epoch_val_loss[0]) + 1
+                            print 'Initial epoch: {}, file: {}'.format(self._initial_epoch, weight_file_path)
                 except Exception as e:
                     self._initial_epoch = 0
 
@@ -392,7 +394,7 @@ class TrainerBase:
     @property
     def num_epochs(self):
         # type: () -> int
-        return int(self._get_config_value('num_epochs'))
+        return int(self._get_config_value('num_epochs')) if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS
 
     @property
     def num_labeled_per_batch(self):
@@ -436,6 +438,20 @@ class TrainerBase:
             return self.model_wrapper.model
 
         return None
+
+    @property
+    def training_steps_per_epoch(self):
+        # type: () -> int
+        if self.training_data_iterator is None:
+            raise ValueError('Training data iterator has not been initialized')
+        return self.training_data_iterator.num_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH
+
+    @property
+    def validation_steps_per_epoch(self):
+        # type: () -> int
+        if self.validation_data_iterator is None:
+            raise ValueError('Validation data iterator has not been initialized')
+        return self.validation_data_iterator.num_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH
 
     @property
     def using_gaussian_noise(self):
@@ -1394,14 +1410,14 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self._training_data_generator_params = None
         self._validation_data_generator_params = None
         self._superpixel_params = None
-        self._superpixel_label_generation_function = None
+        self._superpixel_label_generation_function_type = SuperpixelSegmentationFunctionType.NONE
         self._superpixel_unlabeled_cost_coefficient_function = None
 
         super(SegmentationTrainer, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
 
         # Trigger property initializations - raise errors if don't exist
         if self.using_superpixel_method:
-            assert(self.superpixel_label_generation_function is not None)
+            assert(self.superpixel_label_generation_function_type is not None)
             assert(self.superpixel_unlabeled_cost_coefficient_function is not None)
 
     """
@@ -1420,13 +1436,13 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         return self._superpixel_params
 
     @property
-    def superpixel_label_generation_function(self):
-        if self.using_superpixel_method and self._superpixel_label_generation_function is None:
+    def superpixel_label_generation_function_type(self):
+        if self.using_superpixel_method and self._superpixel_label_generation_function_type == SuperpixelSegmentationFunctionType.NONE:
             label_generation_function_name = self.superpixel_method_config['label_generation_function_name']
             self.logger.log('Superpixel label generation function name: {}'.format(label_generation_function_name))
-            self._superpixel_label_generation_function = self._get_label_generation_function(label_generation_function_name)
+            self._superpixel_label_generation_function_type = self._get_superpixel_label_generation_function_type(label_generation_function_name)
 
-        return self._superpixel_label_generation_function
+        return self._superpixel_label_generation_function_type
 
     @property
     def superpixel_unlabeled_cost_coefficient_function(self):
@@ -1564,7 +1580,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                initial_epoch=max(self.initial_epoch-1, 0))
+                initial_epoch=self.initial_epoch)
 
         return self._training_data_generator_params
 
@@ -1721,7 +1737,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             params=self.training_data_generator_params,
             class_weights=self.class_weights,
             batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
-            label_generation_function=self.superpixel_label_generation_function)
+            label_generation_function_type=self.superpixel_label_generation_function_type)
 
         self.logger.log('Creating validation data generator')
 
@@ -1737,7 +1753,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             params=self.validation_data_generator_params,
             class_weights=self.class_weights,
             batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
-            label_generation_function=None)
+            label_generation_function_type=SuperpixelSegmentationFunctionType.NONE)
 
         self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
         self.logger.log('Using material samples: {}'.format(training_data_generator.use_material_samples))
@@ -1760,7 +1776,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 params=self.validation_data_generator_params,
                 class_weights=self.class_weights,
                 batch_data_format=BatchDataFormat.SUPERVISED,
-                label_generation_function=None)
+                label_generation_function_type=SuperpixelSegmentationFunctionType.NONE)
         else:
             teacher_validation_data_generator = None
 
@@ -1773,19 +1789,17 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         assert isinstance(self.model, ExtendedModel)
 
         # Labeled data set size determines the epochs
-        training_steps_per_epoch = self.training_data_generator.num_steps_per_epoch
-        validation_steps_per_epoch = self.validation_data_generator.num_steps_per_epoch
         num_workers = max(dataset_utils.get_number_of_parallel_jobs()-1, 1)
 
         if self.using_unlabeled_training_data:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
-                     .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
+                            .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
         else:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}'
-                     .format(self.training_set_labeled.size, self.num_labeled_per_batch))
+                            .format(self.training_set_labeled.size, self.num_labeled_per_batch))
 
         self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
-                 .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
+                        .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, self.training_steps_per_epoch, self.validation_steps_per_epoch))
 
         self.logger.log('Num workers: {}'.format(num_workers))
 
@@ -1795,15 +1809,16 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         # Note: the student model should not be evaluated using the validation data generator
         # the generator input will not be meaning
         history = self.model.fit_generator(
-            generator=self.training_data_generator,
-            steps_per_epoch=training_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
-            epochs=self.num_epochs if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS,
+            generator=self.training_data_iterator,
+            steps_per_epoch=self.training_steps_per_epoch,
+            epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
-            validation_data=self.validation_data_generator,
-            validation_steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
+            validation_data=self.validation_data_iterator,
+            validation_steps=self.validation_steps_per_epoch,
             verbose=1,
             trainer=self,
             callbacks=callbacks,
+            use_multiprocessing=True,
             workers=num_workers)
 
         return history
@@ -1918,20 +1933,20 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             np_unlabeled_cost_coefficients = np.ones(shape=[batch_size]) * unlabeled_cost_coefficient
             return [np_unlabeled_cost_coefficients]
 
-    def _get_label_generation_function(self, label_generation_function_name):
-        # type: (str) -> function
+    def _get_superpixel_label_generation_function_type(self, label_generation_function_name):
+        # type: (str) -> SuperpixelSegmentationFunctionType
+        function_name = label_generation_function_name.lower()
 
-        if label_generation_function_name.lower() == 'felzenszwalb':
-            return lambda np_img: image_utils.np_get_felzenswalb_segmentation(np_img, scale=700, sigma=0.6, min_size=250, normalize_img=True, borders_only=True)
-        elif label_generation_function_name.lower() == 'slic':
-            return lambda np_img: image_utils.np_get_slic_segmentation(np_img, n_segments=300, sigma=1, compactness=10.0, max_iter=20, normalize_img=True, borders_only=True)
-        elif label_generation_function_name.lower() == 'quickshift':
-            return lambda np_img: image_utils.np_get_quickshift_segmentation(np_img, kernel_size=20, max_dist=15, ratio=0.5, normalize_img=True, borders_only=True)
-        elif label_generation_function_name.lower() == 'watershed':
-            return lambda np_img: image_utils.np_get_watershed_segmentation(np_img, markers=250, compactness=0.001, normalize_img=True, borders_only=True)
+        if function_name == 'felzenswalb':
+            return SuperpixelSegmentationFunctionType.FELZENSWALB
+        elif function_name == 'slic':
+            return SuperpixelSegmentationFunctionType.SLIC
+        elif function_name == 'watershed':
+            return SuperpixelSegmentationFunctionType.WATERSHED
+        elif function_name == 'quickshift':
+            return SuperpixelSegmentationFunctionType.QUICKSHIFT
         else:
-            raise ValueError('Unknown label generation function name: {}'.format(label_generation_function_name))
-
+            raise ValueError('Invalid superpixel label generation function name: {}'.format(function_name))
 
 #############################################
 # CLASSIFICATION TRAINER
@@ -2069,7 +2084,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                initial_epoch=max(self.initial_epoch-1, 0))
+                initial_epoch=self.initial_epoch)
 
         return self._training_data_generator_params
 
@@ -2212,19 +2227,16 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         assert isinstance(self.model, ExtendedModel)
 
         # Labeled data set size determines the epochs
-        training_steps_per_epoch = self.training_data_iterator.num_steps_per_epoch
-        validation_steps_per_epoch = self.validation_data_iterator.num_steps_per_epoch
         num_workers = dataset_utils.get_number_of_parallel_jobs()-1
 
         if self.using_unlabeled_training_data:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
-                     .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
+                            .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
         else:
-            self.logger.log('Labeled data set size: {}, num labeled per batch: {}'
-                     .format(self.training_set_labeled.size, self.num_labeled_per_batch))
+            self.logger.log('Labeled data set size: {}, num labeled per batch: {}'.format(self.training_set_labeled.size, self.num_labeled_per_batch))
 
         self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
-                 .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, training_steps_per_epoch, validation_steps_per_epoch))
+                        .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, self.training_steps_per_epoch, self.validation_steps_per_epoch))
 
         self.logger.log('Num workers: {}'.format(num_workers))
 
@@ -2235,11 +2247,11 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         # the generator input will not be meaning
         history = self.model.fit_generator(
             generator=self.training_data_iterator,
-            steps_per_epoch=training_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
-            epochs=self.num_epochs if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS,
+            steps_per_epoch=self.training_steps_per_epoch,
+            epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
             validation_data=self.validation_data_iterator,
-            validation_steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
+            validation_steps=self.validation_steps_per_epoch,
             verbose=1,
             trainer=self,
             callbacks=callbacks,

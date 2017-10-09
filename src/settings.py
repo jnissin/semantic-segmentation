@@ -7,7 +7,7 @@ This file is used to store project-wide global values.
 MAX_NUMBER_OF_JOBS = 32
 
 # Enables various debug prints and saving of batch images etc.
-DEBUG = False
+DEBUG = True
 
 # Enables profiling information to be shown - runs a shorter run for profiling
 PROFILE = False

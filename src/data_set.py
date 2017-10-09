@@ -298,7 +298,7 @@ class ImageSet(object):
                 ret = self._file_name_to_image_file.get(file_name_no_ext)
             # If the file name did not have an extension - try with the same file name but common image extensions
             else:
-                exts = ['jpg', 'jpeg', 'bmp', 'png']
+                exts = ['jpg', 'png', 'jpeg', 'bmp']
                 file_name_no_ext = os.path.splitext(file_name)[0]
                 for ext in exts:
                     ret = self._file_name_to_image_file.get('{}.{}'.format(file_name_no_ext, ext))
@@ -460,15 +460,16 @@ class LabeledImageDataSet(DataSet):
         be (material_category_idx, material_sample_idx) where the latter is the sample idx of the material
         sample within the given material category.
 
-        The function returns a list of ImageFile pairs (photo_file, mask_file) and
+        The function returns a list of ImageFile pairs (photo_file, mask_file)
+
         # Arguments
             :param index_array: The material sample index array.
         # Returns
-            :return:
+            :return: a list of ImageFile pairs (photo_file, mask_file)
         """
 
         material_samples = self.get_material_samples(index_array)
-        file_names = [ms.file_name for ms in material_samples]
+        file_names = [ms.file_name_no_ext for ms in material_samples]
         photo_mask_pairs = self.get_files(file_names)
 
         return photo_mask_pairs, material_samples

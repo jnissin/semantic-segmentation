@@ -62,8 +62,8 @@
 
     "use_data_augmentation": true,
     "use_material_samples": true,
-    "use_selective_attention": true,
-    "use_adaptive_sampling": true,
+    "use_selective_attention": false,
+    "use_adaptive_sampling": false,
 
     "data_augmentation_params": {
       "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/12000.0)**2)), 1.0) ), 1.0 )",

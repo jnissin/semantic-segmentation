@@ -20,6 +20,7 @@ from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSa
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
 from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator, MaterialSampleIterationMode
 from logger import Logger
+from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
 
 
 #######################################
@@ -238,11 +239,6 @@ class SegmentationMaskEncodingType(Enum):
     ONE_HOT = 1
 
 
-class BatchDataFormat(Enum):
-    SUPERVISED = 0
-    SEMI_SUPERVISED = 1
-
-
 class DataGenerator(object):
 
     """
@@ -407,6 +403,7 @@ class DataGenerator(object):
         # Returns
             :return: A batch of data
         """
+
         # Sanity check for unlabeled data usage
         if not self.using_unlabeled_data and unlabeled_batch is not None:
             if len(unlabeled_batch) != 0:
@@ -423,6 +420,18 @@ class DataGenerator(object):
     @abstractmethod
     def get_data_set_iterator(self):
         # type: () -> DataSetIterator
+
+        """
+        Returns a new data set iterator which can be passed to a Keras generator function.
+        The iterator is always a new iterator and the reference is not stored within the
+        DataGenerator.
+
+        # Arguments
+            None
+        # Returns
+            :return: a new iterator to the data set
+        """
+
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
     def _resize_image(self, np_image, resize_shape, cval, interp):
@@ -609,8 +618,8 @@ class SegmentationDataGenerator(DataGenerator):
                  batch_data_format,
                  params,
                  class_weights=None,
-                 label_generation_function=None):
-        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, BatchDataFormat, SegmentationDataGeneratorParameters, np.array[np.float32], Callable) -> None
+                 label_generation_function_type=SuperpixelSegmentationFunctionType.NONE):
+        # type: (LabeledImageDataSet, UnlabeledImageDataSet, int, int, BatchDataFormat, SegmentationDataGeneratorParameters, np.array[np.float32], SuperpixelSegmentationFunctionType) -> None
 
         """
         # Arguments
@@ -621,7 +630,7 @@ class SegmentationDataGenerator(DataGenerator):
             :param batch_data_format: format of the data batches
             :param params: SegmentationDataGeneratorParameters object
             :param class_weights: class weights
-            :param label_generation_function: function for label generation for unlabeled data
+            :param label_generation_function_type: function type for the superpixel label generation
         """
 
         self.labeled_data_set = labeled_data_set
@@ -646,35 +655,10 @@ class SegmentationDataGenerator(DataGenerator):
             self.mask_cval = np.array([0.0] * 3, dtype=np.float32)
             self.logger.log('SegmentationDataGenerator: Using mask cval: {}'.format(list(self.mask_cval)))
 
+        # Sanity check to ensure that MaterialSamples are part of the data set if used
         if self.use_material_samples:
             if self.labeled_data_set.material_samples is None or len(self.labeled_data_set.material_samples) == 0:
                 raise ValueError('Use material samples is true, but labeled data set does not contain material samples')
-
-            self.labeled_data_iterator = MaterialSampleDataSetIterator(
-                material_samples=self.labeled_data_set.material_samples,
-                batch_size=num_labeled_per_batch,
-                shuffle=self.shuffle_data_after_epoch,
-                seed=self.random_seed,
-                logger=self.logger,
-                iter_mode=MaterialSampleIterationMode.UNIFORM_MEAN)
-
-        else:
-            self.labeled_data_iterator = BasicDataSetIterator(
-                n=self.labeled_data_set.size,
-                batch_size=num_labeled_per_batch,
-                shuffle=self.shuffle_data_after_epoch,
-                seed=self.random_seed,
-                logger=self.logger)
-
-        self.unlabeled_data_iterator = None
-
-        if unlabeled_data_set is not None and unlabeled_data_set.size > 0 and num_unlabeled_per_batch > 0:
-            self.unlabeled_data_iterator = BasicDataSetIterator(
-                n=self.unlabeled_data_set.size,
-                batch_size=num_unlabeled_per_batch,
-                shuffle=self.shuffle_data_after_epoch,
-                seed=self.random_seed,
-                logger=self.logger)
 
         if labeled_data_set is None:
             raise ValueError('SegmentationDataGenerator does not support empty labeled data set')
@@ -683,11 +667,7 @@ class SegmentationDataGenerator(DataGenerator):
             raise ValueError('Class weights is None. Use a numpy array of ones instead of None')
 
         self.class_weights = class_weights
-
-        if label_generation_function is None:
-            self.label_generation_function = SegmentationDataGenerator.default_label_generator_for_unlabeled_photos
-        else:
-            self.label_generation_function = label_generation_function
+        self.label_generation_function_type = label_generation_function_type
 
         self.logger.log('Use material samples: {}'.format(self.use_material_samples))
         self.logger.log('Use selective attention: {}'.format(self.use_selective_attention))
@@ -733,9 +713,47 @@ class SegmentationDataGenerator(DataGenerator):
         """
         return self.unlabeled_data_set is not None and \
                self.unlabeled_data_set.size > 0 and \
-               self.unlabeled_data_iterator is not None and \
                self.num_unlabeled_per_batch > 0 and \
                self.batch_data_format != BatchDataFormat.SUPERVISED
+
+    def get_data_set_iterator(self):
+        # type: () -> DataSetIterator
+
+        """
+        Returns a new data set iterator which can be passed to a Keras generator function.
+        The iterator is always a new iterator and the reference is not stored within the
+        DataGenerator.
+
+        # Arguments
+            None
+        # Returns
+            :return: a new iterator to the data set
+        """
+
+        if self.use_material_samples:
+            return MaterialSampleDataSetIterator(
+                data_generator=self,
+                material_samples=self.labeled_data_set.material_samples,
+                n_unlabeled=self.unlabeled_data_set.size if self.using_unlabeled_data else 0,
+                labeled_batch_size=self.num_labeled_per_batch,
+                unlabeled_batch_size=self.num_unlabeled_per_batch if self.using_unlabeled_data else 0,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed,
+                logger=self.logger,
+                initial_epoch=self.initial_epoch,
+                iteration_mode=MaterialSampleIterationMode.UNIFORM_MEAN,
+                balance_pixel_samples=self.use_adaptive_sampling)
+        else:
+            return BasicDataSetIterator(
+                data_generator=self,
+                n_labeled=self.labeled_data_set.size,
+                labeled_batch_size=self.num_labeled_per_batch,
+                n_unlabeled=self.unlabeled_data_set.size if self.using_unlabeled_data else 0,
+                unlabeled_batch_size=self.num_unlabeled_per_batch if self.using_unlabeled_data else 0,
+                shuffle=self.shuffle_data_after_epoch,
+                seed=self.random_seed,
+                logger=self.logger,
+                initial_epoch=self.initial_epoch)
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
         # type: (int, np.array[int], list, list) -> (list[np.array], list[np.array])
@@ -766,14 +784,6 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Unzip the photo mask pairs
         X, Y = zip(*labeled_data)
-
-        # If we are using material samples and adaptive sampling - report the pixels seen
-        # of different materials in this batch to balance sampling
-        if self.use_material_samples and self.use_adaptive_sampling:
-            y_flattened = np.array(Y).astype(dtype=np.int32).squeeze().ravel()
-            pixels_per_material = np.bincount(y_flattened, minlength=self.num_classes).astype(dtype=np.uint64)
-            # with self.lock
-            self.labeled_data_iterator.update_sampling_probabilities(pixels_per_material)
 
         # Create the weights for each ground truth segmentation
         W = []
@@ -913,7 +923,7 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Generate mask for the photo - note: the labels are generated before cropping
         # and augmentation to capture global structure within the image
-        np_mask = self.label_generation_function(np_photo)
+        np_mask = self._generate_mask_for_unlabeled_image(np_photo)
 
         # Expand the last dimension of the mask to make it compatible with augmentation functions
         np_mask = np_mask[:, :, np.newaxis]
@@ -1214,40 +1224,33 @@ class SegmentationDataGenerator(DataGenerator):
 
         return tlc, trc, brc, blc
 
-    def next(self):
-        # type: (int, int, tuple[int]) -> (list[np.ndarray], list[np.ndarray])
+    def get_data_batch(self, step_idx, labeled_batch, unlabeled_batch):
+        # type: (int, list[int], list[int]) -> (list[np.ndarray], list[np.ndarray])
 
         """
-        Generates batches of data for semi supervised mean teacher training.
+        Returns a batch of data as numpy arrays. Either a tuple of (X, Y) or (X, Y, SW).
 
         # Arguments
-            None
+            :param step_idx: global step index
+            :param labeled_batch: index array describing the labeled data in the batch
+            :param unlabeled_batch: index array describing the unlabeled data in the batch
         # Returns
-            :return: A batch of data for semi supervised training as a tuple of (X,Y).
-            The input data (X) has the following:
-
-            0: Input images consisting of both labeled and unlabeled images. The unlabeled images are
-               the M last images in the batch.
-            1: Labels of the input images. This set has labels for both labeled and unlabeled images
-               and the unlabeled images.
-            2: Number of unlabeled data in the X and Y (photos and labels).
+            :return: A batch of data
         """
+
+        super(SegmentationDataGenerator, self).get_data_batch(step_idx, labeled_batch, unlabeled_batch)
 
         crop_shape = self.get_batch_crop_shape()
         resize_shape = self.get_batch_resize_shape()
+
         self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
-
-        # with self.lock:
-        labeled_index_array, labeled_current_index, labeled_current_batch_size, labeled_step_index = self.labeled_data_iterator.get_next_batch()
-        unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = None, 0, 0, 0
-
-        if self.using_unlabeled_data:
-            unlabeled_index_array, unlabeled_current_index, unlabeled_current_batch_size, unlabeled_step_index = self.unlabeled_data_iterator.get_next_batch()
+        self.logger.debug_log('Generating batch data for step {}: labeled: {}, unlabeled: {}'.format(step_idx, labeled_batch, unlabeled_batch))
 
         stime = time.time()
-        X, Y, W = self.get_labeled_batch_data(labeled_step_index, labeled_index_array, crop_shape, resize_shape)
-        X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(unlabeled_step_index, unlabeled_index_array, crop_shape, resize_shape)
-        self.logger.debug_log('Data generation took: {}s'.format(time.time()-stime))
+        X, Y, W = self.get_labeled_batch_data(step_idx, labeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
+        X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(step_idx, unlabeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
+        self.logger.debug_log('Raw data generation took: {}s'.format(time.time() - stime))
+
         X = X + X_unlabeled
         Y = Y + Y_unlabeled
         W = W + W_unlabeled
@@ -1275,48 +1278,53 @@ class SegmentationDataGenerator(DataGenerator):
 
             batch_input_data = [X, Y, W, num_unlabeled]
 
-            if X.shape[0] != Y.shape[0] or X.shape[0] != W.shape[0] or X.shape[0] != num_unlabeled.shape[0]:
-                self.logger.warn('Unmatching input first (batch) dimensions: {}, {}, {}, {}'.format(X.shape[0], Y.shape[0], W.shape[0], num_unlabeled.shape[0]))
-
             # Provide the true classification masks for labeled samples only - these go to the second loss function
             # in the semi-supervised model that is only used to calculate metrics. The output has to have the same
             # rank as the output from the network
             logits_output = np.expand_dims(np.copy(Y), -1)
-            logits_output[num_samples_in_batch-num_unlabeled_samples_in_batch:] = 0
+            logits_output[num_samples_in_batch - num_unlabeled_samples_in_batch:] = 0
             batch_output_data = [dummy_output, logits_output]
         else:
             raise ValueError('Unknown batch data format: {}'.format(self.batch_data_format))
 
+        # Sanity check for batch dimensions
+        for element in batch_input_data:
+            if element.shape[0] != num_samples_in_batch:
+                self.logger.warn('Invalid input data first (batch) dimension: {} should be {}'.format(element.shape[0], num_samples_in_batch))
+
+        for element in batch_output_data:
+            if element.shape[0] != num_samples_in_batch:
+                self.logger.warn('Invalid output data first (batch) dimension: {} should be {}'.format(element.shape[0], num_samples_in_batch))
+
+        self.logger.debug_log('Data generation took: {}s'.format(time.time() - stime))
         return batch_input_data, batch_output_data
 
-    @property
-    def num_steps_per_epoch(self):
-        # type: () -> int
-
-        """
-        Returns the number of batches (steps) per epoch.
-
-        # Arguments
-            None
-        # Returns
-            :return: Number of steps per epoch
-        """
-        return self.labeled_data_iterator.num_steps_per_epoch
-
-    @staticmethod
-    def default_label_generator_for_unlabeled_photos(np_image):
+    def _generate_mask_for_unlabeled_image(self, np_img):
         # type: (np.ndarray) -> np.ndarray
 
         """
-        Default label generator function for unlabeled photos. The label generator should
-        encode the information in the form HxW.
+        Generates labels (mask) for unlabeled images. Either uses the default generator which is
+        numpy array of same shape as np_image with every labeled as 0 or the one specified during
+        initialization. The label generator should encode the information in the form HxW.
 
         # Arguments
-            :param np_image: the image as a numpy array
+            :param np_img: the image as a numpy array
         # Returns
-            :return: numpy array of same shape as np_image with every labeled as 0
+            :return:
         """
-        return np.zeros(shape=(np_image.shape[0], np_image.shape[1]), dtype=np.int32)
+
+        if self.label_generation_function_type == SuperpixelSegmentationFunctionType.NONE:
+            return np.zeros(shape=(np_img.shape[0], np_img.shape[1]), dtype=np.int32)
+        elif self.label_generation_function_type == SuperpixelSegmentationFunctionType.FELZENSWALB:
+            return image_utils.np_get_felzenswalb_segmentation(np_img, scale=700, sigma=0.6, min_size=250, normalize_img=True, borders_only=True)
+        elif self.label_generation_function_type == SuperpixelSegmentationFunctionType.SLIC:
+            return image_utils.np_get_slic_segmentation(np_img, n_segments=300, sigma=1, compactness=10.0, max_iter=20, normalize_img=True, borders_only=True)
+        elif self.label_generation_function_type == SuperpixelSegmentationFunctionType.QUICKSHIFT:
+            return image_utils.np_get_quickshift_segmentation(np_img, kernel_size=20, max_dist=15, ratio=0.5, normalize_img=True, borders_only=True)
+        elif self.label_generation_function_type == SuperpixelSegmentationFunctionType.WATERSHED:
+            return image_utils.np_get_watershed_segmentation(np_img, markers=250, compactness=0.001, normalize_img=True, borders_only=True)
+        else:
+            raise ValueError('Unknown label generation function type: {}'.format(self.label_generation_function_type))
 
 
 ################################################
@@ -1363,7 +1371,7 @@ class MINCDataSet(object):
         with open(file_path, 'r') as f:
             lines = f.readlines()
 
-        # Sniff whether this is a MINC-2500 file or MINC file
+        # Attempt to figure out whether this is a MINC-2500 file or MINC file
         # MINC-2500: images/<class name>/<class name>_<photo id>.jpg
         # MINC: label,photo_id,x,y
         is_minc = len(lines[0].split(',')) == 4
@@ -1468,6 +1476,18 @@ class ClassificationDataGenerator(DataGenerator):
 
     def get_data_set_iterator(self):
         # type: () -> DataSetIterator
+
+        """
+        Returns a new data set iterator which can be passed to a Keras generator function.
+        The iterator is always a new iterator and the reference is not stored within the
+        DataGenerator.
+
+        # Arguments
+            None
+        # Returns
+            :return: a new iterator to the data set
+        """
+
         return BasicDataSetIterator(
             data_generator=self,
             n_labeled=self.labeled_data_set.size,
@@ -1491,6 +1511,7 @@ class ClassificationDataGenerator(DataGenerator):
         # Returns
             :return: true if there is unlabeled data otherwise false
         """
+
         return self.unlabeled_data_set is not None and \
                self.unlabeled_data_set.size > 0 and \
                self.num_unlabeled_per_batch > 0 and \

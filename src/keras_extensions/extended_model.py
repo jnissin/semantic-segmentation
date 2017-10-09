@@ -269,11 +269,10 @@ class ExtendedModel(Model):
 
         try:
             if is_sequence:
-                # Note: initial epoch - 1 because indexing starts from 0
                 self.enqueuer = OrderedEnqueuer(generator,
                                                 use_multiprocessing=use_multiprocessing,
                                                 shuffle=shuffle,
-                                                initial_epoch=max(initial_epoch-1, 0),
+                                                initial_epoch=initial_epoch,
                                                 max_epoch=epochs)
             else:
                 self.enqueuer = GeneratorEnqueuer(generator,

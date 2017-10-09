@@ -53,6 +53,10 @@ class MaterialSample(object):
         self.bbox_size = (self.yx_max[0] - self.yx_min[0]) * (self.yx_max[1] - self.yx_min[1])
 
     @property
+    def file_name_no_ext(self):
+        return os.path.splitext(self.file_name)[0]
+
+    @property
     def bbox_top_left_corner_abs(self):
         return self.yx_min
 

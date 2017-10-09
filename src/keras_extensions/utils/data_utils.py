@@ -307,8 +307,9 @@ class OrderedEnqueuer(SequenceEnqueuer):
 
         if self.use_multiprocessing:
             _MANAGERS[self.uuid] = None
-            _SHARED_DICTS[self.uuid].clear()
-            _SHARED_DICTS[self.uuid] = None
+            if _SHARED_DICTS.get(self.uuid) is not None:
+                _SHARED_DICTS[self.uuid].clear()
+                _SHARED_DICTS[self.uuid] = None
 
 
 class GeneratorEnqueuer(SequenceEnqueuer):
