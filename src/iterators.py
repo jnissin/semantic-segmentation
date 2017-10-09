@@ -1,10 +1,11 @@
 # coding=utf-8
 
 import numpy as np
-import threading
 import os
 import random
 import ctypes
+import multiprocessing
+
 from multiprocessing import Array
 
 from keras_extensions.utils.data_utils import Sequence
@@ -315,20 +316,19 @@ class DataSetIterator(Sequence):
 
     @property
     def lock(self):
-        # type: () -> threading.Lock
+        # type: () -> multiprocessing.Lock
 
         """
-        Threading lock. Only works when using non-multiprocessing context. Otherwise,
-        should not be accessed.
+        Multiprocessing lock. Applies to multi-processing as well as threading.
 
         # Arguments
             None
         # Returns
-            :return: a thread lock
+            :return: a multiprocessing/threading lock
         """
 
         if self._lock is None:
-            self._lock = threading.Lock()
+            self._lock = multiprocessing.Lock()
 
         return self._lock
 

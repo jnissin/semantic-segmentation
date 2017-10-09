@@ -112,11 +112,12 @@ def get_model(model_name,
             num_classes=num_classes,
             model_lambda_loss_type=model_lambda_loss_type,
             encoder_only=True)
-    elif model_name == 'yolonet':
-        model_wrapper = YOLONetModel(
+    elif model_name == 'enet-naive-upsampling-enhanced':
+        model_wrapper = ENetNaiveUpsamplingEnhanced(
             input_shape=input_shape,
             num_classes=num_classes,
-            model_lambda_loss_type=model_lambda_loss_type)
+            model_lambda_loss_type=model_lambda_loss_type,
+            encoder_only=False)
     else:
         raise ValueError('Unknown model name: {}'.format(model_name))
 
@@ -1297,182 +1298,131 @@ class ENetMaxUnpooling(ModelBase):
 
 
 ##############################################
-# YOLONET
+# ENET NAIVE UPSAMPLING - ENHANCED
 ##############################################
 
-class YOLONetModel(ModelBase):
+
+class ENetNaiveUpsamplingEnhanced(ModelBase):
 
     def __init__(self,
                  input_shape,
                  num_classes,
+                 encoder_only=False,
                  model_lambda_loss_type=ModelLambdaLossType.NONE):
 
-        super(YOLONetModel, self).__init__(
-            name="YOLONet",
+        self.encoder_only = encoder_only
+        name = "ENet-Naive-Upsampling-Enhanced" if not self.encoder_only else "ENet-Naive-Upsampling-Enhanced-Encoder-Only"
+
+        super(ENetNaiveUpsamplingEnhanced, self).__init__(
+            name=name,
             input_shape=input_shape,
             num_classes=num_classes,
             model_lambda_loss_type=model_lambda_loss_type)
 
     def _build_model(self, inputs):
+        enet = ENetNaiveUpsampling.encoder_build(inputs)
 
-        """
-        Encoder path
-        """
-        conv1, pool1 = YOLONetModel.get_encoder_block('encoder_block1', 2, 64, inputs)
-        conv2, pool2 = YOLONetModel.get_encoder_block('encoder_block2', 2, 96, pool1)
-        conv3, pool3 = YOLONetModel.get_encoder_block('encoder_block3', 2, 144, pool2)
-        conv4, pool4 = YOLONetModel.get_encoder_block('encoder_block4', 2, 216, pool3)
-        conv5, pool5 = YOLONetModel.get_encoder_block('encoder_block5', 2, 324, pool4)
-        conv6, pool6 = YOLONetModel.get_encoder_block('encoder_block6', 2, 486, pool5)
+        if self.encoder_only:
+            # In order to avoid increasing the number of variables with a huge dense layer
+            # use average pooling with a pool size of the previous layer's spatial
+            # dimension
+            pool_size = K.int_shape(enet)[1:3]
 
-        """
-        Decoder path
-        """
-        conv7 = YOLONetModel.get_decoder_block('decoder_block1', 2, 486, pool6, conv6)
-        conv8 = YOLONetModel.get_decoder_block('decoder_block2', 2, 324, conv7, conv5)
-        conv9 = YOLONetModel.get_decoder_block('decoder_block3', 2, 216, conv8, conv4)
-        conv10 = YOLONetModel.get_decoder_block('decoder_block4', 2, 144, conv9, conv3)
-        conv11 = YOLONetModel.get_decoder_block('decoder_block5', 2, 96, conv10, conv2)
-        conv12 = YOLONetModel.get_decoder_block('decoder_block6', 2, 64, conv11, conv1)
-
-        """
-        FC
-        """
-        conv13 = Conv2D(self.num_classes, (1, 1), name='logits', padding='same', kernel_initializer='he_normal', bias_initializer='zeros')(conv12)
-
-        return [conv13]
-
-    @staticmethod
-    def get_convolution_block(
-            num_filters,
-            input_layer,
-            name,
-            use_batch_normalization=True,
-            use_activation=True,
-            use_dropout=True,
-            use_bias=True,
-            kernel_size=(3, 3),
-            padding='valid',
-            conv2d_kernel_initializer='he_normal',
-            conv2d_bias_initializer='zeros',
-            relu_alpha=0.1,
-            dropout_rate=0.2,
-            transposed=False):
-
-        if transposed:
-            conv = Conv2DTranspose(
-                filters=num_filters,
-                kernel_size=kernel_size,
-                padding='same',
-                kernel_initializer=conv2d_kernel_initializer,
-                bias_initializer=conv2d_bias_initializer,
-                name=name,
-                use_bias=use_bias)(input_layer)
+            enet = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(enet)
+            enet = Flatten(name='flatten')(enet)
+            enet = Dense(self.num_classes, name='logits')(enet)
         else:
-            conv = ZeroPadding2D(
-                (1, 1),
-                name='{}_padding'.format(name))(input_layer)
+            enet = ENetNaiveUpsamplingEnhanced.decoder_build(enet, nc=self.num_classes)
 
-            conv = Conv2D(
-                filters=num_filters,
-                kernel_size=kernel_size,
-                padding=padding,
-                kernel_initializer=conv2d_kernel_initializer,
-                bias_initializer=conv2d_bias_initializer,
-                name=name,
-                use_bias=use_bias)(conv)
-
-        '''
-        From a statistics point of view BN before activation does not make sense to me.
-        BN is normalizing the distribution of features coming out of a convolution, some
-        these features might be negative which will be truncated by a non-linearity like ReLU.
-        If you normalize before activation you are including these negative values in the
-        normalization immediately before culling them from the feature space. BN after
-        activation will normalize the positive features without statistically biasing them
-        with features that do not make it through to the next convolutional layer.
-        '''
-        if use_batch_normalization:
-            conv = BatchNormalization(
-                momentum=0.1,
-                name='{}_normalization'.format(name))(conv)
-
-        if use_activation:
-            # With alpha=0.0 LeakyReLU is a ReLU
-            conv = LeakyReLU(
-                alpha=relu_alpha,
-                name='{}_activation'.format(name))(conv)
-
-        if use_dropout:
-            conv = SpatialDropout2D(dropout_rate)(conv)
-
-        return conv
+        return [enet]
 
     @staticmethod
-    def get_encoder_block(
-            name_prefix,
-            num_convolutions,
-            num_filters,
-            input_layer,
-            kernel_size=(3, 3),
-            pool_size=(2, 2),
-            strides=(2, 2)):
+    def decoder_bottleneck(encoder,
+                           output,
+                           name_prefix,
+                           upsample=False,
+                           reverse_module=False):
 
-        previous_layer = input_layer
+        internal = output / 4
 
-        # Add the convolution blocks
-        for i in range(0, num_convolutions):
-            conv = YOLONetModel.get_convolution_block(
-                num_filters=num_filters,
-                input_layer=previous_layer,
-                kernel_size=kernel_size,
-                name='{}_conv{}'.format(name_prefix, i + 1))
+        """
+        Main branch
+        """
+        # 1x1 projection downwards to internal feature space
+        x = Conv2D(filters=internal,
+                   kernel_size=(1, 1),
+                   use_bias=False,
+                   name='{}_proj_conv2d_1'.format(name_prefix))(encoder)
 
-            previous_layer = conv
+        # ENet uses momentum of 0.1, keras default is 0.99
+        x = BatchNormalization(momentum=0.1, name='{}_bnorm_1'.format(name_prefix))(x)
+        x = Activation('relu', name='{}_relu_1'.format(name_prefix))(x)
 
-        # Add the pooling layer
-        pool = MaxPooling2D(
-            pool_size=pool_size,
-            strides=strides,
-            name='{}_pool'.format(name_prefix))(previous_layer)
-
-        return previous_layer, pool
-
-    @staticmethod
-    def get_decoder_block(
-            name_prefix,
-            num_convolutions,
-            num_filters,
-            input_layer,
-            concat_layer=None,
-            upsampling_size=(2, 2),
-            kernel_size=(3, 3),
-            transposed=False):
-
-        # Add upsampling layer
-        up = UpSampling2D(size=upsampling_size)(input_layer)
-
-        # Add concatenation layer to pass features from encoder path
-        # to the decoder path
-        previous_layer = None
-
-        if concat_layer is not None:
-            concat = concatenate([up, concat_layer], axis=-1)
-            previous_layer = concat
+        # Upsampling
+        if not upsample:
+            x = Conv2D(filters=internal,
+                       kernel_size=(3, 3),
+                       padding='same',
+                       use_bias=True,
+                       name='{}_conv2d_1'.format(name_prefix))(x)
         else:
-            previous_layer = up
+            # Unlike in regular ENet we will replace Conv2DTranspose with a Nearest-Neighbour
+            # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
+            x = UpSampling2D(size=(2, 2), name='{}_nn_rs_conv_upsample2d'.format(name_prefix))(x)
+            x = Conv2D(filters=internal, kernel_size=(3, 3), padding='same', name='{}_nn_rs_conv_conv2d'.format(name_prefix))(x)
 
-        conv_name_format_str = '{}_convd{}' if transposed else '{}_conv{}'
+        # ENet uses momentum of 0.1 keras default is 0.99
+        x = BatchNormalization(momentum=0.1, name='{}_bnorm_2'.format(name_prefix))(x)
+        x = Activation('relu', name='{}_relu_2'.format(name_prefix))(x)
 
-        for i in range(0, num_convolutions):
-            conv = YOLONetModel.get_convolution_block(
-                num_filters=num_filters,
-                input_layer=previous_layer,
-                kernel_size=kernel_size,
-                name=conv_name_format_str.format(name_prefix, i + 1),
-                use_bias=False,
-                use_activation=False,
-                transposed=transposed)
+        # 1x1 projection upwards from internal to output feature space
+        x = Conv2D(filters=output,
+                   kernel_size=(1, 1),
+                   padding='same',
+                   use_bias=False,
+                   name='{}_proj_conv2d_2'.format((name_prefix)))(x)
 
-            previous_layer = conv
+        """
+        Other branch
+        """
+        other = encoder
 
-        return previous_layer
+        if encoder.get_shape()[-1] != output or upsample:
+            other = Conv2D(filters=output,
+                           kernel_size=(1, 1),
+                           padding='same',
+                           use_bias=False,
+                           name='{}_other_conv2d'.format(name_prefix))(other)
+
+            other = BatchNormalization(momentum=0.1, name='{}_other_bnorm_1'.format(name_prefix))(other)
+
+            if upsample and reverse_module is not False:
+                other = UpSampling2D(size=(2, 2), name='{}_other_usample2d'.format(name_prefix))(other)
+
+        if upsample and reverse_module is False:
+            decoder = x
+        else:
+            x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
+
+            """
+            Merge branches
+            """
+            decoder = add([x, other], name='{}_add'.format(name_prefix))
+            decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
+
+        return decoder
+
+    @staticmethod
+    def decoder_build(encoder, nc):
+        enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(encoder, 64, name_prefix='de_bn_4.0', upsample=True, reverse_module=True)  # bottleneck 4.0
+        enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(enet, 64, name_prefix='de_bn_4.1')  # bottleneck 4.1
+        enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(enet, 64, name_prefix='de_bn_4.2')  # bottleneck 4.2
+        enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(enet, 16, name_prefix='de_bn_5.0', upsample=True, reverse_module=True)  # bottleneck 5.0
+        enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(enet, 16, name_prefix='de_bn_5.1')  # bottleneck 5.1
+
+        # Unlike in regular ENet we will replace Conv2DTranspose with a Nearest-Neighbour
+        # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
+        enet = UpSampling2D(size=(2, 2), name='logits_upsample2d')(enet)
+        enet = Conv2D(filters=nc, kernel_size=(2, 2), padding='same', name='logits')(enet)
+
+        return enet

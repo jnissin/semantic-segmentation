@@ -4,7 +4,7 @@ import tarfile
 import os
 import random
 import re
-import threading
+import multiprocessing
 
 from enum import Enum
 from PIL import Image
@@ -212,7 +212,7 @@ class ImageSet(object):
         if os.path.isfile(path_to_archive) and tarfile.is_tarfile(path_to_archive):
             # Instantiate the tar file and a tar file read lock (doesn't support multi-threading)
             tar_file = tarfile.open(name=path_to_archive, mode=mode)
-            tar_read_lock = threading.Lock()
+            tar_read_lock = multiprocessing.Lock()
 
             if tar_file is None:
                 raise ValueError('Could not open tar archive from path: {}'.format(path_to_archive))

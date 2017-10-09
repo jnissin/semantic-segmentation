@@ -5,7 +5,6 @@ import random
 import numpy as np
 
 from enum import Enum
-from typing import Callable
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 import keras.backend as K
