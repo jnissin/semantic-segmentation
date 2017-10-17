@@ -2104,6 +2104,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             # Note: the initial epoch is an index but the property is a number starting from 1
             self._training_data_generator_params = DataGeneratorParameters(
                 num_color_channels=self.num_color_channels,
+                name='tr',
                 random_seed=self.random_seed,
                 crop_shapes=self.crop_shape,
                 resize_shapes=self.resize_shape,
@@ -2116,7 +2117,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
                 initial_epoch=self.initial_epoch,
-                generate_mean_teacher_data=self.using_mean_teacher_method)
+                generate_mean_teacher_data=self.using_mean_teacher_method,
+                log_images_folder_path=self.logger.log_images_folder_path)
 
         return self._training_data_generator_params
 
@@ -2125,6 +2127,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         if self._validation_data_generator_params is None:
             self._validation_data_generator_params = DataGeneratorParameters(
                 num_color_channels=self.num_color_channels,
+                name='val',
                 random_seed=self.random_seed,
                 crop_shapes=self.validation_crop_shape,
                 resize_shapes=self.validation_resize_shape,
@@ -2136,7 +2139,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                generate_mean_teacher_data=False)
+                generate_mean_teacher_data=False,
+                log_images_folder_path=self.logger.log_images_folder_path)
 
         return self._validation_data_generator_params
 

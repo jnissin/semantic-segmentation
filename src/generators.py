@@ -8,7 +8,7 @@ from enum import Enum
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 import keras.backend as K
-from keras.preprocessing.image import img_to_array, array_to_img
+from keras.preprocessing.image import img_to_array
 
 from PIL import Image
 
@@ -23,7 +23,16 @@ from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
 
 from scipy.ndimage.interpolation import shift
 
+from joblib import Parallel, delayed
+
 import settings
+
+
+def pickle_method(instance, name, *args, **kwargs):
+    "indirect caller for instance methods and multiprocessing"
+    if kwargs is None:
+        kwargs = {}
+    return getattr(instance, name)(*args, **kwargs)
 
 
 #######################################
@@ -169,7 +178,8 @@ class DataGeneratorParameters(object):
                  shuffle_data_after_epoch=True,
                  div2_constraint=0,
                  initial_epoch=0,
-                 generate_mean_teacher_data=False):
+                 generate_mean_teacher_data=False,
+                 log_images_folder_path=None):
         """
         Builds a wrapper for DataGenerator parameters
 
@@ -190,6 +200,7 @@ class DataGeneratorParameters(object):
             :param div2_constraint: how many times does the image/crop need to be divisible by two
             :param initial_epoch: number of the initial epoch
             :param generate_mean_teacher_data: should we generate mean teacher data? If so it is appended as last item of the input data
+            :param log_images_folder_path: where to log images
         # Returns
             Nothing
         """
@@ -210,6 +221,7 @@ class DataGeneratorParameters(object):
         self.div2_constraint = div2_constraint
         self.initial_epoch = initial_epoch
         self.generate_mean_teacher_data = generate_mean_teacher_data
+        self.log_images_folder_path = log_images_folder_path
 
 
 class SegmentationDataGeneratorParameters(DataGeneratorParameters):
@@ -293,6 +305,7 @@ class DataGenerator(object):
         self.div2_constraint = params.div2_constraint
         self.initial_epoch = params.initial_epoch
         self.generate_mean_teacher_data = params.generate_mean_teacher_data
+        self.log_images_folder_path = params.log_images_folder_path
 
         # Other member variables
         self._logger = None
@@ -364,7 +377,7 @@ class DataGenerator(object):
     def logger(self):
         if self._logger is None:
             self._logger = Logger(log_file_path=None, stdout_only=True)
-
+            self._logger.log_images_folder_path = self.log_images_folder_path
         return self._logger
 
     def get_batch_crop_shape(self):
@@ -646,65 +659,8 @@ class DataGenerator(object):
         # * Translations
         # * Intensity shifts
         # * Gaussian noise
-        for i in range(batch_size):
-
-            # Figure out the correct axes according to image data format
-            if self.img_data_format == 'channels_first':
-                img_channel_axis = 0
-                img_row_axis = 1
-                img_col_axis = 2
-            elif self.img_data_format == 'channels_last':
-                img_row_axis = 0
-                img_col_axis = 1
-                img_channel_axis = 2
-            else:
-                raise ValueError('Unknown image data format: {}'.format(self.img_data_format))
-
-            # Apply brightness shift
-            brightness_shift_range = noise_params.get('brightness_shift_range')
-
-            if brightness_shift_range is not None:
-                brightness_shift = np.random.uniform(-brightness_shift_range, brightness_shift_range)
-                teacher_img_batch[i] = teacher_img_batch[i] + brightness_shift
-
-            # Apply horizontal flips
-            horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
-
-            if horizontal_flip_probability is not None:
-                if np.random.random() < horizontal_flip_probability:
-                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_col_axis, 0)
-                    teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
-                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_col_axis)
-
-            # Apply vertical flips
-            vertical_flip_probability = noise_params.get('vertical_flip_probability')
-
-            if vertical_flip_probability is not None:
-                if np.random.random() < vertical_flip_probability:
-                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_row_axis, 0)
-                    teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
-                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_row_axis)
-
-            # Apply translations
-            shift_range = noise_params.get('shift_range')
-
-            if shift_range is not None:
-                if len(shift_range) != 2:
-                    raise ValueError('Shift range should be a list of two values (x, y), got: {}'.format(shift_range))
-
-                x_shift = int(float(shift_range[0] * teacher_img_batch[i].shape[img_col_axis]) * np.random.random())
-                y_shift = int(float(shift_range[1] * teacher_img_batch[i].shape[img_row_axis]) * np.random.random())
-                shift_val = [y_shift, x_shift, 0]
-                temp_cval = -900.0
-                shift(input=teacher_img_batch[i], shift=shift_val, output=teacher_img_batch[i], order=3, mode='constant', cval=temp_cval)
-
-                # Replace the invalid constant values from the output
-                if img_channel_axis == 2:
-                    cval_mask = teacher_img_batch[i][:, :, 0] == temp_cval
-                    teacher_img_batch[i][cval_mask] = self.per_channel_mean
-                else:
-                    cval_mask = teacher_img_batch[i][0, :, :] == temp_cval
-                    teacher_img_batch[i][cval_mask] = self.per_channel_mean
+        Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')(
+            delayed(pickle_method)(self, '_apply_mean_teacher_noise_to_image', teacher_img_batch=teacher_img_batch, i=i) for i in range(batch_size))
 
         # Apply gaussian noise to the whole batch at once
         gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
@@ -714,6 +670,67 @@ class DataGenerator(object):
             teacher_img_batch = teacher_img_batch + gnoise
 
         return teacher_img_batch
+
+    def _apply_mean_teacher_noise_to_image(self, teacher_img_batch, i):
+        noise_params = self.data_augmentation_params.mean_teacher_noise_params
+
+        # Figure out the correct axes according to image data format
+        if self.img_data_format == 'channels_first':
+            img_channel_axis = 0
+            img_row_axis = 1
+            img_col_axis = 2
+        elif self.img_data_format == 'channels_last':
+            img_row_axis = 0
+            img_col_axis = 1
+            img_channel_axis = 2
+        else:
+            raise ValueError('Unknown image data format: {}'.format(self.img_data_format))
+
+        # Apply brightness shift
+        brightness_shift_range = noise_params.get('brightness_shift_range')
+
+        if brightness_shift_range is not None:
+            brightness_shift = np.random.uniform(-brightness_shift_range, brightness_shift_range)
+            teacher_img_batch[i] = teacher_img_batch[i] + brightness_shift
+
+        # Apply horizontal flips
+        horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
+
+        if horizontal_flip_probability is not None:
+            if np.random.random() < horizontal_flip_probability:
+                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_col_axis, 0)
+                teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
+                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_col_axis)
+
+        # Apply vertical flips
+        vertical_flip_probability = noise_params.get('vertical_flip_probability')
+
+        if vertical_flip_probability is not None:
+            if np.random.random() < vertical_flip_probability:
+                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_row_axis, 0)
+                teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
+                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_row_axis)
+
+        # Apply translations
+        shift_range = noise_params.get('shift_range')
+
+        if shift_range is not None:
+            if len(shift_range) != 2:
+                raise ValueError('Shift range should be a list of two values (x, y), got: {}'.format(shift_range))
+
+            x_shift = int(float(shift_range[0] * teacher_img_batch[i].shape[img_col_axis]) * np.random.random())
+            y_shift = int(float(shift_range[1] * teacher_img_batch[i].shape[img_row_axis]) * np.random.random())
+            shift_val = [y_shift, x_shift, 0]
+            temp_cval = -900.0
+            shift(input=teacher_img_batch[i], shift=shift_val, output=teacher_img_batch[i], order=3, mode='constant', cval=temp_cval)
+
+            # Replace the invalid constant values from the output
+            if img_channel_axis == 2:
+                cval_mask = teacher_img_batch[i][:, :, 0] == temp_cval
+                teacher_img_batch[i][cval_mask] = self.per_channel_mean
+            else:
+                cval_mask = teacher_img_batch[i][0, :, :] == temp_cval
+                teacher_img_batch[i][cval_mask] = self.per_channel_mean
 
 #######################################
 # SEGMENTATION DATA GENERATOR
@@ -1725,7 +1742,7 @@ class ClassificationDataGenerator(DataGenerator):
             b_min = np.min(X)
             b_max = np.max(Y)
             b_min_teacher = np.min(X_teacher) if X_teacher is not None else 0
-            b_max_teacher = np.min(X_teacher) if X_teacher is not None else 0
+            b_max_teacher = np.max(X_teacher) if X_teacher is not None else 0
 
             for i in range(0, len(X)):
                 label = np.argmax(X[i])
@@ -1746,8 +1763,9 @@ class ClassificationDataGenerator(DataGenerator):
             for sample_index in index_array:
                 data.append(self.get_labeled_sample_minc_2500(step_index=step_index, sample_index=sample_index, resize_shape=resize_shape))
         elif self.labeled_data_set.data_set_type == MINCDataSetType.MINC:
-            for sample_index in index_array:
-                data.append(self.get_labeled_sample_minc(step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape))
+            data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+                (delayed(pickle_method)
+                 (self, 'get_labeled_sample_minc', step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape) for sample_index in index_array)
         else:
             raise ValueError('Unknown data set type: {}'.format(self.labeled_data_set.data_set_type))
 
@@ -1868,10 +1886,13 @@ class ClassificationDataGenerator(DataGenerator):
             return [], [], []
 
         # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        unlabeled_data = []
+        #unlabeled_data = []
 
-        for sample_index in index_array:
-            unlabeled_data.append(self.get_unlabeled_sample(step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape))
+        #for sample_index in index_array:
+        #    unlabeled_data.append(self.get_unlabeled_sample(step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape))
+        unlabeled_data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+            (delayed(pickle_method)
+             (self, 'get_unlabeled_sample', step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape) for sample_index in index_array)
 
         X_unlabeled, Y_unlabeled, W_unlabeled = zip(*unlabeled_data)
 

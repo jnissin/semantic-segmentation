@@ -5,6 +5,7 @@ This file is used to store project-wide global values.
 """
 
 MAX_NUMBER_OF_JOBS = 32
+DATA_GENERATION_THREADS_PER_PROCESS = 2
 
 # Enables various debug prints and saving of batch images etc.
 DEBUG = False
