@@ -110,7 +110,7 @@
     "stepwise_learning_rate_scheduler": {
       "lr_schedule": "lambda x: 5e-4 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/54000.0)**2)), 1.0) ), 1.0 )",
       "b2_schedule": "lambda x: 0.99 if x < 54000 else 0.999",
-      "last_scheduled_step": 40000,
+      "last_scheduled_step": 54000,
       "verbose": false
     },
 
