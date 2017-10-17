@@ -4,9 +4,9 @@
 #SBATCH --gres=gpu:teslap100:1
 #SBATCH --constraint=hsw
 #SBATCH -p gpu
-#SBATCH --mem 32G
+#SBATCH --mem 42G
 #SBATCH -c 8
-#SBATCH -t 02-00:00:00
+#SBATCH -t 04-00:00:00
 #SBATCH -D /scratch/work/jhnissin/semantic-segmentation/
 
 module purge
