@@ -37,9 +37,6 @@ from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
 from losses import ModelLambdaLossType
 
-from scipy.ndimage.interpolation import shift
-from joblib import Parallel, delayed
-
 import models
 import losses
 import metrics
@@ -479,11 +476,6 @@ class TrainerBase:
             raise ValueError('Validation data iterator has not been initialized')
         return self.validation_data_iterator.num_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH
 
-    @property
-    def using_gaussian_noise(self):
-        # type: () -> bool
-        return self.data_augmentation_parameters is not None and self.data_augmentation_parameters.gaussian_noise_stddev_function is not None
-
     def _load_config_json(self, path):
         with open(path) as f:
             data = f.read()
@@ -518,6 +510,7 @@ class TrainerBase:
             vertical_flip = augmentation_config.get('vertical_flip')
             gaussian_noise_stddev_function = augmentation_config.get('gaussian_noise_stddev_function')
             gamma_adjust_range = augmentation_config.get('gamma_adjust_range')
+            mean_teacher_noise_params = augmentation_config.get('mean_teacher_noise_params')
 
             data_augmentation_parameters = DataAugmentationParameters(
                 augmentation_probability_function=augmentation_probability_function,
@@ -529,7 +522,8 @@ class TrainerBase:
                 horizontal_flip=horizontal_flip,
                 vertical_flip=vertical_flip,
                 gaussian_noise_stddev_function=gaussian_noise_stddev_function,
-                gamma_adjust_range=gamma_adjust_range)
+                gamma_adjust_range=gamma_adjust_range,
+                mean_teacher_noise_params=mean_teacher_noise_params)
 
             self.logger.log('Data augmentation params: augmentation probability function: {}, rotation range: {}, zoom range: {}, '
                             'width shift range: {}, height shift range: {}, channel shift range: {}, horizontal flip: {}, vertical flip: {}, '
@@ -544,6 +538,8 @@ class TrainerBase:
                                      vertical_flip,
                                      gaussian_noise_stddev_function,
                                      gamma_adjust_range))
+
+            self.logger.log('Data augmentation params: mean teacher noise params: {}'.format(mean_teacher_noise_params))
         else:
             data_augmentation_parameters = None
 
@@ -772,15 +768,6 @@ class TrainerBase:
         if settings.PROFILE:
             return {'options': self.profiling_run_options, 'run_metadata': self.profiling_run_metadata}
         return {}
-
-    def _get_batch_gaussian_noise(self, noise_shape, step_index):
-        if self.using_gaussian_noise:
-            stddev = self.data_augmentation_parameters.gaussian_noise_stddev_function(step_index)
-            self.logger.debug_log('Generating gaussian noise with stddev: {}'.format(stddev))
-            gnoise = np.random.normal(loc=0.0, scale=stddev, size=noise_shape)
-            return gnoise
-        else:
-            return np.zeros(noise_shape)
 
     def _get_latest_weights_file_path(self, weights_directory_path, include_early_stop=False):
         # Try to find weights from the checkpoint path
@@ -1051,7 +1038,6 @@ class MeanTeacherTrainerBase(TrainerBase):
             assert(self.consistency_cost_coefficient_function is not None)
             assert(self.teacher_weights_directory_path is not None)
             assert(self.teacher_model_checkpoint_file_path is not None)
-            self.logger.log('Using teacher noise parameters: {}'.format(self.teacher_noise_params))
 
     def _init_teacher_model(self):
         # If we are using the mean teacher method create the teacher model
@@ -1115,17 +1101,6 @@ class MeanTeacherTrainerBase(TrainerBase):
                 raise ValueError('Could not find entry for mean_teacher_params from the configuration JSON')
 
         return self._mean_teacher_method_config
-
-
-    @property
-    def teacher_noise_params(self):
-        if self.using_mean_teacher_method:
-            return self._mean_teacher_method_config.get('noise_params')
-        return None
-
-    @property
-    def using_teacher_noise(self):
-        return self.teacher_noise_params is not None
 
     @property
     def ema_smoothing_coefficient_function(self):
@@ -1237,7 +1212,15 @@ class MeanTeacherTrainerBase(TrainerBase):
             else:
                 teacher_data_shape = list(img_batch.shape[0:-1]) + [self.num_classes]
 
-            x = x + self._get_mean_teacher_extra_batch_data(img_batch, labels=labels_data, step_index=step_index, teacher_data_shape=teacher_data_shape, validation=validation)
+            # Teacher data is supposed to be the last input in the input data
+            # pop that from the input data and run evaluation
+            if not validation:
+                teacher_img_batch = x[-1]
+                x = x[:-1]
+            else:
+                teacher_img_batch = img_batch
+
+            x = x + self._get_mean_teacher_extra_batch_data(teacher_img_batch, step_index=step_index, teacher_data_shape=teacher_data_shape, validation=validation)
 
         return x, y
 
@@ -1279,7 +1262,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             s_time = time.time()
 
             for i in range(0, num_weights):
-                t_weights[i] = a * t_weights[i] + (1.0 - a) * s_weights[i]
+                t_weights[i] = a * t_weights[i] + ((1.0 - a) * s_weights[i])
 
             self.teacher_model.set_weights(t_weights)
             self.logger.profile_log('Mean teacher weight update took: {} s'.format(time.time() - s_time))
@@ -1385,8 +1368,8 @@ class MeanTeacherTrainerBase(TrainerBase):
                 self.logger.log('Saving teacher model weights')
                 self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
 
-    def _get_mean_teacher_extra_batch_data(self, img_batch, labels, step_index, teacher_data_shape, validation):
-        # type: (np.ndarray, np.ndarray, int, list, bool) -> list
+    def _get_mean_teacher_extra_batch_data(self, teacher_img_batch, step_index, teacher_data_shape, validation):
+        # type: (np.ndarray, int, list, bool) -> list
 
         """
         Calculates the extra batch data necessary for the Mean Teacher method. In other words returns a list with
@@ -1396,8 +1379,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         If it's a validation round the data will be dummy data i.e. zeros
 
         # Arguments
-            :param img_batch: The input images to the neural network
-            :param labels: The ground truth labels give nto the neural network
+            :param teacher_img_batch: The input images to the teacher neural network
             :param step_index: Step index (used in coefficient calculation)
             :param teacher_data_shape: Shape of the teacher data - might not always be the same as img batch e.g. for classification
             :param validation: True if this is a validation batch false otherwise
@@ -1412,7 +1394,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             raise ValueError('Teacher model is not set, cannot run predictions')
 
         # First dimension in all of the input data should be the batch size
-        batch_size = img_batch.shape[0]
+        batch_size = teacher_img_batch.shape[0]
 
         if validation:
             # BxHxWxC
@@ -1420,27 +1402,8 @@ class MeanTeacherTrainerBase(TrainerBase):
             np_consistency_coefficients = np.zeros(shape=[batch_size])
             return [mean_teacher_predictions, np_consistency_coefficients]
         else:
-            s_time = time.time()
-
-            # Apply possible teacher noise functions
-            if self.using_teacher_noise:
-                teacher_img_batch = np.array(img_batch)
-                teacher_img_batch = self._apply_teacher_noise_function(img_batch=teacher_img_batch, step_index=step_index)
-            else:
-                teacher_img_batch = img_batch
-
-            # If we are in debug mode, save the batch images - this is right before the images enter
-            # into the neural network
-            if settings.DEBUG:
-                b_min = np.min(teacher_img_batch)
-                b_max = np.max(teacher_img_batch)
-
-                for i in range(0, len(teacher_img_batch)):
-                    label = np.argmax(labels[i])
-                    img = ((teacher_img_batch[i] - b_min) / (b_max - b_min)) * 255.0
-                    self.logger.debug_log_image(img, '{}_{}_{}_{}_photo_teacher.jpg'.format(label, "val" if validation else "tr", step_index, i), scale=False)
-
             # Note: include the training phase noise and dropout layers on the prediction
+            s_time = time.time()
             mean_teacher_predictions = self.teacher_model.predict_on_batch(teacher_img_batch, use_training_phase_layers=True)
             self.logger.profile_log('Mean teacher batch predictions took: {} s'.format(time.time() - s_time))
             consistency_coefficient = self.consistency_cost_coefficient_function(step_index)
@@ -1451,97 +1414,6 @@ class MeanTeacherTrainerBase(TrainerBase):
                                  .format(teacher_data_shape, mean_teacher_predictions.shape))
 
             return [mean_teacher_predictions, np_consistency_coefficients]
-
-    def _apply_teacher_noise_function(self, img_batch, step_index):
-        # type: (np.ndarray, int) -> np.ndarray
-
-        if not self.using_teacher_noise:
-            return img_batch
-
-        noise_params = self.teacher_noise_params
-        batch_size = img_batch.shape[0]
-
-        # Apply noise transformations individually to each image
-        # * Horizontal flips
-        # * Vertical flips
-        # * Translations
-        # * Intensity shifts
-        # * Gaussian noise
-        Parallel(n_jobs=4, backend='threading')(delayed(_apply_teacher_noise_to_image)(
-            img_batch=img_batch,
-            img_idx=i,
-            noise_params=noise_params,
-            image_data_format=self.image_data_format,
-            per_channel_mean=self.per_channel_mean) for i in range(batch_size))
-
-        return img_batch
-
-
-def _apply_teacher_noise_to_image(img_batch, img_idx, noise_params, image_data_format, per_channel_mean):
-
-    # Figure out the correct axes according to image data format
-    if image_data_format == 'channels_first':
-        img_channel_axis = 0
-        img_row_axis = 1
-        img_col_axis = 2
-    elif image_data_format == 'channels_last':
-        img_row_axis = 0
-        img_col_axis = 1
-        img_channel_axis = 2
-    else:
-        raise ValueError('Unknown image data format: {}'.format(image_data_format))
-
-    # Apply brightness shift
-    brightness_shift_range = noise_params.get('brightness_shift_range')
-
-    if brightness_shift_range is not None:
-        brightness_shift = np.random.uniform(-brightness_shift_range, brightness_shift_range)
-        img_batch[img_idx] = img_batch[img_idx] + brightness_shift
-
-    # Apply horizontal flips
-    horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
-
-    if horizontal_flip_probability is not None:
-        if np.random.random() < horizontal_flip_probability:
-            img_batch[img_idx] = img_batch[img_idx].swapaxes(img_col_axis, 0)
-            img_batch[img_idx] = img_batch[img_idx][::-1, ...]
-            img_batch[img_idx] = img_batch[img_idx].swapaxes(0, img_col_axis)
-
-    # Apply vertical flips
-    vertical_flip_probability = noise_params.get('vertical_flip_probability')
-
-    if vertical_flip_probability is not None:
-        if np.random.random() < vertical_flip_probability:
-            img_batch[img_idx] = img_batch[img_idx].swapaxes(img_row_axis, 0)
-            img_batch[img_idx] = img_batch[img_idx][::-1, ...]
-            img_batch[img_idx] = img_batch[img_idx].swapaxes(0, img_row_axis)
-
-    # Apply translations
-    shift_range = noise_params.get('shift_range')
-
-    if shift_range is not None:
-        if len(shift_range) != 2:
-            raise ValueError('Shift range should be a list of two values (x, y), got: {}'.format(shift_range))
-
-        x_shift = int(float(shift_range[0] * img_batch[img_idx].shape[img_col_axis]) * np.random.random())
-        y_shift = int(float(shift_range[1] * img_batch[img_idx].shape[img_row_axis]) * np.random.random())
-        shift_val = [y_shift, x_shift, 0]
-        temp_cval = -900.0
-        shift(input=img_batch[img_idx], shift=shift_val, output=img_batch[img_idx], order=3, mode='constant', cval=temp_cval)
-
-        # Replace the invalid constant values from the output
-        if img_channel_axis == 2:
-            cval_mask = img_batch[img_idx][:, :, 0] == temp_cval
-            img_batch[img_idx][cval_mask] = per_channel_mean
-        else:
-            cval_mask = img_batch[img_idx][0, :, :] == temp_cval
-            img_batch[img_idx][cval_mask] = per_channel_mean
-
-    gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
-
-    if gaussian_noise_stddev is not None:
-        gnoise = np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=img_batch[img_idx].shape)
-        img_batch[img_idx] = img_batch[img_idx] + gnoise
 
 
 #############################################
@@ -2037,22 +1909,6 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         if self.using_superpixel_method:
             x = x + self._get_superpixel_extra_batch_data(img_batch, step_index=step_index, validation=validation)
 
-        # Apply possible Gaussian Noise to batch data last e.g. teacher model Gaussian Noise requires unnoised data
-        if self.using_gaussian_noise and not validation:
-            x[0] = img_batch + self._get_batch_gaussian_noise(noise_shape=img_batch.shape, step_index=step_index)
-
-        # If we are in debug mode, save the batch images - this is right before the images enter
-        # into the neural network
-        if settings.DEBUG:
-            b_min = np.min(img_batch)
-            b_max = np.max(img_batch)
-
-            for i in range(0, len(img_batch)):
-                img = ((img_batch[i] - b_min) / (b_max - b_min)) * 255.0
-                mask = mask_batch[i][:, :, np.newaxis]*255.0
-                self.logger.debug_log_image(img, '{}_{}_{}_photo.jpg'.format("val" if validation else "tr", step_index, i), scale=False)
-                self.logger.debug_log_image(mask, file_name='{}_{}_{}_mask.png'.format("val" if validation else "tr", step_index, i), format='PNG')
-
         return x, y
 
     def _get_model_lambda_loss_type(self):
@@ -2259,7 +2115,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                initial_epoch=self.initial_epoch)
+                initial_epoch=self.initial_epoch,
+                generate_mean_teacher_data=self.using_mean_teacher_method)
 
         return self._training_data_generator_params
 
@@ -2278,7 +2135,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 use_data_augmentation=False,
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
-                div2_constraint=self.div2_constraint)
+                div2_constraint=self.div2_constraint,
+                generate_mean_teacher_data=False)
 
         return self._validation_data_generator_params
 
@@ -2520,23 +2378,4 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             :return: a tuple of (input data, output data)
         """
         x, y = super(ClassificationTrainer, self).modify_batch_data(step_index=step_index, x=x, y=y, validation=validation)
-
-        img_batch = x[0]
-        label_batch = x[1]
-
-        # Apply possible Gaussian Noise to batch data last e.g. teacher model Gaussian Noise requires unnoised data
-        if self.using_gaussian_noise and not validation:
-            x[0] = img_batch + self._get_batch_gaussian_noise(noise_shape=img_batch.shape, step_index=step_index)
-
-        # If we are in debug mode, save the batch images - this is right before the images enter
-        # into the neural network
-        if settings.DEBUG:
-            b_min = np.min(img_batch)
-            b_max = np.max(img_batch)
-
-            for i in range(0, len(img_batch)):
-                label = np.argmax(label_batch[i])
-                img = ((img_batch[i] - b_min) / (b_max - b_min)) * 255.0
-                self.logger.debug_log_image(img, '{}_{}_{}_{}_photo.jpg'.format(label, "val" if validation else "tr", step_index, i), scale=False)
-
         return x, y

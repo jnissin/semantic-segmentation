@@ -21,6 +21,10 @@ from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataS
 from logger import Logger
 from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
 
+from scipy.ndimage.interpolation import shift
+
+import settings
+
 
 #######################################
 # UTILITY CLASSES
@@ -57,7 +61,8 @@ class DataAugmentationParameters:
                  vertical_flip=False,
                  fill_mode='constant',
                  gaussian_noise_stddev_function=None,
-                 gamma_adjust_range=0.0):
+                 gamma_adjust_range=0.0,
+                 mean_teacher_noise_params=None):
         """
         # Arguments
             :param augmentation_probability_function: a schedule lambda function as a string, which takes step index and returns a float in range [0.0, 1.0]
@@ -70,7 +75,8 @@ class DataAugmentationParameters:
             :param vertical_flip: should vertical flips be applied
             :param fill_mode: how should we fill overgrown areas
             :param gaussian_noise_stddev_function: a schedule lambda function as a string, which takes step index and returns the stddev of the gaussian noise,
-            expected to be in range [0,1]
+            expected to be in range [0,1],
+            :param mean_teacher_noise_params: Parameters for the mean teacher noise generation
         # Returns
             :return: A new instance of DataAugmentationParameters
         """
@@ -88,6 +94,7 @@ class DataAugmentationParameters:
         self.vertical_flip = vertical_flip
         self.fill_mode = fill_mode
         self._gaussian_noise_stddev_function_str = gaussian_noise_stddev_function
+        self.mean_teacher_noise_params = mean_teacher_noise_params
 
         if self._augmentation_probability_function_str is not None:
             DataAugmentationParameters._set_ds_item(self._augmentation_probability_function_str, eval(self._augmentation_probability_function_str))
@@ -132,6 +139,14 @@ class DataAugmentationParameters:
 
         return None
 
+    @property
+    def using_gaussian_noise(self):
+        return self.gaussian_noise_stddev_function is not None
+
+    @property
+    def using_mean_teacher_noise(self):
+        return self.mean_teacher_noise_params is not None
+
 
 class DataGeneratorParameters(object):
     """
@@ -140,6 +155,7 @@ class DataGeneratorParameters(object):
 
     def __init__(self,
                  num_color_channels,
+                 name="",
                  random_seed=None,
                  crop_shapes=None,
                  resize_shapes=None,
@@ -152,12 +168,14 @@ class DataGeneratorParameters(object):
                  data_augmentation_params=None,
                  shuffle_data_after_epoch=True,
                  div2_constraint=0,
-                 initial_epoch=0):
+                 initial_epoch=0,
+                 generate_mean_teacher_data=False):
         """
         Builds a wrapper for DataGenerator parameters
 
         # Arguments
             :param num_color_channels: number of channels in the photos; 1, 3 or 4
+            :param name: name for the generator so it can be recognized from e.g. logs
             :param random_seed: an integer random seed
             :param crop_shapes: size of the crop or None if no cropping should be applied
             :param resize_shapes: size of the desired resized images, None if no resizing should be applied
@@ -171,11 +189,13 @@ class DataGeneratorParameters(object):
             :param shuffle_data_after_epoch: should the data be shuffled after every epoch
             :param div2_constraint: how many times does the image/crop need to be divisible by two
             :param initial_epoch: number of the initial epoch
+            :param generate_mean_teacher_data: should we generate mean teacher data? If so it is appended as last item of the input data
         # Returns
             Nothing
         """
 
         self.num_color_channels = num_color_channels
+        self.name = name
         self.random_seed = random_seed
         self.crop_shapes = crop_shapes
         self.resize_shapes = resize_shapes
@@ -189,6 +209,7 @@ class DataGeneratorParameters(object):
         self.shuffle_data_after_epoch = shuffle_data_after_epoch
         self.div2_constraint = div2_constraint
         self.initial_epoch = initial_epoch
+        self.generate_mean_teacher_data = generate_mean_teacher_data
 
 
 class SegmentationDataGeneratorParameters(DataGeneratorParameters):
@@ -258,6 +279,7 @@ class DataGenerator(object):
         # Unwrap DataGeneratorParameters to member variables
         self.num_color_channels = params.num_color_channels
         self.random_seed = params.random_seed
+        self.name = params.name
         self._crop_shapes = params.crop_shapes
         self._resize_shapes = params.resize_shapes
         self.use_per_channel_mean_normalization = params.use_per_channel_mean_normalization
@@ -270,6 +292,7 @@ class DataGenerator(object):
         self.shuffle_data_after_epoch = params.shuffle_data_after_epoch
         self.div2_constraint = params.div2_constraint
         self.initial_epoch = params.initial_epoch
+        self.generate_mean_teacher_data = params.generate_mean_teacher_data
 
         # Other member variables
         self._logger = None
@@ -603,6 +626,94 @@ class DataGenerator(object):
         self.logger.debug_log('Data augmentation took: {} sec'.format(time.time() - stime))
 
         return images, transform
+
+    def _get_mean_teacher_data_from_image_batch(self, X):
+        # type: (np.ndarray) -> np.ndarray
+
+        if not self.generate_mean_teacher_data:
+            raise ValueError('Request to get mean teacher data when generate_mean_teacher_data is False')
+
+        if not self.data_augmentation_params.using_mean_teacher_noise:
+            return X
+
+        teacher_img_batch = np.array(X)
+        noise_params = self.data_augmentation_params.mean_teacher_noise_params
+        batch_size = teacher_img_batch.shape[0]
+
+        # Apply noise transformations individually to each image
+        # * Horizontal flips
+        # * Vertical flips
+        # * Translations
+        # * Intensity shifts
+        # * Gaussian noise
+        for i in range(batch_size):
+
+            # Figure out the correct axes according to image data format
+            if self.img_data_format == 'channels_first':
+                img_channel_axis = 0
+                img_row_axis = 1
+                img_col_axis = 2
+            elif self.img_data_format == 'channels_last':
+                img_row_axis = 0
+                img_col_axis = 1
+                img_channel_axis = 2
+            else:
+                raise ValueError('Unknown image data format: {}'.format(self.img_data_format))
+
+            # Apply brightness shift
+            brightness_shift_range = noise_params.get('brightness_shift_range')
+
+            if brightness_shift_range is not None:
+                brightness_shift = np.random.uniform(-brightness_shift_range, brightness_shift_range)
+                teacher_img_batch[i] = teacher_img_batch[i] + brightness_shift
+
+            # Apply horizontal flips
+            horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
+
+            if horizontal_flip_probability is not None:
+                if np.random.random() < horizontal_flip_probability:
+                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_col_axis, 0)
+                    teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
+                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_col_axis)
+
+            # Apply vertical flips
+            vertical_flip_probability = noise_params.get('vertical_flip_probability')
+
+            if vertical_flip_probability is not None:
+                if np.random.random() < vertical_flip_probability:
+                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_row_axis, 0)
+                    teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
+                    teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_row_axis)
+
+            # Apply translations
+            shift_range = noise_params.get('shift_range')
+
+            if shift_range is not None:
+                if len(shift_range) != 2:
+                    raise ValueError('Shift range should be a list of two values (x, y), got: {}'.format(shift_range))
+
+                x_shift = int(float(shift_range[0] * teacher_img_batch[i].shape[img_col_axis]) * np.random.random())
+                y_shift = int(float(shift_range[1] * teacher_img_batch[i].shape[img_row_axis]) * np.random.random())
+                shift_val = [y_shift, x_shift, 0]
+                temp_cval = -900.0
+                shift(input=teacher_img_batch[i], shift=shift_val, output=teacher_img_batch[i], order=3, mode='constant', cval=temp_cval)
+
+                # Replace the invalid constant values from the output
+                if img_channel_axis == 2:
+                    cval_mask = teacher_img_batch[i][:, :, 0] == temp_cval
+                    teacher_img_batch[i][cval_mask] = self.per_channel_mean
+                else:
+                    cval_mask = teacher_img_batch[i][0, :, :] == temp_cval
+                    teacher_img_batch[i][cval_mask] = self.per_channel_mean
+
+        # Apply gaussian noise to the whole batch at once
+        gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
+
+        if gaussian_noise_stddev is not None:
+            gnoise = np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=teacher_img_batch.shape)
+            teacher_img_batch = teacher_img_batch + gnoise
+
+        return teacher_img_batch
 
 #######################################
 # SEGMENTATION DATA GENERATOR
@@ -1299,6 +1410,21 @@ class SegmentationDataGenerator(DataGenerator):
                 self.logger.warn('Invalid output data first (batch) dimension: {} should be {}'.format(element.shape[0], num_samples_in_batch))
 
         self.logger.debug_log('Data generation took: {}s'.format(time.time() - stime))
+
+        # TODO: Debug and teacher data
+
+        # If we are in debug mode, save the batch images - this is right before the images enter
+        # into the neural network
+        #if settings.DEBUG:
+        #    b_min = np.min(img_batch)
+        #    b_max = np.max(img_batch)
+
+        #    for i in range(0, len(img_batch)):
+        #        img = ((img_batch[i] - b_min) / (b_max - b_min)) * 255.0
+        #        mask = mask_batch[i][:, :, np.newaxis]*255.0
+        #        self.logger.debug_log_image(img, '{}_{}_{}_photo.jpg'.format("val" if validation else "tr", step_index, i), scale=False)
+        #        self.logger.debug_log_image(mask, file_name='{}_{}_{}_mask.png'.format("val" if validation else "tr", step_index, i), format='PNG')
+
         return batch_input_data, batch_output_data
 
     def _generate_mask_for_unlabeled_image(self, np_img):
@@ -1548,8 +1674,23 @@ class ClassificationDataGenerator(DataGenerator):
         Y = np.asarray(Y, dtype=np.float32)
         W = np.asarray(W, dtype=np.float32)
 
-        # Normalize the photo batch data
+        # Normalize the photo batch data: color values to [-1,1], subtract per pixel mean and divide by stddev
         X = self._normalize_image_batch(X)
+        X_teacher = None
+
+        # Generate possible mean teacher data
+        # Note: only applied to inputs ground truth must be the same
+        if self.generate_mean_teacher_data:
+            stime_t_data = time.time()
+            X_teacher = self._get_mean_teacher_data_from_image_batch(X)
+            self.logger.debug_log('Mean Teacher data generation took: {}s'.format(time.time()-stime_t_data))
+
+        # Apply possible gaussian noise
+        # Note: applied after generating mean teacher data so teacher can have unnoised data during generation
+        if self.data_augmentation_params.using_gaussian_noise:
+            gaussian_noise_stddev = self.data_augmentation_params.gaussian_noise_stddev_function(step_idx)
+            gnoise = np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=X.shape)
+            X = X + gnoise
 
         if self.batch_data_format == BatchDataFormat.SUPERVISED:
             batch_input_data = [X]
@@ -1571,7 +1712,30 @@ class ClassificationDataGenerator(DataGenerator):
         else:
             raise ValueError('Unknown batch data format: {}'.format(self.batch_data_format))
 
+        if self.generate_mean_teacher_data:
+            if X_teacher is None:
+                raise ValueError('Supposed to generate teacher data but X_teacher is None')
+
+            batch_input_data.append(X_teacher)
+
         self.logger.debug_log('Data generation took in total: {}s'.format(time.time() - stime))
+
+        # If we are in debug mode, save the batch images
+        if settings.DEBUG:
+            b_min = np.min(X)
+            b_max = np.max(Y)
+            b_min_teacher = np.min(X_teacher) if X_teacher is not None else 0
+            b_max_teacher = np.min(X_teacher) if X_teacher is not None else 0
+
+            for i in range(0, len(X)):
+                label = np.argmax(X[i])
+                img = ((X[i] - b_min) / (b_max - b_min)) * 255.0
+                self.logger.debug_log_image(img, '{}_{}_{}_{}_photo.jpg'.format(label, self.name, step_idx, i), scale=False)
+
+                if X_teacher is not None:
+                    img = ((X_teacher[i] - b_min_teacher) / (b_max_teacher - b_min_teacher)) * 255.0
+                    self.logger.debug_log_image(img, '{}_{}_{}_{}_photo_teacher.jpg'.format(label, self.name, step_idx, i), scale=False)
+
         return batch_input_data, batch_output_data
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
