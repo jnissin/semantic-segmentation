@@ -17,7 +17,7 @@ def get_files(path, ignore_hidden_files=True, include_sub_dirs=False):
 
         # Complete the file paths and check that we are only returning files
         ret_files = [os.path.join(path, f) for f in ret_files]
-        ret_files = [f for f in ret_files if os.path.isfile(os.path.join(path, f))]
+        ret_files = [f for f in ret_files if os.path.isfile(f)]
     else:
         for root, dirs, files in os.walk(path):
             for name in files:

@@ -18,7 +18,7 @@ def _read_minc_data_set_file(file_path):
         for line in lines:
             # Each line of the file is: 4-tuple list of (label, photo id, x, y)
             label, photo_id, x, y = line.split(',')
-            data_set.append(MINCSample(minc_label=int(label), file_name=photo_id.strip(), x=float(x), y=float(y)))
+            data_set.append(MINCSample(minc_label=int(label), photo_id=photo_id.strip(), x=float(x), y=float(y)))
 
     return data_set
 

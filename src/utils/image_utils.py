@@ -74,7 +74,10 @@ class ImageTransform:
         p_rank = p.ndim
 
         if not 1 <= p_rank <= 2:
-            raise ValueError('The coordinates must be either of rank 1 or 2')
+            raise ValueError('The coordinates must be either of rank 1 or 2, got: {}'.format(p))
+
+        if not ((p_rank == 1 and p.shape[0] == 2) or (p_rank == 2 and p.shape[1] == 2)):
+            raise ValueError('Invalid rank and shape: rank: {}, shape: {}'.format(p_rank, p.shape))
 
         # If we have N coordinates
         if p_rank == 1:
@@ -110,26 +113,28 @@ class ImageTransform:
         """
 
         p = np.array(coordinate).astype(np.float32)
+        p_rank = p.ndim
 
-        if not 1 <= p.ndim <= 2:
-            raise ValueError('The coordinates must be either of rank 1 or 2: [2] or [N, 2]')
+        if not 1 <= p_rank <= 2:
+            raise ValueError('The coordinates must be either of rank 1 or 2 and shape: [2] or [N, 2]')
 
         if self.horizontal_flip:
-            if p.ndim == 1:
+            if p_rank == 1:
                 p[0] = self.image_width - p[0]
-            elif p.ndim == 2:
+            elif p_rank == 2:
                 p[:, 0] = self.image_width - p[:, 0]
 
         if self.vertical_flip:
-            if p.ndim == 1:
+            if p_rank == 1:
                 p[1] = self.image_height - p[1]
-            elif p.ndim == 2:
+            elif p_rank == 2:
                 p[:, 1] = self.image_height - p[:, 1]
 
         p = skitransform.matrix_transform(p, self.transform.params)
 
-        # The matrix_transform always returns an ndarray of [N,2] if we had rank 1 squeeze the extra dimension
-        if p.ndim == 1:
+        # The matrix_transform always returns an ndarray of [N,2]
+        # if the original rank was 1 squeeze the extra dimension
+        if p_rank == 1:
             p = np.squeeze(p)
 
         return p
@@ -202,7 +207,7 @@ def np_apply_random_transform(images,
                               channel_shift_ranges=None,
                               horizontal_flip=False,
                               vertical_flip=False):
-    # type: (list[np.ndarray], list[np.ndarray], str, list[ImageInterpolation], np.array, str, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[np.ndarray], bool, bool) -> (list[np.ndarray], ImageTransform)
+    # type: (list[np.ndarray], list[np.ndarray], str, list[ImageInterpolation], np.ndarray, str, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[np.ndarray], bool, bool) -> (list[np.ndarray], ImageTransform)
 
     """
     Randomly augments, in the same way, a list of numpy images.
@@ -225,7 +230,6 @@ def np_apply_random_transform(images,
     # Returns
         :return: Inputs (x, y) with the same random transform applied.
     """
-
     if images is None or len(images) == 0:
         return images
 
@@ -395,11 +399,9 @@ def np_apply_random_transform(images,
 
 def np_random_channel_shift(x, intensity, min_c=0.0, max_c=255.0, channel_axis=0):
     # type: (np.ndarray, float, float, float, int) -> np.ndarray
-
-    x = np.rollaxis(x, channel_axis, 0)
-    channel_images = [np.clip(x_channel + np.random.uniform(-intensity, intensity), min_c, max_c) for x_channel in x]
-    x = np.stack(channel_images, axis=0)
-    x = np.rollaxis(x, 0, channel_axis + 1)
+    random_intensity = np.random.uniform(-intensity, intensity)
+    x = x + random_intensity
+    x = np.clip(x, min_c, max_c)
     return x
 
 

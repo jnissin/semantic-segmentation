@@ -600,6 +600,8 @@ class DataGenerator(object):
                                                                   vertical_flip=self.data_augmentation_params.vertical_flip,
                                                                   gamma_adjust_ranges=gamma_adjust_ranges)
 
+        self.logger.debug_log('Data augmentation took: {} sec'.format(time.time() - stime))
+
         return images, transform
 
 #######################################
@@ -1244,7 +1246,7 @@ class SegmentationDataGenerator(DataGenerator):
         resize_shape = self.get_batch_resize_shape()
 
         self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
-        self.logger.debug_log('Generating batch data for step {}: labeled: {}, unlabeled: {}'.format(step_idx, labeled_batch, unlabeled_batch))
+        #self.logger.debug_log('Generating batch data for step {}: labeled: {}, ul: {}'.format(step_idx, labeled_batch, unlabeled_batch))
 
         stime = time.time()
         X, Y, W = self.get_labeled_batch_data(step_idx, labeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
@@ -1350,6 +1352,10 @@ class MINCDataSet(object):
 
         # Create the ImageSet
         file_list = [s.file_name for s in self.samples]
+
+        # One image may contain multiple MINC samples - remove duplicate file names from the list
+        file_list = list(set(file_list))
+
         self._image_set = ImageSet(name=name, path_to_archive=path_to_photo_archive, file_list=file_list)
 
     @property
@@ -1379,12 +1385,11 @@ class MINCDataSet(object):
 
         if is_minc:
             self.data_set_type = MINCDataSetType.MINC
-
             for line in lines:
                 line = line.strip()
                 # Each line of the file is: 4-tuple list of (label,photo_id,x,y)
                 minc_label, photo_id, x, y = line.split(',')
-                samples.append(MINCSample(minc_label=int(minc_label), file_name=photo_id.strip(), x=float(x), y=float(y)))
+                samples.append(MINCSample(minc_label=int(minc_label), photo_id=photo_id.strip(), x=float(x), y=float(y)))
         elif is_minc_2500:
             self.data_set_type = MINCDataSetType.MINC_2500
 
@@ -1393,7 +1398,7 @@ class MINCDataSet(object):
                 file_name = line.split('/')[-1]
                 class_name = file_name.split('_')[0]
                 minc_label = minc_class_to_minc_label[class_name]
-                samples.append(MINCSample(minc_label=int(minc_label), file_name=file_name, x=-1.0, y=-1.0))
+                samples.append(MINCSample(minc_label=int(minc_label), photo_id=file_name, x=-1.0, y=-1.0))
 
         return samples
 
@@ -1463,7 +1468,7 @@ class ClassificationDataGenerator(DataGenerator):
             self.logger.warn('Using MINC-2500 data set with cropping - cropping is not applied to MINC-2500 data'.format(self._crop_shapes))
 
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC and self._crop_shapes is None:
-            self.logger.warn('Using MINC data set without cropping - is this intended?')
+            self.logger.warn('Using MINC data set without cropping or fully specified resize - is this intended?')
 
     def get_all_photos(self):
         photos = []
@@ -1524,7 +1529,7 @@ class ClassificationDataGenerator(DataGenerator):
         resize_shape = self.get_batch_resize_shape()
 
         self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
-        self.logger.debug_log('Generating batch data for step {}: labeled: {}, unlabeled: {}'.format(step_idx, labeled_batch, unlabeled_batch))
+        #self.logger.debug_log('Generating batch data for step {}: labeled: {}, ul: {}'.format(step_idx, labeled_batch, unlabeled_batch))
 
         stime = time.time()
         X, Y, W = self.get_labeled_batch_data(step_idx, labeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
@@ -1635,7 +1640,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bilinear')
+            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
 
         img_height, img_width = np_image.shape[0], np_image.shape[1]
         crop_height, crop_width = crop_shape[0], crop_shape[1]
@@ -1652,8 +1657,8 @@ class ClassificationDataGenerator(DataGenerator):
             # Unpack the photo
             np_image, = images
 
-            crop_center = transform.transform_normalized_coordinates(np.array([crop_center_x, crop_center_y]))
-            crop_center_x_new, crop_center_y_new = crop_center[0], crop_center[1]
+            crop_center_new = transform.transform_normalized_coordinates(np.array([crop_center_x, crop_center_y]))
+            crop_center_x_new, crop_center_y_new = crop_center_new[0], crop_center_new[1]
 
             # If the center has gone out of bounds abandon the augmentation - otherwise, update the crop center values
             if (not 0.0 <= crop_center_y_new <= 1.0) or (not 0.0 <= crop_center_x_new <= 1.0):
@@ -1666,10 +1671,20 @@ class ClassificationDataGenerator(DataGenerator):
         # constant value.
         y_c = crop_center_y*img_height
         x_c = crop_center_x*img_width
-        y_0 = np.clip(int(round(y_c - crop_height*0.5)), 0, img_height)
-        x_0 = np.clip(int(round(x_c - crop_width*0.5)), 0, img_width)
-        y_1 = np.clip(int(round(y_c + crop_height*0.5)), 0, img_height)
-        x_1 = np.clip(int(round(x_c + crop_width*0.5)), 0, img_width)
+
+        # MINC crop values can go out of bounds so we can keep the crop size constant
+        y_0 = int(round(y_c - crop_height*0.5))
+        x_0 = int(round(x_c - crop_width*0.5))
+        y_1 = int(round(y_c + crop_height*0.5))
+        x_1 = int(round(x_c + crop_width*0.5))
+
+        if y_1 - y_0 != crop_shape[0]:
+            add = abs(y_1 - y_0)
+            y_1 += add
+
+        if x_1 - x_0 != crop_shape[1]:
+            add = abs(x_1 - x_0)
+            x_1 += add
 
         np_image = image_utils.np_crop_image_with_fill(np_image, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
         np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')

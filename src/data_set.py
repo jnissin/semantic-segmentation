@@ -54,6 +54,15 @@ class ImageFile(object):
         self._tar_info = tar_info
         self.type = ImageFileType.NONE
 
+        # Validate the image path if not in a tar archive - better fail early
+        if self._image_path is not None:
+            if self._shared_resources is None:
+                if not os.path.exists(self._image_path):
+                    raise ValueError('Image path {} does not exist'.format(self._image_path))
+            else:
+                if not os.path.exists(os.path.join(self._shared_resources.path_to_archive, self._image_path)):
+                    raise ValueError('Image path {} does not exist'.format(os.path.join(self._shared_resources.path_to_archive, self._image_path)))
+
         if self.tar_file is not None and tar_info is not None:
             self.type = ImageFileType.TAR
         elif image_path is not None:
@@ -240,26 +249,43 @@ class ImageSet(object):
 
             for image_path in image_paths:
                 img_file = ImageFile(image_path=image_path, tar_info=None, shared_resources=self._image_set_shared_resources)
-                self._image_files.append(img_file)
                 file_name = img_file.file_name
+                self._image_files.append(img_file)
                 self._file_name_to_image_file[file_name] = img_file
         else:
             raise ValueError('The given archive path is not recognized as a tar file or a directory: {}'.format(path_to_archive))
 
         # If a file list was provided filter so that image files only contains those files
-        if self._file_list is not None:
+        if self._file_list is not None and len(self._file_list) > 0:
             # Accelerate lookups by building a temporary set
             file_list_set = set(self._file_list)
-            self._image_files = [img_file for img_file in self._image_files if img_file.file_name.lower() in file_list_set]
+            filtered_image_files = []
 
-            # Check that the ImageFiles match to the given file set are identical if not raise an exception
+            # Filter according to file list
+            for img_file in self._image_files:
+                file_name = img_file.file_name.lower()
+                in_file_list = file_name in file_list_set
+
+                if not in_file_list:
+                    # Remove also from the file name mapping
+                    del self._file_name_to_image_file[file_name]
+                else:
+                    filtered_image_files.append(img_file)
+
+            self._image_files = filtered_image_files
+
+            # Check that the ImageFiles match to the given file set i.e. they are identical - if not raise an exception
             if len(self._image_files) != len(self._file_list):
 
                 image_file_names = set([f.file_name for f in self._image_files])
-                diff = file_list_set.difference(image_file_names)
 
-                raise ValueError('Could not satisfy the given file list, image files and file list do not match: {} vs {}. Diff: {}'
-                                 .format(len(self._image_files), len(self._file_list), diff))
+                if len(file_list_set) > len(image_file_names):
+                    diff = list(image_file_names.difference(file_list_set))
+                else:
+                    diff = list(file_list_set.difference(image_file_names))
+
+                raise ValueError('Could not satisfy the given file list, image files and file list do not match: {} vs {}. Diff (first 10): {}'
+                                 .format(len(self._image_files), len(self._file_list), diff[0:min(len(diff), 10)]))
 
     @staticmethod
     def list_pictures(directory, ext='jpg|jpeg|bmp|png'):

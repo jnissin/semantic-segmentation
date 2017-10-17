@@ -181,7 +181,7 @@ def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     mse_softmax = K.tf.reduce_mean(K.tf.square(K.tf.subtract(teacher_softmax, student_softmax)), axis=-1)
 
     # Output of the softmax is B_SIZExHxW
-    # Sum the last two axes to get the total loss over images
+    # Sum the last two axes to get the total loss over all the pixels in the images per image
     mse_softmax = K.tf.reduce_sum(mse_softmax, axis=(1, 2))
 
     # Take the mean of the loss per image

@@ -573,7 +573,7 @@ class BasicDataSetIterator(DataSetIterator):
             unlabeled_batch = None
 
         # Use the data generator to generate the data
-        self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
+        #self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
         return self.data_generator.get_data_batch(step_idx=g_idx,
                                                   labeled_batch=labeled_batch,
                                                   unlabeled_batch=unlabeled_batch)
@@ -1137,7 +1137,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             unlabeled_batch = None
 
         # Use the data generator to generate the data
-        self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
+        #self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
 
         batch_data = self.data_generator.get_data_batch(step_idx=g_idx,
                                                         labeled_batch=labeled_batch,

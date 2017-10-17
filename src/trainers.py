@@ -16,6 +16,7 @@ import keras
 import keras.backend as K
 from keras.optimizers import Optimizer
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau, EarlyStopping
+from keras.utils import plot_model
 
 from keras_extensions.extended_optimizers import SGD, Adam
 from keras_extensions.extended_model import ExtendedModel
@@ -35,6 +36,9 @@ from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
 from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
 from losses import ModelLambdaLossType
+
+from scipy.ndimage.interpolation import shift
+from joblib import Parallel, delayed
 
 import models
 import losses
@@ -120,7 +124,6 @@ class TrainerBase:
         self.training_set_labeled = None
         self.training_set_unlabeled = None
         self.validation_set = None
-        self.test_set = None
         self.training_data_generator = None
         self.validation_data_generator = None
         self.model_wrapper = None
@@ -162,14 +165,14 @@ class TrainerBase:
         np.random.seed(self.random_seed)
 
         # Set image data format
-        self.logger.log('Setting Keras image data format to: {}'.format(self._get_config_value('image_data_format')))
-        K.set_image_data_format(self._get_config_value('image_data_format'))
+        self.logger.log('Setting Keras image data format to: {}'.format(self.image_data_format))
+        K.set_image_data_format(self.image_data_format)
 
         # Get data augmentation parameters
         self.data_augmentation_parameters = self._get_data_augmentation_parameters()
 
         # Initialize data sets
-        self.training_set_labeled, self.training_set_unlabeled, self.validation_set, self.test_set = self._get_data_sets()
+        self.training_set_labeled, self.training_set_unlabeled, self.validation_set = self._get_data_sets()
 
         # Initialize data generators
         self.training_data_generator, self.validation_data_generator = self._get_data_generators()
@@ -231,27 +234,35 @@ class TrainerBase:
         model_loss_weights = self._get_model_loss_weights()
         model_metrics = self._get_model_metrics()
 
-        # Compile the student model
+        # Compile the model
         self.model.compile(optimizer=model_optimizer,
                            loss=model_loss,
                            loss_weights=model_loss_weights,
                            metrics=model_metrics,
                            **self._get_compile_kwargs())
 
+        # Log the model structure to a file using the keras plot_model
+        try:
+            model_plot_file_path = os.path.join(self.log_folder_path, 'model.png')
+            self.logger.log('Saving model plot to file: {}'.format(model_plot_file_path))
+            plot_model(self.model, to_file=model_plot_file_path, show_shapes=True, show_layer_names=True)
+        except Exception as e:
+            self.logger.warn('Saving model plot to file failed: {}'.format(e.message))
+
         return self.model_wrapper
 
     @abstractmethod
     def _get_data_sets(self):
-        # type: () -> (object, object, object, object)
+        # type: () -> (object, object, object)
 
         """
-        Creates and initializes the data sets and return a tuple of four data sets:
-        (training labeled, training unlabeled, validation and test)
+        Creates and initializes the data sets and return a tuple of three data sets:
+        (training labeled, training unlabele and validation)
 
         # Arguments
             None
         # Returns
-            :return: A tuple of data sets (training labeled, training unlabeled, validation, test)
+            :return: A tuple of data sets (training labeled, training unlabeled, validation)
         """
         pass
 
@@ -278,6 +289,21 @@ class TrainerBase:
     def num_classes(self):
         # type: () -> int
         pass
+
+    @abstractproperty
+    def per_channel_mean(self):
+        # type: () -> np.ndarray
+        pass
+
+    @abstractproperty
+    def per_channel_stddev(self):
+        # type: () -> np.ndarray
+        pass
+
+    @property
+    def image_data_format(self):
+        # type: () -> str
+        return self._get_config_value('image_data_format')
 
     @property
     def random_seed(self):
@@ -919,6 +945,9 @@ class TrainerBase:
         assert isinstance(x, list)
         assert isinstance(y, list)
 
+        # Use a reproducible random seed to make any possible augmentations deterministic
+        np.random.seed(self.random_seed + step_index)
+
         return x, y
 
     def on_batch_end(self, batch_index):
@@ -1022,6 +1051,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             assert(self.consistency_cost_coefficient_function is not None)
             assert(self.teacher_weights_directory_path is not None)
             assert(self.teacher_model_checkpoint_file_path is not None)
+            self.logger.log('Using teacher noise parameters: {}'.format(self.teacher_noise_params))
 
     def _init_teacher_model(self):
         # If we are using the mean teacher method create the teacher model
@@ -1052,6 +1082,14 @@ class MeanTeacherTrainerBase(TrainerBase):
                                        metrics=teacher_model_metrics,
                                        **self._get_compile_kwargs())
 
+            # Log the model structure to a file using the keras plot_model
+            try:
+                model_plot_file_path = os.path.join(self.log_folder_path, 'teacher_model.png')
+                self.logger.log('Saving teacher model plot to file: {}'.format(model_plot_file_path))
+                plot_model(self.teacher_model, to_file=model_plot_file_path, show_shapes=True, show_layer_names=True)
+            except Exception as e:
+                self.logger.warn('Saving teacher model plot to file failed: {}'.format(e.message))
+
             return self.teacher_model_wrapper
 
         return None
@@ -1077,6 +1115,17 @@ class MeanTeacherTrainerBase(TrainerBase):
                 raise ValueError('Could not find entry for mean_teacher_params from the configuration JSON')
 
         return self._mean_teacher_method_config
+
+
+    @property
+    def teacher_noise_params(self):
+        if self.using_mean_teacher_method:
+            return self._mean_teacher_method_config.get('noise_params')
+        return None
+
+    @property
+    def using_teacher_noise(self):
+        return self.teacher_noise_params is not None
 
     @property
     def ema_smoothing_coefficient_function(self):
@@ -1174,7 +1223,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         """
         x, y = super(MeanTeacherTrainerBase, self).modify_batch_data(step_index=step_index, x=x, y=y, validation=validation)
 
-        # Append first mean teacher data
+        # Append mean teacher data
         if self.using_mean_teacher_method:
             img_batch = x[0]
             labels_data = x[1]
@@ -1188,7 +1237,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             else:
                 teacher_data_shape = list(img_batch.shape[0:-1]) + [self.num_classes]
 
-            x = x + self._get_mean_teacher_extra_batch_data(img_batch, step_index=step_index, teacher_data_shape=teacher_data_shape, validation=validation)
+            x = x + self._get_mean_teacher_extra_batch_data(img_batch, labels=labels_data, step_index=step_index, teacher_data_shape=teacher_data_shape, validation=validation)
 
         return x, y
 
@@ -1214,6 +1263,9 @@ class MeanTeacherTrainerBase(TrainerBase):
                 raise ValueError('Teacher model is not set, cannot run EMA update')
 
             a = self.ema_smoothing_coefficient_function(step_index)
+
+            if not 0 <= a <= 1.0:
+                self.logger.warn('Out of bounds EMA coefficient value when updating teacher weights: {}'.format(a))
 
             # Perform the EMA weight update: theta'_t = a * theta'_t-1 + (1 - a) * theta_t
             t_weights = self.teacher_model.get_weights()
@@ -1333,8 +1385,8 @@ class MeanTeacherTrainerBase(TrainerBase):
                 self.logger.log('Saving teacher model weights')
                 self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
 
-    def _get_mean_teacher_extra_batch_data(self, img_batch, step_index, teacher_data_shape, validation):
-        # type: (np.ndarray, int, list, bool) -> list
+    def _get_mean_teacher_extra_batch_data(self, img_batch, labels, step_index, teacher_data_shape, validation):
+        # type: (np.ndarray, np.ndarray, int, list, bool) -> list
 
         """
         Calculates the extra batch data necessary for the Mean Teacher method. In other words returns a list with
@@ -1345,6 +1397,7 @@ class MeanTeacherTrainerBase(TrainerBase):
 
         # Arguments
             :param img_batch: The input images to the neural network
+            :param labels: The ground truth labels give nto the neural network
             :param step_index: Step index (used in coefficient calculation)
             :param teacher_data_shape: Shape of the teacher data - might not always be the same as img batch e.g. for classification
             :param validation: True if this is a validation batch false otherwise
@@ -1369,10 +1422,23 @@ class MeanTeacherTrainerBase(TrainerBase):
         else:
             s_time = time.time()
 
-            if self.using_gaussian_noise:
-                teacher_img_batch = img_batch + self._get_batch_gaussian_noise(noise_shape=img_batch.shape, step_index=step_index)
+            # Apply possible teacher noise functions
+            if self.using_teacher_noise:
+                teacher_img_batch = np.array(img_batch)
+                teacher_img_batch = self._apply_teacher_noise_function(img_batch=teacher_img_batch, step_index=step_index)
             else:
                 teacher_img_batch = img_batch
+
+            # If we are in debug mode, save the batch images - this is right before the images enter
+            # into the neural network
+            if settings.DEBUG:
+                b_min = np.min(teacher_img_batch)
+                b_max = np.max(teacher_img_batch)
+
+                for i in range(0, len(teacher_img_batch)):
+                    label = np.argmax(labels[i])
+                    img = ((teacher_img_batch[i] - b_min) / (b_max - b_min)) * 255.0
+                    self.logger.debug_log_image(img, '{}_{}_{}_{}_photo_teacher.jpg'.format(label, "val" if validation else "tr", step_index, i), scale=False)
 
             # Note: include the training phase noise and dropout layers on the prediction
             mean_teacher_predictions = self.teacher_model.predict_on_batch(teacher_img_batch, use_training_phase_layers=True)
@@ -1385,6 +1451,97 @@ class MeanTeacherTrainerBase(TrainerBase):
                                  .format(teacher_data_shape, mean_teacher_predictions.shape))
 
             return [mean_teacher_predictions, np_consistency_coefficients]
+
+    def _apply_teacher_noise_function(self, img_batch, step_index):
+        # type: (np.ndarray, int) -> np.ndarray
+
+        if not self.using_teacher_noise:
+            return img_batch
+
+        noise_params = self.teacher_noise_params
+        batch_size = img_batch.shape[0]
+
+        # Apply noise transformations individually to each image
+        # * Horizontal flips
+        # * Vertical flips
+        # * Translations
+        # * Intensity shifts
+        # * Gaussian noise
+        Parallel(n_jobs=4, backend='threading')(delayed(_apply_teacher_noise_to_image)(
+            img_batch=img_batch,
+            img_idx=i,
+            noise_params=noise_params,
+            image_data_format=self.image_data_format,
+            per_channel_mean=self.per_channel_mean) for i in range(batch_size))
+
+        return img_batch
+
+
+def _apply_teacher_noise_to_image(img_batch, img_idx, noise_params, image_data_format, per_channel_mean):
+
+    # Figure out the correct axes according to image data format
+    if image_data_format == 'channels_first':
+        img_channel_axis = 0
+        img_row_axis = 1
+        img_col_axis = 2
+    elif image_data_format == 'channels_last':
+        img_row_axis = 0
+        img_col_axis = 1
+        img_channel_axis = 2
+    else:
+        raise ValueError('Unknown image data format: {}'.format(image_data_format))
+
+    # Apply brightness shift
+    brightness_shift_range = noise_params.get('brightness_shift_range')
+
+    if brightness_shift_range is not None:
+        brightness_shift = np.random.uniform(-brightness_shift_range, brightness_shift_range)
+        img_batch[img_idx] = img_batch[img_idx] + brightness_shift
+
+    # Apply horizontal flips
+    horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
+
+    if horizontal_flip_probability is not None:
+        if np.random.random() < horizontal_flip_probability:
+            img_batch[img_idx] = img_batch[img_idx].swapaxes(img_col_axis, 0)
+            img_batch[img_idx] = img_batch[img_idx][::-1, ...]
+            img_batch[img_idx] = img_batch[img_idx].swapaxes(0, img_col_axis)
+
+    # Apply vertical flips
+    vertical_flip_probability = noise_params.get('vertical_flip_probability')
+
+    if vertical_flip_probability is not None:
+        if np.random.random() < vertical_flip_probability:
+            img_batch[img_idx] = img_batch[img_idx].swapaxes(img_row_axis, 0)
+            img_batch[img_idx] = img_batch[img_idx][::-1, ...]
+            img_batch[img_idx] = img_batch[img_idx].swapaxes(0, img_row_axis)
+
+    # Apply translations
+    shift_range = noise_params.get('shift_range')
+
+    if shift_range is not None:
+        if len(shift_range) != 2:
+            raise ValueError('Shift range should be a list of two values (x, y), got: {}'.format(shift_range))
+
+        x_shift = int(float(shift_range[0] * img_batch[img_idx].shape[img_col_axis]) * np.random.random())
+        y_shift = int(float(shift_range[1] * img_batch[img_idx].shape[img_row_axis]) * np.random.random())
+        shift_val = [y_shift, x_shift, 0]
+        temp_cval = -900.0
+        shift(input=img_batch[img_idx], shift=shift_val, output=img_batch[img_idx], order=3, mode='constant', cval=temp_cval)
+
+        # Replace the invalid constant values from the output
+        if img_channel_axis == 2:
+            cval_mask = img_batch[img_idx][:, :, 0] == temp_cval
+            img_batch[img_idx][cval_mask] = per_channel_mean
+        else:
+            cval_mask = img_batch[img_idx][0, :, :] == temp_cval
+            img_batch[img_idx][cval_mask] = per_channel_mean
+
+    gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
+
+    if gaussian_noise_stddev is not None:
+        gnoise = np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=img_batch[img_idx].shape)
+        img_batch[img_idx] = img_batch[img_idx] + gnoise
 
 
 #############################################
@@ -1490,7 +1647,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         if self._data_set_information is None:
             self.logger.log('Loading data set information from: {}'.format(self.path_to_data_set_information_file))
             self._data_set_information = dataset_utils.load_segmentation_data_set_information(self.path_to_data_set_information_file)
-            self.logger.log('Loaded data set information successfully with set sizes (tr,va,te): {}, {}, {}'
+            self.logger.log('Loaded data set information successfully with set sizes (tr, va, te): {}, {}, {}'
                             .format(self.data_set_information.training_set.labeled_size + self.data_set_information.training_set.unlabeled_size,
                                     self.data_set_information.validation_set.labeled_size,
                                     self.data_set_information.test_set.labeled_size))
@@ -1570,9 +1727,9 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 crop_shapes=self.crop_shape,
                 resize_shapes=self.resize_shape,
                 use_per_channel_mean_normalization=True,
-                per_channel_mean=self.data_set_information.per_channel_mean if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_mean,
+                per_channel_mean=self.per_channel_mean,
                 use_per_channel_stddev_normalization=True,
-                per_channel_stddev=self.data_set_information.labeled_per_channel_stddev if self.using_unlabeled_training_data else self.data_set_information.labeled_per_channel_stddev,
+                per_channel_stddev=self.per_channel_stddev,
                 use_data_augmentation=self.use_data_augmentation,
                 use_material_samples=self.using_material_samples,
                 use_selective_attention=self.using_selective_attention,
@@ -1595,9 +1752,9 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 crop_shapes=self.validation_crop_shape,
                 resize_shapes=self.validation_resize_shape,
                 use_per_channel_mean_normalization=True,
-                per_channel_mean=self.training_data_generator_params.per_channel_mean,
+                per_channel_mean=self.per_channel_mean,
                 use_per_channel_stddev_normalization=True,
-                per_channel_stddev=self.training_data_generator_params.per_channel_stddev,
+                per_channel_stddev=self.per_channel_stddev,
                 use_data_augmentation=False,
                 use_material_samples=False,
                 use_selective_attention=False,
@@ -1639,6 +1796,24 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         return self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER or \
                self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER or \
                self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL
+
+    @property
+    def per_channel_mean(self):
+        # type: () -> np.ndarray
+
+        if self.using_unlabeled_training_data:
+            return np.array(self.data_set_information.per_channel_mean, dtype=np.float32)
+        else:
+            return np.array(self.data_set_information.labeled_per_channel_mean, dtype=np.float32)
+
+    @property
+    def per_channel_stddev(self):
+        # type: () -> np.ndarray
+
+        if self.using_unlabeled_training_data:
+            return np.array(self.data_set_information.per_channel_stddev, dtype=np.float32)
+        else:
+            return np.array(self.data_set_information.labeled_per_channel_stddev, dtype=np.float32)
 
     @property
     def using_superpixel_method(self):
@@ -1702,24 +1877,24 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self.logger.log('Labeled validation set creation took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
 
         # Labeled test set
-        self.logger.log('Creating test set')
-        stime = time.time()
-        test_set = LabeledImageDataSet('test_set',
-                                            path_to_photo_archive=self.path_to_labeled_photos,
-                                            path_to_mask_archive=self.path_to_labeled_masks,
-                                            photo_file_list=self.data_set_information.test_set.labeled_photos,
-                                            mask_file_list=self.data_set_information.test_set.labeled_masks,
-                                            material_samples=self.data_set_information.test_set.material_samples)
-        self.logger.log('Labeled test set creation took: {} s, size: {}'.format(time.time()-stime, test_set.size))
+        #self.logger.log('Creating test set')
+        #stime = time.time()
+        #test_set = LabeledImageDataSet('test_set',
+        #                                    path_to_photo_archive=self.path_to_labeled_photos,
+        #                                    path_to_mask_archive=self.path_to_labeled_masks,
+        #                                    photo_file_list=self.data_set_information.test_set.labeled_photos,
+        #                                    mask_file_list=self.data_set_information.test_set.labeled_masks,
+        #                                    material_samples=self.data_set_information.test_set.material_samples)
+        #self.logger.log('Labeled test set creation took: {} s, size: {}'.format(time.time()-stime, test_set.size))
 
         if training_set_unlabeled is not None:
-            total_data_set_size = training_set_labeled.size + training_set_unlabeled.size + validation_set.size + test_set.size
+            total_data_set_size = training_set_labeled.size + training_set_unlabeled.size + validation_set.size
         else:
-            total_data_set_size = training_set_labeled.size + validation_set.size + test_set.size
+            total_data_set_size = training_set_labeled.size + validation_set.size
 
-        self.logger.log('Total data set size: {}'.format(total_data_set_size))
+        self.logger.log('Total data set size (training + val): {}'.format(total_data_set_size))
 
-        return training_set_labeled, training_set_unlabeled, validation_set, test_set
+        return training_set_labeled, training_set_unlabeled, validation_set
 
     def _get_data_generators(self):
         self.logger.log('Initializing data generators')
@@ -2010,19 +2185,19 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
     @property
     def per_channel_mean(self):
-        return self.classification_data_set_config['per_channel_mean']
+        # type: () -> np.ndarray
 
-    @property
-    def per_channel_mean_labeled(self):
-        return self.classification_data_set_config['per_channel_mean_labeled']
+        if self.using_unlabeled_training_data:
+            return np.array(self.classification_data_set_config['per_channel_mean'], dtype=np.float32)
+        else:
+            return np.array(self.classification_data_set_config['per_channel_mean_labeled'], dtype=np.float32)
 
     @property
     def per_channel_stddev(self):
-        return self.classification_data_set_config['per_channel_stddev']
-
-    @property
-    def per_channel_stddev_labeled(self):
-        return self.classification_data_set_config['per_channel_stddev_labeled']
+        if self.using_unlabeled_training_data:
+            return np.array(self.classification_data_set_config['per_channel_stddev'], dtype=np.float32)
+        else:
+            return np.array(self.classification_data_set_config['per_channel_stddev_labeled'], dtype=np.float32)
 
     @property
     def class_weights(self):
@@ -2077,9 +2252,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 crop_shapes=self.crop_shape,
                 resize_shapes=self.resize_shape,
                 use_per_channel_mean_normalization=True,
-                per_channel_mean=self.per_channel_mean if self.using_unlabeled_training_data else self.per_channel_mean_labeled,
+                per_channel_mean=self.per_channel_mean,
                 use_per_channel_stddev_normalization=True,
-                per_channel_stddev=self.per_channel_stddev_labeled if self.using_unlabeled_training_data else self.per_channel_stddev_labeled,
+                per_channel_stddev=self.per_channel_stddev,
                 use_data_augmentation=self.use_data_augmentation,
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
@@ -2097,9 +2272,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 crop_shapes=self.validation_crop_shape,
                 resize_shapes=self.validation_resize_shape,
                 use_per_channel_mean_normalization=True,
-                per_channel_mean=self.training_data_generator_params.per_channel_mean,
+                per_channel_mean=self.per_channel_mean,
                 use_per_channel_stddev_normalization=True,
-                per_channel_stddev=self.training_data_generator_params.per_channel_stddev,
+                per_channel_stddev=self.per_channel_stddev,
                 use_data_augmentation=False,
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
@@ -2161,15 +2336,15 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                                      data_set_file_path=self.path_to_validation_set_file)
         self.logger.log('Validation set construction took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
 
-        self.logger.log('Creating test set')
-        stime = time.time()
-        test_set = MINCDataSet(name='test_set',
-                               path_to_photo_archive=self.path_to_labeled_photos,
-                               label_mappings_file_path=self.path_to_label_mapping_file,
-                               data_set_file_path=self.path_to_test_set_file)
-        self.logger.log('Test set construction took: {} s, size: {}'.format(time.time()-stime, test_set.size))
+        #self.logger.log('Creating test set')
+        #stime = time.time()
+        #test_set = MINCDataSet(name='test_set',
+        #                       path_to_photo_archive=self.path_to_labeled_photos,
+        #                       label_mappings_file_path=self.path_to_label_mapping_file,
+        #                       data_set_file_path=self.path_to_test_set_file)
+        #self.logger.log('Test set construction took: {} s, size: {}'.format(time.time()-stime, test_set.size))
 
-        return training_set_labeled, training_set_unlabeled, validation_set, test_set
+        return training_set_labeled, training_set_unlabeled, validation_set
 
     def _get_data_generators(self):
         # type: () -> (DataGenerator, DataGenerator)

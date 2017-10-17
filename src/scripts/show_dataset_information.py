@@ -48,7 +48,6 @@ if __name__ == '__main__':
     print 'Total pixels per class: {}'.format(list(total_pixels_per_class_tot))
     print 'Total samples: {}'.format(sum(list(total_samples_per_class_tot)))
 
-
     print 'Training set'
     print 'Total samples per class: {}'.format(list(total_samples_per_class_tr))
     print 'Total pixels per class: {}'.format(list(total_pixels_per_class_tr))

@@ -97,13 +97,17 @@ class MaterialSample(object):
 
 class MINCSample(object):
 
-    def __init__(self, minc_label, file_name, x, y):
+    def __init__(self, minc_label, photo_id, x, y):
         # type: (int, str, float, float) -> None
 
         self.minc_label = int(minc_label)
-        self.file_name = file_name
+        self.photo_id = photo_id
         self.x = float(x)
         self.y = float(y)
+
+    @property
+    def file_name(self):
+        return self.photo_id + '.jpg'
 
 
 class MaterialClassInformation(object):
@@ -361,7 +365,7 @@ def calculate_per_channel_mean(image_files, num_channels, verbose=False):
     # Parallelize per-channel sum calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='threading')(
+    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
         delayed(_calculate_per_channel_mean)(image_file, num_channels, verbose) for image_file in image_files)
 
     # Calculate the final value
@@ -429,7 +433,7 @@ def calculate_per_channel_stddev(image_files, per_channel_mean, num_channels, ve
     # Parallelize per-channel variance calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='threading')(
+    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
         delayed(_calculate_per_channel_stddev)(
             image_file, per_channel_mean, num_channels, verbose) for image_file in image_files)
 
