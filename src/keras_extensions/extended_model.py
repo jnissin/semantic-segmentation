@@ -42,39 +42,32 @@ class ExtendedModel(Model):
         super(ExtendedModel, self).__init__(inputs=inputs, outputs=outputs, name=name)
 
         self.fit_generator_stopped = False
-        self.logger = None
+        self.process_clean_up_called = False
+        self.logger = Logger.instance()
         self.enqueuer = None
 
-    def _log(self, message, log_level=LogLevel.INFO):
-        # type: (str, LogLevel) -> None
-
-        if self.logger is not None:
-            self.logger.log(message, log_level=log_level)
-        else:
-            if log_level == LogLevel.INFO or \
-               log_level == LogLevel.WARNING or \
-               (settings.DEBUG and log_level == LogLevel.DEBUG) or \
-               (settings.PROFILE and log_level == LogLevel.PROFILE):
-                print Logger.format_message(message=message, log_level=log_level, use_timestamp=True)
-
-    def _debug_log(self, message):
-        # type: (str) -> None
-        self._log(message, LogLevel.DEBUG)
-
     def stop_training_loop(self):
-        if not self.fit_generator_stopped:
-            if self.enqueuer is not None:
-                self.enqueuer.stop()
+        self.fit_generator_stopped = True
 
-            self.fit_generator_stopped = True
+    def clean_up_processes(self):
+        # This can sometimes throw some NoneType errors when stopping training - catch them
+        try:
+            if not self.process_clean_up_called:
+                self.process_clean_up_called = True
+                self.fit_generator_stopped = True
 
-            # Note: Callback model stop_training flag is set in fit_generator
-            if hasattr(self, 'callback_model') and self.callback_model:
-                callback_model = self.callback_model
-            else:
-                callback_model = self
+                if self.enqueuer is not None:
+                    self.enqueuer.stop()
 
-            callback_model.stop_training = True
+                # Note: Callback model stop_training flag is set in fit_generator
+                if hasattr(self, 'callback_model') and self.callback_model:
+                    callback_model = self.callback_model
+                else:
+                    callback_model = self
+
+                callback_model.stop_training = True
+        except (AttributeError, ValueError):
+            pass
 
     def predict_on_batch(self, x, use_training_phase_layers=False):
         """Returns predictions for a single batch of samples.
@@ -196,6 +189,9 @@ class ExtendedModel(Model):
             ValueError: In case the generator yields
                 data in an invalid format.
         """
+        self.fit_generator_stopped = False
+        self.process_clean_up_called = False
+
         wait_time = 0.01  # in seconds
         epoch = initial_epoch
 
@@ -316,8 +312,7 @@ class ExtendedModel(Model):
                     batch_logs['size'] = batch_size
                     s_time = time.time()
                     callbacks.on_batch_begin(batch_index, batch_logs)
-                    self._debug_log('Callbacks on_batch_begin took: {}s'.format(time.time() - s_time))
-
+                    self.logger.debug_log('Callbacks on_batch_begin took: {}s'.format(time.time() - s_time))
 
                     step_index = steps_done + epoch*steps_per_epoch
 
@@ -325,11 +320,10 @@ class ExtendedModel(Model):
                     if trainer is not None:
                         s_time = time.time()
                         x, y = trainer.modify_batch_data(step_index, x, y)
-                        self._debug_log('Trainer modify_batch_data took: {}s'.format(time.time() - s_time))
+                        self.logger.debug_log('Trainer modify_batch_data took: {}s'.format(time.time() - s_time))
 
                     # Extended functionality: stop if early stopping has been initiated
                     if self.fit_generator_stopped:
-                        self.fit_generator_stopped = False
                         return self.history
 
                     s_time = time.time()
@@ -338,7 +332,7 @@ class ExtendedModel(Model):
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
 
-                    self._debug_log('Train on batch took: {} s'.format(time.time() - s_time))
+                    self.logger.debug_log('Train on batch took: {} s'.format(time.time() - s_time))
 
                     if not isinstance(outs, list):
                         outs = [outs]
@@ -347,13 +341,13 @@ class ExtendedModel(Model):
 
                     s_time = time.time()
                     callbacks.on_batch_end(batch_index, batch_logs)
-                    self._debug_log('Callbacks on_batch_end took: {}s'.format(time.time() - s_time))
+                    self.logger.debug_log('Callbacks on_batch_end took: {}s'.format(time.time() - s_time))
 
                     # Extended functionality: notify trainer
                     if trainer is not None:
                         s_time = time.time()
                         trainer.on_batch_end(step_index)
-                        self._debug_log('Trainer on_batch_end took: {}s'.format(time.time() - s_time))
+                        self.logger.debug_log('Trainer on_batch_end took: {}s'.format(time.time() - s_time))
 
                     # Construct epoch logs.
                     epoch_logs = {}
@@ -376,7 +370,7 @@ class ExtendedModel(Model):
                                 use_multiprocessing=use_multiprocessing,
                                 validation=True)
 
-                            self._debug_log('Validation evaluation took: {}'.format(time.time() - s_time))
+                            self.logger.debug_log('Validation evaluation took: {}'.format(time.time() - s_time))
                         else:
                             # No need for try/except because
                             # data has already been validated.

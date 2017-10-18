@@ -1,35 +1,40 @@
 # coding=utf-8
 
 import argparse
-import os
 import signal
 import sys
+import multiprocessing
+import os
 
 from trainers import SegmentationTrainer, ClassificationTrainer, TrainerBase
 
 import settings
 
-_EARLY_EXIT_SIGNAL_HANDLER_CALLED = False
+_EARLY_EXIT_SIGNAL_HANDLER_CALLED = multiprocessing.Value('i', 0)
 _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
+_MAIN_PROCESS_PID = multiprocessing.Value('i', -1)
 
 
 def get_signal_handler(trainer):
     # type: (TrainerBase) -> ()
 
     def signal_handler(s, f):
-        print 'Received signal: {}'.format(s)
+        global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED
+        process_pid = multiprocessing.current_process().pid
+        print 'Received signal: {} in process {} - main process pid: {}'.format(s, process_pid, _MAIN_PROCESS_PID.value)
 
-        global _EARLY_EXIT_SIGNAL_HANDLER_CALLED
-        if not _EARLY_EXIT_SIGNAL_HANDLER_CALLED:
-
-            _EARLY_EXIT_SIGNAL_HANDLER_CALLED = True
+        if _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value == 0 and (process_pid == _MAIN_PROCESS_PID.value or _MAIN_PROCESS_PID.value == -1):
+            _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value = 1
 
             if trainer is not None:
                 trainer.handle_early_exit()
+                sys.exit(0)
             else:
                 print 'No trainer present, exiting'
+        else:
+            print 'Not the main process - exiting'
 
-            sys.exit(0)
+        sys.exit(0)
 
     return signal_handler
 
@@ -66,6 +71,13 @@ def main():
 
     if settings.PROFILE:
         print 'RUNNING IN PROFILE MODE'
+
+    global _MAIN_PROCESS_PID
+
+    if _MAIN_PROCESS_PID.value == -1:
+        pid = multiprocessing.current_process().pid
+        print 'Storing main process pid: {}'.format(pid)
+        _MAIN_PROCESS_PID.value = pid
 
     if wdir_path:
         print 'Setting working directory to: {}'.format(wdir_path)

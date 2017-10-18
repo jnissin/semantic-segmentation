@@ -143,6 +143,7 @@ class TrainerBase:
         # Setup the log file path to enable logging
         log_file_path = self._populate_path_template(self._get_config_value('log_file_path'))
         log_to_stdout = self._get_config_value('log_to_stdout')
+        print 'Initializing Logger singleton instance - from this point on Logger can be fetched from Logger.instance()'
         self.logger = Logger(log_file_path=log_file_path, use_timestamp=True, log_to_stdout_default=log_to_stdout)
 
         # Log the Keras and Tensorflow versions
@@ -205,7 +206,6 @@ class TrainerBase:
         self.model_wrapper = models.get_model(self.model_name,
                                               self.input_shape,
                                               self.num_classes,
-                                              logger=self.logger,
                                               model_lambda_loss_type=model_lambda_loss_type)
 
         self.model.summary()
@@ -958,6 +958,7 @@ class TrainerBase:
 
         # Stop training
         self.logger.log('Stopping model training')
+
         if self.model is not None:
             self.model.stop_training_loop()
 
@@ -1047,7 +1048,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             teacher_model_lambda_loss_type = self._get_teacher_model_lambda_loss_type()
 
             self.logger.log('Creating teacher model {} instance with lambda loss type: {}, input shape: {}, num classes: {}'.format(self.model_name, teacher_model_lambda_loss_type, self.input_shape, self.num_classes))
-            self.teacher_model_wrapper = models.get_model(self.model_name, self.input_shape, self.num_classes, logger=self.logger, model_lambda_loss_type=teacher_model_lambda_loss_type)
+            self.teacher_model_wrapper = models.get_model(self.model_name, self.input_shape, self.num_classes, model_lambda_loss_type=teacher_model_lambda_loss_type)
             self.teacher_model.summary()
 
             if self.continue_from_last_checkpoint:
@@ -1154,29 +1155,6 @@ class MeanTeacherTrainerBase(TrainerBase):
     def _get_teacher_model_metrics(self):
         # type: () -> list[Callable]
         pass
-
-    def _save_teacher_model_weights(self, epoch_index, val_loss, file_extension='.teacher'):
-        if self.using_mean_teacher_method:
-            if self.teacher_model is None:
-                raise ValueError('Teacher model is not set, cannot save weights')
-
-            # Save the teacher model weights:
-            teacher_model_checkpoint_file_path = self.teacher_model_checkpoint_file_path
-
-            # Don't crash here, too much effort done - save with a different name to the same path as
-            # the student model
-            if teacher_model_checkpoint_file_path is None:
-                self.logger.log('Value of teacher_model_checkpoint_file_path is not set - defaulting to teacher folder under student directory')
-                file_name_format = os.path.basename(self.model_checkpoint_file_path)
-                teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
-
-            file_path = self._populate_path_template(teacher_model_checkpoint_file_path).format(epoch=epoch_index, val_loss=val_loss) + file_extension
-
-            # Make sure the directory exists
-            general_utils.create_path_if_not_existing(file_path)
-
-            self.logger.log('Saving mean teacher model weights to file: {}'.format(file_path))
-            self.teacher_model.save_weights(file_path, overwrite=True)
 
     def modify_batch_data(self, step_index, x, y, validation=False):
         # type: (int, list[np.ndarray[np.float32]], np.array, bool) -> (list[np.ndarray[np.float32]], np.array)
@@ -1332,7 +1310,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         :param file_extension: Optional extension for the file
 
         # Returns
-            None
+            Nothing
         """
         if self.using_mean_teacher_method:
             if self.teacher_model is None:
@@ -1367,6 +1345,11 @@ class MeanTeacherTrainerBase(TrainerBase):
             if self.teacher_model is not None:
                 self.logger.log('Saving teacher model weights')
                 self.save_teacher_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
+
+        # Stop the rest of the model processes - and clean up
+        if self.model is not None:
+            self.logger.log('Cleaning up processes')
+            self.model.clean_up_processes()
 
     def _get_mean_teacher_extra_batch_data(self, teacher_img_batch, step_index, teacher_data_shape, validation):
         # type: (np.ndarray, int, list, bool) -> list
@@ -1594,6 +1577,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             self._training_data_generator_params = SegmentationDataGeneratorParameters(
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
+                name='tr',
                 num_crop_reattempts=self.num_crop_reattempts,
                 random_seed=self.random_seed,
                 crop_shapes=self.crop_shape,
@@ -1619,6 +1603,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             self._validation_data_generator_params = SegmentationDataGeneratorParameters(
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
+                name='val',
                 num_crop_reattempts=self.num_crop_reattempts,
                 random_seed=self.random_seed,
                 crop_shapes=self.validation_crop_shape,
@@ -2117,8 +2102,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
                 initial_epoch=self.initial_epoch,
-                generate_mean_teacher_data=self.using_mean_teacher_method,
-                log_images_folder_path=self.logger.log_images_folder_path)
+                generate_mean_teacher_data=self.using_mean_teacher_method)
 
         return self._training_data_generator_params
 
@@ -2139,8 +2123,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                generate_mean_teacher_data=False,
-                log_images_folder_path=self.logger.log_images_folder_path)
+                generate_mean_teacher_data=False)
 
         return self._validation_data_generator_params
 

@@ -178,8 +178,7 @@ class DataGeneratorParameters(object):
                  shuffle_data_after_epoch=True,
                  div2_constraint=0,
                  initial_epoch=0,
-                 generate_mean_teacher_data=False,
-                 log_images_folder_path=None):
+                 generate_mean_teacher_data=False):
         """
         Builds a wrapper for DataGenerator parameters
 
@@ -200,7 +199,6 @@ class DataGeneratorParameters(object):
             :param div2_constraint: how many times does the image/crop need to be divisible by two
             :param initial_epoch: number of the initial epoch
             :param generate_mean_teacher_data: should we generate mean teacher data? If so it is appended as last item of the input data
-            :param log_images_folder_path: where to log images
         # Returns
             Nothing
         """
@@ -221,7 +219,6 @@ class DataGeneratorParameters(object):
         self.div2_constraint = div2_constraint
         self.initial_epoch = initial_epoch
         self.generate_mean_teacher_data = generate_mean_teacher_data
-        self.log_images_folder_path = log_images_folder_path
 
 
 class SegmentationDataGeneratorParameters(DataGeneratorParameters):
@@ -305,7 +302,6 @@ class DataGenerator(object):
         self.div2_constraint = params.div2_constraint
         self.initial_epoch = params.initial_epoch
         self.generate_mean_teacher_data = params.generate_mean_teacher_data
-        self.log_images_folder_path = params.log_images_folder_path
 
         # Other member variables
         self._logger = None
@@ -376,8 +372,7 @@ class DataGenerator(object):
     @property
     def logger(self):
         if self._logger is None:
-            self._logger = Logger(log_file_path=None, stdout_only=True)
-            self._logger.log_images_folder_path = self.log_images_folder_path
+            self._logger = Logger.instance()
         return self._logger
 
     def get_batch_crop_shape(self):
@@ -646,12 +641,12 @@ class DataGenerator(object):
         if not self.generate_mean_teacher_data:
             raise ValueError('Request to get mean teacher data when generate_mean_teacher_data is False')
 
+        # If not applying any noise - return the same images do not copy
         if not self.data_augmentation_params.using_mean_teacher_noise:
             return X
 
-        teacher_img_batch = np.array(X)
-        noise_params = self.data_augmentation_params.mean_teacher_noise_params
-        batch_size = teacher_img_batch.shape[0]
+        # Copy the image batch
+        teacher_img_batch = np.array(X, copy=True)
 
         # Apply noise transformations individually to each image
         # * Horizontal flips
@@ -659,6 +654,9 @@ class DataGenerator(object):
         # * Translations
         # * Intensity shifts
         # * Gaussian noise
+        noise_params = self.data_augmentation_params.mean_teacher_noise_params
+        batch_size = teacher_img_batch.shape[0]
+
         Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')(
             delayed(pickle_method)(self, '_apply_mean_teacher_noise_to_image', teacher_img_batch=teacher_img_batch, i=i) for i in range(batch_size))
 
@@ -666,8 +664,7 @@ class DataGenerator(object):
         gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
 
         if gaussian_noise_stddev is not None:
-            gnoise = np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=teacher_img_batch.shape)
-            teacher_img_batch = teacher_img_batch + gnoise
+            teacher_img_batch = teacher_img_batch + np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=teacher_img_batch.shape)
 
         return teacher_img_batch
 
@@ -868,7 +865,6 @@ class SegmentationDataGenerator(DataGenerator):
                 unlabeled_batch_size=self.num_unlabeled_per_batch if self.using_unlabeled_data else 0,
                 shuffle=self.shuffle_data_after_epoch,
                 seed=self.random_seed,
-                logger=self.logger,
                 initial_epoch=self.initial_epoch,
                 iteration_mode=MaterialSampleIterationMode.UNIFORM_MEAN,
                 balance_pixel_samples=self.use_adaptive_sampling)
@@ -881,7 +877,6 @@ class SegmentationDataGenerator(DataGenerator):
                 unlabeled_batch_size=self.num_unlabeled_per_batch if self.using_unlabeled_data else 0,
                 shuffle=self.shuffle_data_after_epoch,
                 seed=self.random_seed,
-                logger=self.logger,
                 initial_epoch=self.initial_epoch)
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
@@ -1188,14 +1183,14 @@ class SegmentationDataGenerator(DataGenerator):
 
                     # Warn if the crop contains only zero and the mask is not all zero
                     if not valid_crop_found and not np.all(np.equal(np_mask, 0)):
-                        self.logger.debug_log('Only background found within crop area of shape: {}'.format(crop_shape))
+                        self.logger.warn('Only background found within crop area of shape: {}'.format(crop_shape))
                 else:
                     # If the mask contains pixels of the desired material
                     valid_crop_found = np.any(np.equal(mask_crop[:, :, 0], material_sample.material_r_color))
 
                     if not valid_crop_found:
-                        self.logger.debug_log('Material not found within crop area of shape: {} for material id: {} and material red color: {}'
-                                              .format(crop_shape, material_sample.material_id, material_sample.material_r_color))
+                        self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}'
+                                         .format(crop_shape, material_sample.material_id, material_sample.material_r_color))
 
                 # If a valid crop was found or this is the last attempt or we should not retry crops
                 stop_iteration = valid_crop_found or attempt-1 <= 0 or not retry_crops
@@ -1373,7 +1368,7 @@ class SegmentationDataGenerator(DataGenerator):
         crop_shape = self.get_batch_crop_shape()
         resize_shape = self.get_batch_resize_shape()
 
-        self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
+        #self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
         #self.logger.debug_log('Generating batch data for step {}: labeled: {}, ul: {}'.format(step_idx, labeled_batch, unlabeled_batch))
 
         stime = time.time()
@@ -1644,7 +1639,6 @@ class ClassificationDataGenerator(DataGenerator):
             unlabeled_batch_size=self.num_unlabeled_per_batch if self.using_unlabeled_data else 0,
             shuffle=self.shuffle_data_after_epoch,
             seed=self.random_seed,
-            logger=self.logger,
             initial_epoch=self.initial_epoch)
 
     @property
@@ -1671,7 +1665,7 @@ class ClassificationDataGenerator(DataGenerator):
         crop_shape = self.get_batch_crop_shape()
         resize_shape = self.get_batch_resize_shape()
 
-        self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
+        #self.logger.debug_log('Batch crop shape: {}, resize shape: {}'.format(crop_shape, resize_shape))
         #self.logger.debug_log('Generating batch data for step {}: labeled: {}, ul: {}'.format(step_idx, labeled_batch, unlabeled_batch))
 
         stime = time.time()
@@ -1691,7 +1685,7 @@ class ClassificationDataGenerator(DataGenerator):
         Y = np.asarray(Y, dtype=np.float32)
         W = np.asarray(W, dtype=np.float32)
 
-        # Normalize the photo batch data: color values to [-1,1], subtract per pixel mean and divide by stddev
+        # Normalize the photo batch data: color values to [-1, 1], subtract per pixel mean and divide by stddev
         X = self._normalize_image_batch(X)
         X_teacher = None
 
@@ -1704,10 +1698,10 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Apply possible gaussian noise
         # Note: applied after generating mean teacher data so teacher can have unnoised data during generation
-        if self.data_augmentation_params.using_gaussian_noise:
-            gaussian_noise_stddev = self.data_augmentation_params.gaussian_noise_stddev_function(step_idx)
-            gnoise = np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=X.shape)
-            X = X + gnoise
+        if self.use_data_augmentation:
+            if self.data_augmentation_params.using_gaussian_noise:
+                gaussian_noise_stddev = self.data_augmentation_params.gaussian_noise_stddev_function(step_idx)
+                X = X + np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=X.shape)
 
         if self.batch_data_format == BatchDataFormat.SUPERVISED:
             batch_input_data = [X]
@@ -1729,6 +1723,7 @@ class ClassificationDataGenerator(DataGenerator):
         else:
             raise ValueError('Unknown batch data format: {}'.format(self.batch_data_format))
 
+        # Append the mean teacher data to the batch input data
         if self.generate_mean_teacher_data:
             if X_teacher is None:
                 raise ValueError('Supposed to generate teacher data but X_teacher is None')
@@ -1740,12 +1735,12 @@ class ClassificationDataGenerator(DataGenerator):
         # If we are in debug mode, save the batch images
         if settings.DEBUG:
             b_min = np.min(X)
-            b_max = np.max(Y)
+            b_max = np.max(X)
             b_min_teacher = np.min(X_teacher) if X_teacher is not None else 0
             b_max_teacher = np.max(X_teacher) if X_teacher is not None else 0
 
             for i in range(0, len(X)):
-                label = np.argmax(X[i])
+                label = np.argmax(Y[i])
                 img = ((X[i] - b_min) / (b_max - b_min)) * 255.0
                 self.logger.debug_log_image(img, '{}_{}_{}_{}_photo.jpg'.format(label, self.name, step_idx, i), scale=False)
 
@@ -1757,15 +1752,12 @@ class ClassificationDataGenerator(DataGenerator):
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
 
-        data = []
-
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500:
-            for sample_index in index_array:
-                data.append(self.get_labeled_sample_minc_2500(step_index=step_index, sample_index=sample_index, resize_shape=resize_shape))
+            data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+                (delayed(pickle_method)(self, 'get_labeled_sample_minc_2500', step_index=step_index, sample_index=sample_index, resize_shape=resize_shape) for sample_index in index_array)
         elif self.labeled_data_set.data_set_type == MINCDataSetType.MINC:
             data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-                (delayed(pickle_method)
-                 (self, 'get_labeled_sample_minc', step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape) for sample_index in index_array)
+                (delayed(pickle_method)(self, 'get_labeled_sample_minc', step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape) for sample_index in index_array)
         else:
             raise ValueError('Unknown data set type: {}'.format(self.labeled_data_set.data_set_type))
 
@@ -1886,10 +1878,6 @@ class ClassificationDataGenerator(DataGenerator):
             return [], [], []
 
         # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        #unlabeled_data = []
-
-        #for sample_index in index_array:
-        #    unlabeled_data.append(self.get_unlabeled_sample(step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape))
         unlabeled_data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
             (delayed(pickle_method)
              (self, 'get_unlabeled_sample', step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape) for sample_index in index_array)

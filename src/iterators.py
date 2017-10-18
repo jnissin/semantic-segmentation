@@ -45,10 +45,9 @@ class BatchIndexBuffer(object):
                  batch_size,
                  shuffle,
                  seed,
-                 logger,
                  initial_epoch,
                  num_queued_epochs=4):
-        # type: (int, int, bool, int, Logger, int, int) -> None
+        # type: (int, int, bool, int, int, int) -> None
 
         """
         # Arguments
@@ -57,7 +56,6 @@ class BatchIndexBuffer(object):
             :param batch_size: integer, number of samples in a batch
             :param shuffle: boolean, whether to shuffle the data between epochs.
             :param seed: random seeding for data shuffling.
-            :param logger: logger instance for logging
             :param initial_epoch: initial epoch
             :param num_queued_epochs: number of epochs for which batch sample indices should be queued
         # Returns
@@ -67,7 +65,7 @@ class BatchIndexBuffer(object):
         self.batch_size = min(batch_size, n)            # The batch size could in theory be bigger than the data set size
         self.shuffle = shuffle
         self.seed = seed
-        self.logger = logger
+        self._logger = None
         self.initial_epoch = initial_epoch
         self.num_queued_epochs = num_queued_epochs
 
@@ -80,6 +78,13 @@ class BatchIndexBuffer(object):
             for i in range(0, self.num_queued_epochs):
                 e_idx = self.initial_epoch+i
                 self.epoch_queue[e_idx] = self._create_index_array_for_epoch(e_idx=e_idx)
+
+    @property
+    def logger(self):
+        # type: () -> Logger
+        if self._logger is None:
+            self._logger = Logger.instance()
+        return self._logger
 
     def _get_index_array_for_epoch(self, e_idx):
         # type: (int) -> np.ndarray
@@ -205,9 +210,8 @@ class DataSetIterator(Sequence):
                  unlabeled_batch_size,
                  shuffle,
                  seed,
-                 logger,
                  initial_epoch):
-        # type: (DataGenerator, int, int, int, int, bool, int, Logger, int) -> None
+        # type: (DataGenerator, int, int, int, int, bool, int, int) -> None
 
         """
         # Arguments
@@ -218,7 +222,6 @@ class DataSetIterator(Sequence):
             :param unlabeled_batch_size: integer, size of unlabeled data in batch
             :param shuffle: boolean, whether to shuffle the data between epochs.
             :param seed: random seeding for data shuffling.
-            :param logger: logger instance for logging
             :param initial_epoch: initial epoch
         # Returns
             Nothing
@@ -230,7 +233,7 @@ class DataSetIterator(Sequence):
         self.unlabeled_batch_size = min(unlabeled_batch_size, n_unlabeled)
         self.shuffle = shuffle
         self.seed = seed
-        self.logger = logger
+        self._logger = None
         self.initial_epoch = initial_epoch
         self._uuid = _get_next_data_set_iterator_uuid()
 
@@ -249,6 +252,13 @@ class DataSetIterator(Sequence):
     def uuid(self):
         # type: () -> int
         return self._uuid
+
+    @property
+    def logger(self):
+        # type: () -> Logger
+        if self._logger is None:
+            self._logger = Logger.instance()
+        return self._logger
 
     @property
     def epoch_index(self):
@@ -465,9 +475,8 @@ class BasicDataSetIterator(DataSetIterator):
                  unlabeled_batch_size,
                  shuffle,
                  seed,
-                 logger=None,
                  initial_epoch=0):
-        # type: (DataGenerator, int, int, int, int, bool, int, Logger, int) -> None
+        # type: (DataGenerator, int, int, int, int, bool, int, int) -> None
 
         """
         # Arguments
@@ -478,7 +487,6 @@ class BasicDataSetIterator(DataSetIterator):
             :param unlabeled_batch_size: integer, size of unlabeled data in batch
             :param shuffle: boolean, whether to shuffle the data between epochs.
             :param seed: random seeding for data shuffling.
-            :param logger: logger instance for logging
             :param initial_epoch: initial epoch
         # Returns
             Nothing
@@ -491,7 +499,6 @@ class BasicDataSetIterator(DataSetIterator):
                                                    unlabeled_batch_size=unlabeled_batch_size,
                                                    shuffle=shuffle,
                                                    seed=seed,
-                                                   logger=logger,
                                                    initial_epoch=initial_epoch)
 
         self.__index_generator = None
@@ -501,7 +508,6 @@ class BasicDataSetIterator(DataSetIterator):
                                                             batch_size=labeled_batch_size,
                                                             shuffle=shuffle,
                                                             seed=seed,
-                                                            logger=logger,
                                                             initial_epoch=self.initial_epoch)
 
         if self.using_unlabeled_data:
@@ -509,7 +515,6 @@ class BasicDataSetIterator(DataSetIterator):
                                                                   batch_size=unlabeled_batch_size,
                                                                   shuffle=shuffle,
                                                                   seed=seed,
-                                                                  logger=logger,
                                                                   initial_epoch=self.unlabeled_epoch_index)
         else:
             self._unlabeled_batch_index_buffer = None
@@ -629,7 +634,6 @@ class MaterialSampleDataSetIterator(DataSetIterator):
                  unlabeled_batch_size,
                  shuffle,
                  seed,
-                 logger=None,
                  initial_epoch=0,
                  iteration_mode=MaterialSampleIterationMode.UNIFORM_MEAN,
                  balance_pixel_samples=False):
@@ -642,7 +646,6 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             unlabeled_batch_size=unlabeled_batch_size,
             shuffle=shuffle,
             seed=seed,
-            logger=logger,
             initial_epoch=initial_epoch)
 
         self._iteration_mode = iteration_mode
@@ -729,7 +732,6 @@ class MaterialSampleDataSetIterator(DataSetIterator):
                                                                   batch_size=unlabeled_batch_size,
                                                                   shuffle=shuffle,
                                                                   seed=seed,
-                                                                  logger=logger,
                                                                   initial_epoch=self.unlabeled_epoch_index,
                                                                   num_queued_epochs=MaterialSampleDataSetIterator._NUM_QUEUED_EPOCHS)
         else:
@@ -1145,7 +1147,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
 
         if self._balance_pixel_samples:
             pixels_per_material_category = self._calculate_pixels_per_material_in_batch(batch_data=batch_data)
-            self.logger.debug_log('e_idx: {}, b_idx: {}, material pixels: {}'.format(e_idx, b_idx, list(pixels_per_material_category)))
+            #self.logger.debug_log('e_idx: {}, b_idx: {}, material pixels: {}'.format(e_idx, b_idx, list(pixels_per_material_category)))
             self._update_material_category_sampling_probabilities(pixels_per_material_category)
 
         return batch_data
@@ -1176,9 +1178,9 @@ class MaterialSampleDataSetIterator(DataSetIterator):
         if self._balance_pixel_samples:
             with self.lock:
                 pixels_per_material_category = self._calculate_pixels_per_material_in_batch(batch_data=batch_data)
-                self.logger.debug_log('material pixels: {}'.format(list(pixels_per_material_category)))
+                #self.logger.debug_log('material pixels: {}'.format(list(pixels_per_material_category)))
                 self._update_material_category_sampling_probabilities(pixels_per_material_category)
-                self.logger.debug_log('updated material pixels: {}'.format(list(self._material_category_pixels_seen)))
+                #self.logger.debug_log('updated material pixels: {}'.format(list(self._material_category_pixels_seen)))
 
         return batch_data
 

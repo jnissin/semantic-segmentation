@@ -54,7 +54,6 @@ class WeightTransferInformation(object):
 def get_model(model_name,
               input_shape,
               num_classes,
-              logger=None,
               model_lambda_loss_type=ModelLambdaLossType.NONE):
     # type: (str, tuple(int), int, Logger, ModelLambdaLossType) -> ModelBase
 
@@ -65,7 +64,6 @@ def get_model(model_name,
         model_name: name of the model
         input_shape: input shape to the model
         num_classes: number of classification classes
-        logger: an instance of Logger
         model_type: type of the model - affects loss calculation
     # Returns
         The appropriate ModelBase.
@@ -121,7 +119,6 @@ def get_model(model_name,
     else:
         raise ValueError('Unknown model name: {}'.format(model_name))
 
-    model_wrapper.model.logger = logger
     return model_wrapper
 
 

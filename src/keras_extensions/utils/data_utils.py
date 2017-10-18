@@ -11,8 +11,7 @@ import os
 
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
-
-from src import settings
+from socket import error as socket_error
 
 import numpy as np
 
@@ -20,6 +19,8 @@ try:
     import queue
 except ImportError:
     import Queue as queue
+
+from src.logger import Logger
 
 
 class Sequence(object):
@@ -105,8 +106,7 @@ def _update_sequence(uuid, seq):
 
 def _process_init(uuid):
     # type: (int) -> None
-    if settings.DEBUG:
-        print('DEBUG {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
+    Logger.instance().debug_log('DEBUG {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
 
 
 class SequenceEnqueuer(object):
@@ -196,9 +196,16 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.stop_signal = None
         self.e_idx = initial_epoch
         self.max_epoch = max_epoch
+        self._logger = None
 
         # Assign a unique id
         self.uuid = _get_next_uuid()
+
+    @property
+    def logger(self):
+        if self._logger is None:
+            self._logger = Logger.instance()
+        return self._logger
 
     def is_running(self):
         return self.stop_signal is not None and not self.stop_signal.is_set()
@@ -279,11 +286,15 @@ class OrderedEnqueuer(SequenceEnqueuer):
             # Threads are from the same process so they already share the sequence.
             return
 
-        _SHARED_DICTS[self.uuid].clear()
+        self.clear_shared_dict()
 
         while len(_SHARED_DICTS[self.uuid]) < self.workers and not self.stop_signal.is_set():
-            # Ask the pool to update till everyone is updated.
-            self.executor.apply(_update_sequence, args=(self.uuid, self.sequence,))
+            try:
+                # Ask the pool to update till everyone is updated.
+                self.executor.apply(_update_sequence, args=(self.uuid, self.sequence,))
+            except socket_error as e:
+                self.logger.warn('Failed to update sequence: {}'.format(e.strerror))
+                break
 
         # We're done with the update
 
@@ -296,23 +307,37 @@ class OrderedEnqueuer(SequenceEnqueuer):
             timeout: maximum time to wait on `thread.join()`
         """
         self.stop_signal.set()
+
         with self.queue.mutex:
             self.queue.queue.clear()
             self.queue.unfinished_tasks = 0
             self.queue.not_full.notify()
+
         self.executor.close()
         self.executor.join()
         self.run_thread.join(timeout)
 
         # Clean up any resources shared by the processes
-        global _SHARED_DICTS, _SHARED_SEQUENCES
+        global _SHARED_DICTS, _SHARED_SEQUENCES, _MANAGERS
         _SHARED_SEQUENCES[self.uuid] = None
 
         if self.use_multiprocessing:
-            _MANAGERS[self.uuid] = None
             if _SHARED_DICTS.get(self.uuid) is not None:
-                _SHARED_DICTS[self.uuid].clear()
+                self.clear_shared_dict()
                 _SHARED_DICTS[self.uuid] = None
+
+            _MANAGERS[self.uuid] = None
+
+    def clear_shared_dict(self):
+        """
+        Clears the shared dict with the uuid associated with this OrderedEnqueuer
+        uuid.
+        """
+
+        try:
+            _SHARED_DICTS[self.uuid].clear()
+        except socket_error as e:
+            self.logger.warn('Failed to clear _SHARED_DICTS: {}'.format(e.strerror))
 
 
 class GeneratorEnqueuer(SequenceEnqueuer):
