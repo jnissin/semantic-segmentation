@@ -57,7 +57,7 @@ class ExtendedModel(Model):
                 self.fit_generator_stopped = True
 
                 if self.enqueuer is not None:
-                    self.enqueuer.stop()
+                    self.enqueuer.stop(timeout=5)
 
                 # Note: Callback model stop_training flag is set in fit_generator
                 if hasattr(self, 'callback_model') and self.callback_model:
