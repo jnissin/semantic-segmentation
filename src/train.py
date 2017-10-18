@@ -28,13 +28,12 @@ def get_signal_handler(trainer):
 
             if trainer is not None:
                 trainer.handle_early_exit()
-                sys.exit(0)
             else:
                 print 'No trainer present, exiting'
-        else:
-            print 'Not the main process - exiting'
 
-        sys.exit(0)
+            sys.exit(0)
+        else:
+            print 'Not the main process - waiting for parent process to join'
 
     return signal_handler
 

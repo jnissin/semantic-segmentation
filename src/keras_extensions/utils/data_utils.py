@@ -314,7 +314,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
             self.queue.not_full.notify()
 
         self.executor.close()
-        self.executor.join(timeout)
+        self.executor.join()
         self.run_thread.join(timeout)
 
         # Clean up any resources shared by the processes
