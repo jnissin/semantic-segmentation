@@ -21,9 +21,8 @@ from keras.legacy import interfaces
 from utils.data_utils import Sequence
 from utils.data_utils import OrderedEnqueuer
 
-from ..logger import Logger, LogLevel
+from ..logger import Logger
 
-from .. import settings
 
 #########################################
 # UTILITIES

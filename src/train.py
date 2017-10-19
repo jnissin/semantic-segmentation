@@ -5,6 +5,7 @@ import signal
 import sys
 import multiprocessing
 import os
+import resource
 
 from trainers import SegmentationTrainer, ClassificationTrainer, TrainerBase
 
@@ -55,6 +56,7 @@ def main():
     ap.add_argument('-f', '--mfolder', required=True, type=str, help='Name of the model folder')
     ap.add_argument('-w', '--wdir', required=False, type=str, help="Path to working directory")
     ap.add_argument('--maxjobs', required=False, type=int, help="Maximum number of parallel jobs (threads/processes)")
+    ap.add_argument('--maxmemory', required=False, type=int, help="Maximum memory available to this and child processes (GB)")
     args = vars(ap.parse_args())
 
     trainer_type = args['trainer']
@@ -64,6 +66,7 @@ def main():
     model_name = args['model']
     model_folder_name = args['mfolder']
     max_jobs = args['maxjobs']
+    max_memory = args['maxmemory']
 
     if settings.DEBUG:
         print 'RUNNING IN DEBUG MODE'
@@ -85,6 +88,17 @@ def main():
     if max_jobs:
         print 'Setting maximum number of parallel jobs to: {}'.format(max_jobs)
         settings.MAX_NUMBER_OF_JOBS = max_jobs
+
+    if max_memory:
+        print 'Setting maximum memory limit (soft and hard) to: {} (GB)'.format(max_memory)
+        rsrc = resource.RLIMIT_DATA
+        soft, hard = resource.getrlimit(rsrc)
+        print 'Current limits: soft: {}, hard: {}'.format(soft, hard)
+        max_memory_hard_kb = max_memory * 1048576
+        max_memory_soft_kb = min(1048576, max_memory - 524288)
+        resource.setrlimit(rsrc, (max_memory_soft_kb, max_memory_hard_kb))
+        soft, hard = resource.getrlimit(rsrc)
+        print 'New limits: soft: {}, hard: {}'.format(soft, hard)
 
     if trainer_super_type == 'segmentation':
         trainer = SegmentationTrainer(trainer_type=trainer_type,

@@ -212,7 +212,6 @@ class ImageSet(object):
 
         self.name = name
         self.path_to_archive = path_to_archive
-        self._file_list = file_list
         self.mode = mode
         self._image_files = []
         self._file_name_to_image_file = dict()
@@ -256,9 +255,9 @@ class ImageSet(object):
             raise ValueError('The given archive path is not recognized as a tar file or a directory: {}'.format(path_to_archive))
 
         # If a file list was provided filter so that image files only contains those files
-        if self._file_list is not None and len(self._file_list) > 0:
+        if file_list is not None and len(file_list) > 0:
             # Accelerate lookups by building a temporary set
-            file_list_set = set(self._file_list)
+            file_list_set = set(file_list)
             filtered_image_files = []
 
             # Filter according to file list
@@ -275,7 +274,7 @@ class ImageSet(object):
             self._image_files = filtered_image_files
 
             # Check that the ImageFiles match to the given file set i.e. they are identical - if not raise an exception
-            if len(self._image_files) != len(self._file_list):
+            if len(self._image_files) != len(file_list):
 
                 image_file_names = set([f.file_name for f in self._image_files])
 
@@ -285,7 +284,7 @@ class ImageSet(object):
                     diff = list(file_list_set.difference(image_file_names))
 
                 raise ValueError('Could not satisfy the given file list, image files and file list do not match: {} vs {}. Diff (first 10): {}'
-                                 .format(len(self._image_files), len(self._file_list), diff[0:min(len(diff), 10)]))
+                                 .format(len(self._image_files), len(file_list), diff[0:min(len(diff), 10)]))
 
     @staticmethod
     def list_pictures(directory, ext='jpg|jpeg|bmp|png'):

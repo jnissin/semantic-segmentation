@@ -19,7 +19,6 @@ from logger import Logger
 from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
 
 from scipy.ndimage.interpolation import shift
-
 from joblib import Parallel, delayed
 
 import settings
@@ -1032,6 +1031,10 @@ class SegmentationDataGenerator(DataGenerator):
         np_photo = img_to_array(photo)
         np_mask = img_to_array(mask)
 
+        # Release the PIL image references
+        photo = None
+        mask = None
+
         # Apply crops and augmentation
         np_photo, np_mask = self.process_segmentation_photo_mask_pair(step_idx=step_idx,
                                                                       np_photo=np_photo,
@@ -1086,9 +1089,8 @@ class SegmentationDataGenerator(DataGenerator):
             :return: a tuple of numpy arrays (image, mask)
         """
 
-        # Load the photo as PIL image
-        photo_file = photo_file.get_image(color_channels=self.num_color_channels)
-        np_photo = img_to_array(photo_file)
+        # Load the image
+        np_photo = img_to_array(photo_file.get_image(color_channels=self.num_color_channels))
 
         # Generate mask for the photo - note: the labels are generated before cropping
         # and augmentation to capture global structure within the image
@@ -1206,6 +1208,10 @@ class SegmentationDataGenerator(DataGenerator):
                     np_mask = np_orig_mask
                     self.logger.debug_log('Reverting to original bbox and image data, material lost: {}, cannot rebuild axis-aligned bbox: {}'
                                           .format(material_lost_during_transform, bbox is None))
+                else:
+                    # Destroy the backup images
+                    del np_orig_photo
+                    del np_orig_mask
 
         # If a crop size is given: take a random crop of both the image and the mask
         if crop_shape is not None:
@@ -1837,8 +1843,7 @@ class ClassificationDataGenerator(DataGenerator):
     def get_labeled_sample_minc_2500(self, step_index, sample_index, resize_shape):
         minc_sample = self.labeled_data_set.samples[sample_index]
         img_file = self.labeled_data_set.photo_image_set.get_image_file_by_file_name(minc_sample.file_name)
-        pil_image = img_file.get_image(self.num_color_channels)
-        np_image = img_to_array(pil_image)
+        np_image = img_to_array(img_file.get_image(self.num_color_channels))
 
         if img_file is None:
             raise ValueError('Could not find image from ImageSet with file name: {}'.format(minc_sample.file_name))
@@ -1872,8 +1877,7 @@ class ClassificationDataGenerator(DataGenerator):
     def get_labeled_sample_minc(self, step_index, sample_index, crop_shape, resize_shape):
         minc_sample = self.labeled_data_set.samples[sample_index]
         img_file = self.labeled_data_set.photo_image_set.get_image_file_by_file_name(minc_sample.file_name)
-        pil_image = img_file.get_image(self.num_color_channels)
-        np_image = img_to_array(pil_image)
+        np_image = img_to_array(img_file.get_image(self.num_color_channels))
 
         if img_file is None:
             raise ValueError('Could not find image from ImageSet with file name: {}'.format(minc_sample.file_name))
@@ -1909,6 +1913,9 @@ class ClassificationDataGenerator(DataGenerator):
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
+
+                # Destroy the backup image
+                del np_image_orig
 
         # Crop the image with the specified crop center. Regions going out of bounds are padded with a
         # constant value.
@@ -1957,8 +1964,7 @@ class ClassificationDataGenerator(DataGenerator):
 
     def get_unlabeled_sample(self, step_index, sample_index, crop_shape, resize_shape):
         img_file = self.unlabeled_data_set.get_index(sample_index)
-        pil_image = img_file.get_image(self.num_color_channels)
-        np_image = img_to_array(pil_image)
+        np_image = img_to_array(img_file.get_image(self.num_color_channels))
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:

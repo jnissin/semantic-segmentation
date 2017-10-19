@@ -665,12 +665,12 @@ def np_scale_image(np_img, sfactor, interp='bilinear'):
     target_shape = (int(round(sfactor * np_img.shape[0])), int(round(sfactor * np_img.shape[1])))
 
     # Do the resizing using PIL because scipy/numpy lacks interpolation
-    pil_img = array_to_img(np_img, scale=False)
+    img = array_to_img(np_img, scale=False)
     func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
-    pil_img = pil_img.resize(size=(target_shape[1], target_shape[0]), resample=func[interp])
-    np_img_resized = img_to_array(pil_img)
+    img = img.resize(size=(target_shape[1], target_shape[0]), resample=func[interp])
+    img = img_to_array(img)
 
-    return np_img_resized
+    return img
 
 
 def np_pad_image_to_shape(np_img, shape, cval):

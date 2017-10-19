@@ -6,6 +6,7 @@ import random
 import datetime
 import time
 import shutil
+import resource
 import numpy as np
 
 from enum import Enum
@@ -939,6 +940,12 @@ class TrainerBase:
 
         # Use a reproducible random seed to make any possible augmentations deterministic
         np.random.seed(self.random_seed + step_index)
+
+        if settings.LOG_RUSAGE:
+            if step_index%settings.LOG_RUSAGE_INTERVAL == 0:
+                # Log resource usage
+                self.logger.log('Resource usage RUSAGE_SELF in step {}: {}'.format(step_index, resource.getrusage(resource.RUSAGE_SELF)))
+                self.logger.log('Resource usage RUSAGE_CHILDREN in step {}: {}'.format(step_index, resource.getrusage(resource.RUSAGE_CHILDREN)))
 
         return x, y
 
