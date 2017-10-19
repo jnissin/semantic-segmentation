@@ -1963,10 +1963,6 @@ class ClassificationDataGenerator(DataGenerator):
         np_image = image_utils.np_crop_image_with_fill(np_image, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
         np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
 
-        # TODO: Remove
-        self.logger.log('Image shape after crop_with_fill: {}'.format(np_image.shape))
-        # END OF REMOVE
-
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
         y = np.zeros(self.labeled_data_set.num_classes, dtype=np.float32)
