@@ -93,12 +93,13 @@ def main():
         print 'Setting maximum memory limit (soft and hard) to: {} (GB)'.format(max_memory)
         rsrc = resource.RLIMIT_DATA
         soft, hard = resource.getrlimit(rsrc)
-        print 'Current limits: soft: {}, hard: {}'.format(soft, hard)
+        print 'Current memory limits: soft: {}, hard: {}'.format(soft, hard)
+        # Soft limit min: 1GB
         max_memory_hard_kb = max_memory * 1048576
-        max_memory_soft_kb = min(1048576, max_memory - 524288)
+        max_memory_soft_kb = max(1048576, max_memory_hard_kb - 524288)
         resource.setrlimit(rsrc, (max_memory_soft_kb, max_memory_hard_kb))
         soft, hard = resource.getrlimit(rsrc)
-        print 'New limits: soft: {}, hard: {}'.format(soft, hard)
+        print 'New memory limits: soft: {}, hard: {}'.format(soft, hard)
 
     if trainer_super_type == 'segmentation':
         trainer = SegmentationTrainer(trainer_type=trainer_type,
