@@ -1758,13 +1758,6 @@ class ClassificationDataGenerator(DataGenerator):
         num_samples_in_batch = len(X)
 
         # Cast the lists to numpy arrays
-        # TODO: Remove
-        shape = X[0].shape
-        for idx, item in enumerate(X):
-            if item.shape != shape:
-                self.logger.warn('Found mismatching shapes in X in index {}: {} vs {}'.format(idx, item.shape, shape))
-        # END OF REMOVE
-
         X = np.asarray(X, dtype=np.float32)
         Y = np.asarray(Y, dtype=np.float32)
         W = np.asarray(W, dtype=np.float32)
@@ -1903,11 +1896,8 @@ class ClassificationDataGenerator(DataGenerator):
         crop_center_y, crop_center_x = minc_sample.y, minc_sample.x
 
         # Apply data augmentation
+        augmentation_used = False
         if self._should_apply_augmentation(step_index):
-            # TODO: Remove
-            self.logger.log('Applying data augmentation shape before: {}'.format(np_image.shape))
-            # END OF REMOVE
-
             np_image_orig = np.array(np_image, copy=True)
             images, transform = self._apply_data_augmentation_to_images(images=[np_image],
                                                                         cvals=[self.photo_cval],
@@ -1916,10 +1906,6 @@ class ClassificationDataGenerator(DataGenerator):
 
             # Unpack the photo
             np_image, = images
-
-            # TODO: Remove
-            self.logger.log('Applying augmentation shape after: {}'.format(np_image.shape))
-            # END OF REMOVE
 
             crop_center_new = transform.transform_normalized_coordinates(np.array([crop_center_x, crop_center_y]))
             crop_center_x_new, crop_center_y_new = crop_center_new[0], crop_center_new[1]
@@ -1930,6 +1916,7 @@ class ClassificationDataGenerator(DataGenerator):
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
+                augmentation_used = True
 
                 # Destroy the backup image
                 del np_image_orig
@@ -1945,25 +1932,33 @@ class ClassificationDataGenerator(DataGenerator):
         y_1 = int(round(y_c + crop_height*0.5))
         x_1 = int(round(x_c + crop_width*0.5))
 
+        add_used_y = False
         if y_1 - y_0 != crop_shape[0]:
             add = abs(y_1 - y_0)
             y_1 += add
+            add_used_y = True
 
+        add_used_x = False
         if x_1 - x_0 != crop_shape[1]:
             add = abs(x_1 - x_0)
             x_1 += add
+            add_used_x = True
 
         # Final check for crop size
         crop_size_y = y_1 - y_0
         crop_size_x = x_1 - x_0
 
         if crop_size_y != crop_shape[0] or x_1 - x_0 != crop_shape[1]:
-            raise ValueError('Mismatch in crop sizes, original coordinates: {}, used coordinates: ({}, {}). Expected size: {}, got: {}'.format(
+            raise ValueError('Mismatch in crop sizes in sample: {} with size: {}. Original center: {}, used center: {}, used crop coordinates: ({}, {}). Expected size: {}, got: {}. Add used: {}'.format(
+                minc_sample.file_name,
+                np_image.shape,
                 (minc_sample.x, minc_sample.y),
+                (crop_center_x, crop_center_y),
                 (x_0, y_0),
                 (x_1, y_1),
                 crop_shape,
-                (crop_size_y, crop_size_x)))
+                (crop_size_y, crop_size_x),
+                (add_used_y, add_used_x, augmentation_used)))
 
         np_image = image_utils.np_crop_image_with_fill(np_image, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
         np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
