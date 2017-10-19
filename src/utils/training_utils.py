@@ -2,15 +2,8 @@
 
 import os
 import json
-import numpy as np
 
 import dataset_utils as dataset_utils
-from ..callbacks.optimizer_checkpoint import OptimizerCheckpoint
-
-import keras.backend as K
-from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau
-from keras.optimizers import SGD, Adam, Optimizer
-from keras.models import Model
 
 ##############################################
 # GLOBALS
