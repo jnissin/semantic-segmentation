@@ -90,14 +90,14 @@ def main():
         settings.MAX_NUMBER_OF_JOBS = max_jobs
 
     if max_memory:
-        print 'Setting maximum memory limit (soft and hard) to: {} (GB)'.format(max_memory)
+        print 'Setting maximum memory limit (soft) to: {} (GB)'.format(max_memory)
         rsrc = resource.RLIMIT_DATA
         soft, hard = resource.getrlimit(rsrc)
         print 'Current memory limits: soft: {}, hard: {}'.format(soft, hard)
-        # Soft limit min: 1GB
-        max_memory_hard_kb = max_memory * 1048576
-        max_memory_soft_kb = max(1048576, max_memory_hard_kb - 524288)
-        resource.setrlimit(rsrc, (max_memory_soft_kb, max_memory_hard_kb))
+
+        # Only set the soft limit - breaking the hard limit crashes the software
+        max_memory_soft_kb = max_memory * 1048576
+        resource.setrlimit(rsrc, (max_memory_soft_kb, -1))
         soft, hard = resource.getrlimit(rsrc)
         print 'New memory limits: soft: {}, hard: {}'.format(soft, hard)
 
@@ -119,6 +119,7 @@ def main():
         print 'Registering early exit signal handler for signal: {}'.format(sig)
         signal.signal(sig, get_signal_handler(trainer))
 
+    print 'Starting training'
     history = trainer.train()
 
 

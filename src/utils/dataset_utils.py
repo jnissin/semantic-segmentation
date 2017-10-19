@@ -3,9 +3,6 @@
 import os
 import random
 import multiprocessing
-import jsonpickle
-import itertools
-from collections import deque
 
 import numpy as np
 
@@ -13,7 +10,6 @@ from PIL import Image
 from joblib import Parallel, delayed
 
 import image_utils
-
 from image_utils import load_img, img_to_array
 
 from .. import settings
@@ -197,6 +193,7 @@ class SegmentationDataSetInformation(object):
 
 def load_segmentation_data_set_information(data_set_information_file_path):
     # type: (str) -> SegmentationDataSetInformation
+    import jsonpickle
 
     with open(data_set_information_file_path, 'r') as f:
         json_str = f.read()
@@ -634,6 +631,7 @@ def get_material_samples(mask_files, material_class_information, background_clas
         :return: A list of material sample lists (24xN_SAMPLES_IN_CLASS)
     """
     # type: (list[ImageFile]) -> list[list[MaterialSample]]
+    import itertools
 
     # Create a look up table for material red color -> material id
     r_color_to_material_id = dict()
@@ -667,6 +665,8 @@ def _from_2d_to_1d_index(y, x, width):
 
 def _get_material_samples(mask_file, r_color_to_material_id, background_class=0, min_sample_size=5):
     # type: (ImageFile, dict, int, int) -> list[MaterialSample]
+
+    from collections import deque
 
     pil_mask_img = mask_file.get_image()
     np_mask_img = img_to_array(pil_mask_img).astype(np.uint8)

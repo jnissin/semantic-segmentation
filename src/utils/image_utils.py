@@ -10,7 +10,6 @@ import numpy as np
 
 import skimage.transform as skitransform
 from skimage.exposure import adjust_gamma
-from skimage.segmentation import slic, felzenszwalb, quickshift, watershed, find_boundaries
 from skimage.color import rgb2gray
 from skimage.filters import sobel
 from skimage.transform import SimilarityTransform
@@ -875,6 +874,7 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
     # Returns
         :return: the superpixel segmentation
     """
+    from skimage.segmentation import slic, find_boundaries
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
@@ -890,6 +890,7 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
 
 def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False, borders_only=False):
     # type: (np.ndarray, float, float, int, bool) -> np.ndarray
+    from skimage.segmentation import felzenszwalb, find_boundaries
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
@@ -905,6 +906,7 @@ def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, mul
 
 def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_img=False, borders_only=False):
     # type: (np.ndarray, int, float) -> np.ndarray
+    from skimage.segmentation import watershed, find_boundaries
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
@@ -922,6 +924,7 @@ def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_
 
 def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5, normalize_img=False, borders_only=False):
     # type: (np.ndarray, float, float, float, float) -> np.ndarray
+    from skimage.segmentation import quickshift, find_boundaries
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)

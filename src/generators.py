@@ -18,7 +18,6 @@ from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataS
 from logger import Logger
 from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
 
-from scipy.ndimage.interpolation import shift
 from joblib import Parallel, delayed
 
 import settings
@@ -733,6 +732,9 @@ class DataGenerator(object):
         shift_range = noise_params.get('shift_range')
 
         if shift_range is not None:
+
+            from scipy.ndimage.interpolation import shift
+
             if len(shift_range) != 2:
                 raise ValueError('Shift range should be a list of two values (x, y), got: {}'.format(shift_range))
 
