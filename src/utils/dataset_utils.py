@@ -11,11 +11,14 @@ import numpy as np
 
 from PIL import Image
 from joblib import Parallel, delayed
-from keras.preprocessing.image import load_img, img_to_array
 
 import image_utils
+
+from image_utils import load_img, img_to_array
+
 from .. import settings
 from ..data_set import ImageFile
+
 
 ##############################################
 # UTILITY CLASSES

@@ -6,3 +6,4 @@ model-data/*
 logs/*
 checkpoints/*
 photos/*
+temp/*

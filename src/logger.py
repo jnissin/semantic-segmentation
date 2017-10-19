@@ -6,8 +6,7 @@ import datetime
 from multiprocessing import Lock
 from enum import Enum
 
-from keras.preprocessing.image import array_to_img
-
+from utils.image_utils import array_to_img
 from utils import general_utils
 import settings
 

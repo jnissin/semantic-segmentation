@@ -24,7 +24,6 @@ from keras_extensions.extended_model import ExtendedModel
 from tensorflow.python.client import timeline
 
 from utils import dataset_utils
-from utils import image_utils
 from utils import general_utils
 
 from callbacks.optimizer_checkpoint import OptimizerCheckpoint
@@ -165,6 +164,12 @@ class TrainerBase:
         # Set image data format
         self.logger.log('Setting Keras image data format to: {}'.format(self.image_data_format))
         K.set_image_data_format(self.image_data_format)
+
+        self.logger.log('Setting settings.DEFAULT_IMAGE_DATA_FORMAT to: {}'.format(self.image_data_format))
+        settings.DEFAULT_IMAGE_DATA_FORMAT = self.image_data_format
+
+        self.logger.log('Settings settings.DEFAULT_NUMPY_FLOAT_DTYPE to: {}'.format(K.floatx()))
+        settings.DEFAULT_NUMPY_FLOAT_DTYPE = K.floatx()
 
         # Get data augmentation parameters
         self.data_augmentation_parameters = self._get_data_augmentation_parameters()

@@ -7,14 +7,11 @@ import numpy as np
 from enum import Enum
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-import keras.backend as K
-from keras.preprocessing.image import img_to_array
-
 from PIL import Image
 
 from utils import dataset_utils
 from utils import image_utils
-from utils.image_utils import ImageInterpolation, ImageTransform
+from utils.image_utils import ImageInterpolation, ImageTransform, img_to_array
 from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSample
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
 from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator, MaterialSampleIterationMode
@@ -28,11 +25,22 @@ from joblib import Parallel, delayed
 import settings
 
 
+_UUID_COUNTER = 0
+
+
 def pickle_method(instance, name, *args, **kwargs):
     "indirect caller for instance methods and multiprocessing"
     if kwargs is None:
         kwargs = {}
     return getattr(instance, name)(*args, **kwargs)
+
+
+def _get_next_uuid():
+    # type: () -> int
+    global _UUID_COUNTER
+    uuid = _UUID_COUNTER
+    _UUID_COUNTER += 1
+    return uuid
 
 
 #######################################
@@ -283,6 +291,13 @@ class DataGenerator(object):
     def __init__(self, batch_data_format, params):
         # type: (BatchDataFormat, DataGeneratorParameters) -> None
 
+        # UUID might be before the init function is called
+        if not hasattr(self, '_uuid'):
+            self._uuid = None
+
+        self._logger = None
+
+        self.logger.log('DataGenerator: Initializing data generator with UUID: {}'.format(self.uuid))
         self.batch_data_format = batch_data_format
 
         # Unwrap DataGeneratorParameters to member variables
@@ -304,8 +319,7 @@ class DataGenerator(object):
         self.generate_mean_teacher_data = params.generate_mean_teacher_data
 
         # Other member variables
-        self._logger = None
-        self.img_data_format = K.image_data_format()
+        self.img_data_format = settings.DEFAULT_IMAGE_DATA_FORMAT
 
         # Use the given random seed for reproducibility
         if self.random_seed is not None:
@@ -370,8 +384,16 @@ class DataGenerator(object):
                 raise ValueError('A resize shape {} does not satisfy the div2 constraint of {}'.format(self._resize_shapes, self.div2_constraint))
 
     @property
+    def uuid(self):
+        # type: () -> int
+        if not hasattr(self, '_uuid') or self._uuid is None:
+            self._uuid = _get_next_uuid()
+        return self._uuid
+
+    @property
     def logger(self):
-        if self._logger is None:
+        # type: () -> Logger
+        if not hasattr(self, '_logger') or self._logger is None:
             self._logger = Logger.instance()
         return self._logger
 
@@ -736,6 +758,9 @@ class DataGenerator(object):
 
 class SegmentationDataGenerator(DataGenerator):
 
+    UUID_TO_LABELED_DATA_SET = {}
+    UUID_TO_UNLABELED_DATA_SET = {}
+
     def __init__(self,
                  labeled_data_set,
                  unlabeled_data_set,
@@ -804,6 +829,26 @@ class SegmentationDataGenerator(DataGenerator):
 
         if self.use_adaptive_sampling and not self.use_material_samples:
             raise ValueError('Adaptive sampling can only be used with material samples - enable material samples')
+
+    @property
+    def labeled_data_set(self):
+        # type: () -> LabeledImageDataSet
+        return SegmentationDataGenerator.UUID_TO_LABELED_DATA_SET.get(self.uuid)
+
+    @labeled_data_set.setter
+    def labeled_data_set(self, data_set):
+        # type: (LabeledImageDataSet) -> None
+        SegmentationDataGenerator.UUID_TO_LABELED_DATA_SET[self.uuid] = data_set
+
+    @property
+    def unlabeled_data_set(self):
+        # type: () -> UnlabeledImageDataSet
+        return SegmentationDataGenerator.UUID_TO_UNLABELED_DATA_SET.get(self.uuid)
+
+    @unlabeled_data_set.setter
+    def unlabeled_data_set(self, data_set):
+        # type: (UnlabeledImageDataSet) -> None
+        SegmentationDataGenerator.UUID_TO_UNLABELED_DATA_SET[self.uuid] = data_set
 
     def get_all_photos(self):
         # type: () -> list[ImageFile]
@@ -1580,6 +1625,10 @@ class MINCDataSet(object):
 
 class ClassificationDataGenerator(DataGenerator):
 
+    # Static values are shared across processes
+    UUID_TO_LABELED_DATA_SET = {}
+    UUID_TO_UNLABELED_DATA_SET = {}
+
     def __init__(self,
                  labeled_data_set,
                  unlabeled_data_set,
@@ -1607,6 +1656,26 @@ class ClassificationDataGenerator(DataGenerator):
 
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC and self._crop_shapes is None:
             self.logger.warn('Using MINC data set without cropping or fully specified resize - is this intended?')
+
+    @property
+    def labeled_data_set(self):
+        # type: () -> MINCDataSet
+        return ClassificationDataGenerator.UUID_TO_LABELED_DATA_SET.get(self.uuid)
+
+    @labeled_data_set.setter
+    def labeled_data_set(self, data_set):
+        # type: (MINCDataSet) -> None
+        ClassificationDataGenerator.UUID_TO_LABELED_DATA_SET[self.uuid] = data_set
+
+    @property
+    def unlabeled_data_set(self):
+        # type: () -> UnlabeledImageDataSet
+        return ClassificationDataGenerator.UUID_TO_UNLABELED_DATA_SET.get(self.uuid)
+
+    @unlabeled_data_set.setter
+    def unlabeled_data_set(self, data_set):
+        # type: (UnlabeledImageDataSet) -> None
+        ClassificationDataGenerator.UUID_TO_UNLABELED_DATA_SET[self.uuid] = data_set
 
     def get_all_photos(self):
         photos = []

@@ -1,7 +1,6 @@
 # coding=utf-8
 
 import numpy as np
-import os
 import random
 import ctypes
 import multiprocessing
