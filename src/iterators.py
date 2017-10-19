@@ -4,6 +4,7 @@ import numpy as np
 import random
 import ctypes
 import multiprocessing
+import traceback
 
 from multiprocessing import Array
 
@@ -558,29 +559,35 @@ class BasicDataSetIterator(DataSetIterator):
     def get_batch(self, e_idx, b_idx):
         # type: (int, int) -> (list, list)
 
-        if b_idx >= len(self):
-            raise ValueError('Asked to retrieve element {idx}, but the Sequence has length {length}'.format(idx=b_idx, length=len(self)))
+        try:
+            if b_idx >= len(self):
+                raise ValueError('Asked to retrieve element {idx}, but the Sequence has length {length}'.format(idx=b_idx, length=len(self)))
 
-        # Calculate the global step index
-        g_idx = self.num_steps_per_epoch * e_idx + b_idx
+            # Calculate the global step index
+            g_idx = self.num_steps_per_epoch * e_idx + b_idx
 
-        # Get labeled data
-        labeled_batch = self._labeled_batch_index_buffer.get_batch_indices(e_idx=e_idx, b_idx=b_idx)
+            # Get labeled data
+            labeled_batch = self._labeled_batch_index_buffer.get_batch_indices(e_idx=e_idx, b_idx=b_idx)
 
-        # Get unlabeled data
-        if self.using_unlabeled_data:
-            ul_steps_per_epoch = self.num_unlabeled_steps_per_epoch
-            ul_e_idx = g_idx / ul_steps_per_epoch
-            ul_b_idx = g_idx % ul_steps_per_epoch
-            unlabeled_batch = self._unlabeled_batch_index_buffer.get_batch_indices(e_idx=ul_e_idx, b_idx=ul_b_idx)
-        else:
-            unlabeled_batch = None
+            # Get unlabeled data
+            if self.using_unlabeled_data:
+                ul_steps_per_epoch = self.num_unlabeled_steps_per_epoch
+                ul_e_idx = g_idx / ul_steps_per_epoch
+                ul_b_idx = g_idx % ul_steps_per_epoch
+                unlabeled_batch = self._unlabeled_batch_index_buffer.get_batch_indices(e_idx=ul_e_idx, b_idx=ul_b_idx)
+            else:
+                unlabeled_batch = None
 
-        # Use the data generator to generate the data
-        #self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
-        return self.data_generator.get_data_batch(step_idx=g_idx,
-                                                  labeled_batch=labeled_batch,
-                                                  unlabeled_batch=unlabeled_batch)
+            # Use the data generator to generate the data
+            #self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
+            return self.data_generator.get_data_batch(step_idx=g_idx,
+                                                      labeled_batch=labeled_batch,
+                                                      unlabeled_batch=unlabeled_batch)
+        except Exception as e:
+            self.logger.warn('Caught exception during batch generation: {}'.format(e.message))
+            tb = traceback.format_exc()
+            self.logger.warn(tb)
+            raise e
 
     def next(self):
         # type: () -> (list, list)

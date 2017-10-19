@@ -8,6 +8,7 @@ import threading
 import time
 import datetime
 import os
+import traceback
 
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
@@ -267,14 +268,15 @@ class OrderedEnqueuer(SequenceEnqueuer):
             Generator yielding tuples (inputs, targets)
                 or (inputs, targets, sample_weights)
         """
-        #try:
-        while self.is_running():
-            inputs = self.queue.get(block=True).get()
-            if inputs is not None:
-                yield inputs
-        #except Exception as e:
-        #    self.stop()
-        #    raise StopIteration(e)
+        try:
+            while self.is_running():
+                inputs = self.queue.get(block=True).get()
+                if inputs is not None:
+                    yield inputs
+        except Exception as e:
+            self.logger.warn('Caught exception while generating batch - stopping iteration: {}'.format(e.message))
+            self.stop()
+            raise StopIteration(e)
 
     def _send_sequence(self):
         """Send current Sequence to all workers."""
