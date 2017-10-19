@@ -80,7 +80,7 @@
 
     "classification_data_set_params": {
       "path_to_training_set_file": "data/final/labeled/patches/train_equalized.txt",
-      "path_to_validation_set_file": "data/final/labeled/patches/validate.txt",
+      "path_to_validation_set_file": "data/final/labeled/patches/validate_equalized.txt",
       "path_to_test_set_file": "data/final/labeled/patches/test.txt",
       "path_to_label_mapping_file": "data/final/minc_labels_to_custom_labels.csv",
       "per_channel_mean": [0.044754233908065731, -0.057418912408161368, -0.1714380231617347],
