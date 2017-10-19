@@ -583,6 +583,9 @@ class BasicDataSetIterator(DataSetIterator):
             return self.data_generator.get_data_batch(step_idx=g_idx,
                                                       labeled_batch=labeled_batch,
                                                       unlabeled_batch=unlabeled_batch)
+
+        # Note: catch exceptions here and print traceback for debugging - this can be multithreaded
+        # or multiprocessed so tracebacks can be lost otherwise
         except Exception as e:
             self.logger.warn('Caught exception during batch generation: {}'.format(e.message))
             tb = traceback.format_exc()
@@ -1126,37 +1129,47 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             :return: A batch of data
         """
 
-        if b_idx >= len(self):
-            raise ValueError('Asked to retrieve element {idx}, but the Sequence has length {length}'.format(idx=b_idx, length=len(self)))
+        try:
 
-        # Calculate the global step index
-        g_idx = (self.num_steps_per_epoch * e_idx) + b_idx
+            if b_idx >= len(self):
+                raise ValueError('Asked to retrieve element {idx}, but the Sequence has length {length}'.format(idx=b_idx, length=len(self)))
 
-        # Get labeled data
-        labeled_batch = self._get_material_sample_batch_indices(e_idx=e_idx, b_idx=b_idx)
+            # Calculate the global step index
+            g_idx = (self.num_steps_per_epoch * e_idx) + b_idx
 
-        # Get unlabeled data
-        if self.using_unlabeled_data:
-            ul_steps_per_epoch = self.num_unlabeled_steps_per_epoch
-            ul_e_idx = g_idx / ul_steps_per_epoch
-            ul_b_idx = g_idx % ul_steps_per_epoch
-            unlabeled_batch = self._unlabeled_batch_index_buffer.get_batch_indices(e_idx=ul_e_idx, b_idx=ul_b_idx)
-        else:
-            unlabeled_batch = None
+            # Get labeled data
+            labeled_batch = self._get_material_sample_batch_indices(e_idx=e_idx, b_idx=b_idx)
 
-        # Use the data generator to generate the data
-        #self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
+            # Get unlabeled data
+            if self.using_unlabeled_data:
+                ul_steps_per_epoch = self.num_unlabeled_steps_per_epoch
+                ul_e_idx = g_idx / ul_steps_per_epoch
+                ul_b_idx = g_idx % ul_steps_per_epoch
+                unlabeled_batch = self._unlabeled_batch_index_buffer.get_batch_indices(e_idx=ul_e_idx, b_idx=ul_b_idx)
+            else:
+                unlabeled_batch = None
 
-        batch_data = self.data_generator.get_data_batch(step_idx=g_idx,
-                                                        labeled_batch=labeled_batch,
-                                                        unlabeled_batch=unlabeled_batch)
+            # Use the data generator to generate the data
+            #self.logger.debug_log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch))
 
-        if self._balance_pixel_samples:
-            pixels_per_material_category = self._calculate_pixels_per_material_in_batch(batch_data=batch_data)
-            #self.logger.debug_log('e_idx: {}, b_idx: {}, material pixels: {}'.format(e_idx, b_idx, list(pixels_per_material_category)))
-            self._update_material_category_sampling_probabilities(pixels_per_material_category)
+            batch_data = self.data_generator.get_data_batch(step_idx=g_idx,
+                                                            labeled_batch=labeled_batch,
+                                                            unlabeled_batch=unlabeled_batch)
 
-        return batch_data
+            if self._balance_pixel_samples:
+                pixels_per_material_category = self._calculate_pixels_per_material_in_batch(batch_data=batch_data)
+                #self.logger.debug_log('e_idx: {}, b_idx: {}, material pixels: {}'.format(e_idx, b_idx, list(pixels_per_material_category)))
+                self._update_material_category_sampling_probabilities(pixels_per_material_category)
+
+            return batch_data
+
+        # Note: catch exceptions here and print traceback for debugging - this can be multithreaded
+        # or multiprocessed so tracebacks can be lost otherwise
+        except Exception as e:
+            self.logger.warn('Caught exception during batch generation: {}'.format(e.message))
+            tb = traceback.format_exc()
+            self.logger.warn(tb)
+            raise e
 
     def next(self):
         # type: () -> (list, list)

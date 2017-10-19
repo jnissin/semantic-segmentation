@@ -1758,6 +1758,17 @@ class ClassificationDataGenerator(DataGenerator):
         num_samples_in_batch = len(X)
 
         # Cast the lists to numpy arrays
+        self.logger.log('X len: {}, Y len: {}, X_unlabeled len: {}'.format(len(X), len(Y), len(X_unlabeled)))
+        self.logger.log('X shape: {}, Y shape: {}, X_unlabeled shape: {}'.format(
+            X[0].shape,
+            Y[0].shape,
+            X_unlabeled[0].shape if len(X_unlabeled) > 0 else None))
+
+        shape = X[0].shape
+        for item in X:
+            if item.shape != shape:
+                self.logger.warn('Found mismatching shapes in X: {} vs {}'.format(item.shape, shape))
+
         X = np.asarray(X, dtype=np.float32)
         Y = np.asarray(Y, dtype=np.float32)
         W = np.asarray(W, dtype=np.float32)
