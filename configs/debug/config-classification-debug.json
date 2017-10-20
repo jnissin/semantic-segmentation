@@ -33,9 +33,9 @@
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
 
-    "num_labeled_per_batch": 10,
-    "num_unlabeled_per_batch": 10,
-    "validation_num_labeled_per_batch": 10,
+    "num_labeled_per_batch": 25,
+    "num_unlabeled_per_batch": 25,
+    "validation_num_labeled_per_batch": 25,
     "validation_crop_shape": [336, 336],
     "validation_resize_shape": null,
 
@@ -59,7 +59,7 @@
     "use_material_samples": false,
 
     "data_augmentation_params": {
-      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "augmentation_probability_function": "lambda x: 0.8",
       "rotation_range": 40.0,
       "zoom_range": 0.15,
       "width_shift_range": 0.05,
