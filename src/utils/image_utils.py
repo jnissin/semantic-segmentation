@@ -529,6 +529,17 @@ def np_apply_random_transform(images,
     return images, img_transform
 
 
+def pil_transform(np_image, matrix, order):
+    # type: (np.ndarray, SimilarityTransform, int) -> np.ndarray
+    p_img = array_to_img(np_image)
+
+    # Parse the similarity transform
+    data = matrix.params.ravel()[0:6]
+    p_img = p_img.transform(size=p_img.size, method=pil_image.AFFINE, data=data, resample=pil_image.BILINEAR)
+    np_image = img_to_array(p_img)
+    return np_image
+
+
 def np_random_channel_shift(x, intensity, min_c=0.0, max_c=255.0, channel_axis=0):
     # type: (np.ndarray, float, float, float, int) -> np.ndarray
     random_intensity = np.random.uniform(-intensity, intensity)
