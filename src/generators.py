@@ -1828,11 +1828,13 @@ class ClassificationDataGenerator(DataGenerator):
 
         stime = time.time()
         X, Y, W = self.get_labeled_batch_data(step_idx, labeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
-        X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(step_idx, unlabeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
 
-        X = X + X_unlabeled
-        Y = Y + Y_unlabeled
-        W = W + W_unlabeled
+        if self.using_unlabeled_data:
+            X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(step_idx, unlabeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
+            X = X + X_unlabeled
+            Y = Y + Y_unlabeled
+            W = W + W_unlabeled
+
         self.logger.debug_log('Raw data generation took: {}s'.format(time.time() - stime))
 
         X_teacher = None
