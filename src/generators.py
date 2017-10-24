@@ -2074,7 +2074,7 @@ class ClassificationDataGenerator(DataGenerator):
 
     def get_unlabeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
         if not self.using_unlabeled_data:
-            return [], [], []
+            return (), (), ()
 
         # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
         data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
