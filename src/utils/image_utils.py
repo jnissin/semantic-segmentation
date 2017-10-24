@@ -6,13 +6,12 @@ import re
 
 from enum import Enum
 from PIL import Image as pil_image
-import numpy as np
 
-import skimage.transform as skitransform
-from skimage.exposure import adjust_gamma
-from skimage.color import rgb2gray
-from skimage.filters import sobel
-from skimage.transform import SimilarityTransform
+import numpy as np
+from numpy.linalg import inv
+
+from skimage.transform import SimilarityTransform, matrix_transform, warp
+from skimage.util import dtype_limits
 
 from src import settings
 
@@ -262,7 +261,7 @@ class ImageTransform:
             elif p_rank == 2:
                 p[:, 1] = self.image_height - p[:, 1]
 
-        p = skitransform.matrix_transform(p, self.transform.params)
+        p = matrix_transform(p, self.transform.params)
 
         # The matrix_transform always returns an ndarray of [N,2]
         # if the original rank was 1 squeeze the extra dimension
@@ -271,10 +270,471 @@ class ImageTransform:
 
         return p
 
+##############################################
+# PIL IMAGE FUNCTIONS
+##############################################
+
+
+def pil_apply_random_image_transform(images,
+                                     cvals,
+                                     random_seed,
+                                     interpolations=None,
+                                     transform_origin=None,
+                                     rotation_range=None,
+                                     zoom_range=None,
+                                     gamma_adjust_ranges=None,
+                                     width_shift_range=0.0,
+                                     height_shift_range=0.0,
+                                     channel_shift_ranges=None,
+                                     horizontal_flip=False,
+                                     vertical_flip=False):
+    # type: (list[pil_image.Image], list[np.ndarray], int, list[ImageInterpolation], np.ndarray, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[float], bool, bool) -> (list[pil_image.Image], ImageTransform)
+
+    """
+    Randomly augments, in the same way, a list of PIL images.
+
+    # Arguments
+        :param images: a list of PIL images
+        :param cvals: the fill values for the images, should be the same size as images list
+        :param interpolations: a list of order of spline interpolations for each image or None if interpolation is not used for any images
+        :param transform_origin: a custom transform origin for the transformations [y,x] in normalized [0,1] img coordinates, image center will be used if nothing given
+        :param rotation_range: range of the rotations in degrees
+        :param zoom_range: zoom range > 1 zoom in, < 1 zoom out
+        :param gamma_adjust_range: list of gamma adjustment ranges
+        :param width_shift_range: fraction of total width [0, 1]
+        :param height_shift_range: fraction of total height [0, 1]
+        :param channel_shift_ranges: a list of channel shift ranges for each image, must be shorter or same length as images list
+        :param horizontal_flip: should horizontal flips be applied
+        :param vertical_flip: should vertical flips be applied
+    # Returns
+        :return: Inputs (x, y) with the same random transform applied.
+    """
+    if images is None or len(images) == 0:
+        return images, None
+
+    # Make sure the images and fill values match
+    if len(cvals) != len(images):
+        raise ValueError('Unmatching image and cvalue array lengths: {} vs {}', len(cvals), len(images))
+
+    for i in range(0, len(images)):
+        if len(cvals[i]) != len(images[i].getbands()):
+            raise ValueError('Unmatching fill value dimensions for image element {}: {} vs {}'.format(i, len(cvals[i]), len(images[i].getbands())))
+
+    # Make transformations deterministic by seeding random
+    np.random.seed(random_seed)
+
+    img_width = images[0].width
+    img_height = images[0].height
+
+    # Store the ImageTranform for return value
+    img_transform = ImageTransform(image_height=img_height, image_width=img_width, transform=None, horizontal_flip=False, vertical_flip=False)
+
+    # Apply gamma adjustment to the image
+    # Note: apply before transform to keep the possible cvalue always constant in the transformed images
+    if gamma_adjust_ranges is not None:
+        if len(gamma_adjust_ranges) > len(images):
+            raise ValueError('Gamma adjustment ranges list is longer than the image list: {} vs {}'.format(len(gamma_adjust_ranges), len(images)))
+
+        for i in range(0, len(gamma_adjust_ranges)):
+            if gamma_adjust_ranges[i] is None:
+                continue
+
+            gamma = np.random.uniform(gamma_adjust_ranges[i][0], gamma_adjust_ranges[i][1])
+            images[i] = pil_adjust_gamma(images[i], gamma=gamma)
+
+    # Apply random channel shifts
+    # Note: apply before transform to keep the possible cvalue always constant in the transformed images
+    if channel_shift_ranges is not None:
+        if len(channel_shift_ranges) > len(images):
+            raise ValueError('Channel shift ranges list is longer than the image list: {} vs {}'.format(len(channel_shift_ranges), len(images)))
+
+        for i in range(0, len(channel_shift_ranges)):
+            if channel_shift_ranges[i] is None:
+                continue
+
+            # Images are [0,255] color encoded, multiply intensity [0,1] by 255 to get the real shift intensity
+            images[i] = pil_intensity_shift(images[i], intensity=int(round(channel_shift_ranges[i] * 255.0)))
+
+    # Apply at random a horizontal flip to the image
+    if horizontal_flip:
+        if np.random.random() < 0.5:
+            for i in range(0, len(images)):
+                images[i] = pil_apply_flip(images[i], method=pil_image.FLIP_LEFT_RIGHT)
+            img_transform.horizontal_flip = True
+
+    # Apply at random a vertical flip to the image
+    if vertical_flip:
+        if np.random.random() < 0.5:
+            for i in range(0, len(images)):
+                images[i] = pil_apply_flip(images[i], method=pil_image.FLIP_TOP_BOTTOM)
+            img_transform.vertical_flip = True
+
+    # Rotation
+    if rotation_range:
+        theta = np.deg2rad(np.random.uniform(-rotation_range, rotation_range))
+    else:
+        theta = 0.0
+
+    # Height shift
+    if height_shift_range is not None and height_shift_range > 0.0:
+        ty = np.random.uniform(-height_shift_range, height_shift_range) * images[0].height
+    else:
+        ty = 0
+
+    # Width shift
+    if width_shift_range is not None and width_shift_range > 0.0:
+        tx = np.random.uniform(-width_shift_range, width_shift_range) * images[0].width
+    else:
+        tx = 0
+
+    # Zoom
+    if zoom_range is None or (zoom_range[0] == 1 and zoom_range[1] == 1):
+        zoom = 1
+    else:
+        # Do not shear when zooming - i.e. assign same value to x and y.
+        zoom = np.random.uniform(zoom_range[0], zoom_range[1])
+
+    # Calculate necessary movement to shift the origin to the image center or
+    # the given transform origin
+    if transform_origin is not None:
+        shift_y = img_height * transform_origin[0]
+        shift_x = img_width * transform_origin[1]
+    else:
+        shift_y = img_height * 0.5
+        shift_x = img_width * 0.5
+
+    # Prepare transforms to shift the image origin to the image center
+    tf_shift = SimilarityTransform(translation=[-shift_x, -shift_y])
+    tf_shift_inv = SimilarityTransform(translation=[shift_x, shift_y])
+
+    # Build the translation, rotation and scale transforms
+    tf_translate = SimilarityTransform(translation=[tx, ty])
+    tf_rotate = SimilarityTransform(rotation=theta)
+    tf_scale = SimilarityTransform(scale=zoom)
+
+    # Build the final transform: (SHIFT)*S*R*T*(SHIFT_INV)
+    tf_final = (tf_shift + (tf_scale + tf_rotate + tf_translate) + tf_shift_inv)
+    img_transform.transform = tf_final
+
+    # Apply transform
+    if tf_final is not None:
+        for i in range(0, len(images)):
+            # Note: preserve range is important for example for mask images
+            resample = ImageInterpolation.NEAREST.value if interpolations is None or i > len(interpolations) else interpolations[i].value
+
+            images[i] = pil_transform_image(img=images[i],
+                                            transform=tf_final,
+                                            resample=resample,
+                                            cval=cvals[i])
+
+    return images, img_transform
+
+
+def pil_mode_from_cval(cval):
+    # type: (tuple) -> str
+
+    if cval is None or isinstance(cval, int) or len(cval) == 1:
+        return 'L'
+    elif len(cval) == 3:
+        return 'RGB'
+    elif len(cval) == 4:
+        return 'RGBA'
+    else:
+        raise ValueError('Could not determine mode from cval: {}'.format(cval))
+
+
+def pil_transform_image(img, transform, resample, cval=None):
+    # type: (pil_image.Image, SimilarityTransform, int, tuple) -> pil_image.Image
+
+    # Get the affine transformation matrix
+    matrix = inv(transform.params).ravel()
+
+    # Add alpha channel (all pixels full alpha) to detect out-of-bounds values (will have alpha 0)
+    if cval is not None:
+        img.putalpha(255)
+
+    img = img.transform(size=img.size, method=pil_image.AFFINE, data=matrix, resample=resample)
+
+    # Replace out-of-bounds values with the cval - if cval is None default is black
+    if cval is not None:
+
+        if isinstance(cval, np.ndarray) and cval.dtype != np.int32:
+            cval = tuple(np.round(cval).astype(dtype=np.int32))
+
+        background = pil_image.new(pil_mode_from_cval(cval), img.size, cval)
+        background.paste(img, mask=img.split()[3])
+        img = background
+
+    return img
+
+
+def pil_adjust_gamma(img, gamma):
+    # type: (pil_image.Image, float) -> pil_image.Image
+
+    invert_gamma = 1.0/gamma
+    lut = [pow(x/255.0, invert_gamma) * 255 for x in range(256)]
+    lut = lut*(len(img.getbands()))  # need one set of data for each color channel
+    img = img.point(lut)
+    return img
+
+
+def pil_intensity_shift(img, intensity):
+    # type: (pil_image.Image, int) -> pil_image.Image
+
+    lut = [x + intensity for x in range(256)]
+    lut = lut * len(img.getbands())
+    img = img.point(lut)
+    return img
+
+
+def pil_apply_flip(img, method):
+    # type: (pil_image.Image, int) -> pil_image.Image
+
+    img = img.transpose(method=method)
+    return img
+
+
+def pil_crop_image(img, x1, y1, x2, y2):
+    # type: (pil_image.Image, int, int, int, int) -> pil_image.Image
+
+    """
+    Crops a PIL Image object.
+
+    # Arguments
+        :param img: PIL Image object
+        :param x1: horizontal top left corner of crop
+        :param y1: vertical top left corner of crop
+        :param x2: horizontal bottom right corner of crop
+        :param y2: vertical bottom right corner of crop
+    # Returns
+        :return: The cropped PIL Image object
+    """
+    y_size = img.height
+    x_size = img.width
+
+    # Sanity check
+    if (x1 > x_size or
+        x2 > x_size or
+        x1 < 0 or
+        x2 < 0 or
+        y1 > y_size or
+        y2 > y_size or
+        y1 < 0 or
+        y2 < 0):
+        raise ValueError('Invalid crop parameters for image shape: {}, ({}, {}), ({}, {})'.format(img.size, x1, y1, x2, y2))
+
+    cropped_img = img.crop(box=(x1, y1, x2, y2))
+    cropped_img.load()
+    return cropped_img
+
+
+def pil_crop_image_with_fill(img, x1, y1, x2, y2, cval):
+    # type: (pil_image.Image, int, int, int, int, tuple) -> pil_image.Image
+
+    """
+    Crops a PIL Image object and fills the over reaching values with cval. Allows negative
+    and over boundaries indices for crop. Over reaching pixels will be filled with cval.
+
+    # Arguments
+        :param img: 3 dimensional Numpy array with shape HxWxC
+        :param x1: horizontal top left corner of crop
+        :param y1: vertical top left corner of crop
+        :param x2: horizontal bottom right corner of crop
+        :param y2: vertical bottom right corner of crop
+        :param cval: the value to use for filling the pixels that possibly go over
+    # Returns
+        :return: The crop of the image as a Numpy array
+    """
+
+    if x1 >= x2 or y1 >= y2:
+        raise ValueError('Invalid crop coordinates; min coordinates bigger or equal to max: {}, {}'.format((y1, x1), (y2, x2)))
+
+    y_size = img.height
+    x_size = img.width
+
+    crop_y_size = y2 - y1
+    crop_x_size = x2 - x1
+
+    cropped_img = pil_crop_image(img, x1=max(0, x1), y1=max(0, y1), x2=min(x_size, x2), y2=min(y_size, y2))
+    v_pad_before = 0 if y1 >= 0 else abs(y1)
+    v_pad_after = 0 if y2 <= y_size else y2 - y_size
+    h_pad_before = 0 if x1 >= 0 else abs(x1)
+    h_pad_after = 0 if x2 <= x_size else x2 - x_size
+
+    if v_pad_before > 0 or v_pad_after > 0 or h_pad_before > 0 or h_pad_after > 0:
+        cropped_img = pil_pad_image(img=cropped_img,
+                                    v_pad_before=v_pad_before,
+                                    v_pad_after=v_pad_after,
+                                    h_pad_before=h_pad_before,
+                                    h_pad_after=h_pad_after,
+                                    cval=cval)
+
+    if cropped_img.height != crop_y_size or cropped_img.width != crop_x_size:
+        raise ValueError('Cropped and filled image shape does not match with crop size: {}, {}'.format(cropped_img.size, (crop_x_size, crop_y_size)))
+
+    return cropped_img
+
+
+def pil_resize_image_with_padding(img, shape, cval, interp='bilinear'):
+    # type: (pil_image.Image, tuple[int, int], tuple, str) -> pil_image.Image
+
+    """
+    Scales the image to the desired shape filling the overflowing area with the provided constant
+    color value.
+
+    # Arguments
+        :param img: A PIL Image
+        :param shape: desired shape
+        :param cval: the value to use for filling the pixels that possibly go over due to aspect ratio mismatch
+        :param interp: interpolation type ‘nearest’, ‘lanczos’, ‘bilinear’, ‘bicubic’ or ‘cubic’
+    # Returns
+        :return: The resized image as a numpy array
+    """
+
+    if img.height == shape[0] and img.width == shape[1]:
+        return img
+
+    # Scale so that the bigger dimension matches
+    sfactor = float(max(shape[0], shape[1])) / float(max(img.height, img.width))
+
+    # If the image's bigger dimension already matches - we only need padding
+    if sfactor == 1:
+        img_resized = img
+    else:
+        img_resized = pil_scale_image(img, sfactor=sfactor, interp=interp)
+
+    # Pad to the final desired shape afterwards
+    img_resized = pil_pad_image_to_shape(img_resized, shape=shape, cval=cval)
+
+    return img_resized
+
+
+def pil_scale_image(img, sfactor, interp='bilinear'):
+    # type: (pil_image.Image, float) -> pil_image.Image
+
+    func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
+    img = img.resize(size=(int(round(sfactor * img.width)), int(round(sfactor * img.height))), resample=func[interp])
+
+    return img
+
+
+def pil_pad_image_to_shape(img, shape, cval):
+    # type: (pil_image.Image, tuple(int, int), tuple) -> pil_image.Image
+
+    """
+    Pads the image evenly on every side until it matches the dimensions given in
+    the shape parameter. If the padding doesn't go evenly the extra is on the left
+    side and the bottom.
+
+    # Arguments
+        :param np_img: 3 dimensional Numpy array with shape HxWxC
+        :param shape: the output shape of the padded image HxW
+        :param cval: the color value that is used in the padding
+    # Returns
+        :return: the padded version of the image
+    """
+    v_diff = max(0, shape[0] - img.height)
+    h_diff = max(0, shape[1] - img.width)
+
+    v_pad_before = v_diff / 2
+    v_pad_after = (v_diff / 2) + (v_diff % 2)
+
+    h_pad_before = h_diff / 2
+    h_pad_after = (h_diff / 2) + (h_diff % 2)
+
+    return pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cval)
+
+
+def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cval=None):
+    # type: (pil_image.Image, int, int, int, int, tuple) -> pil_image.Image
+
+    """
+    Pads the given PIL Image to a given shape and fills the padding with cval
+    color value.
+
+    # Arguments:
+        :param img: PIL Image object
+        :param v_pad_before: vertical padding on top
+        :param v_pad_after: vertical padding on bottom
+        :param h_pad_before: horizontal padding on left
+        :param h_pad_after: horizontal padding on right
+        :param cval: the color value that is used in the padding
+    # Returns
+        :return: the padded version of the image
+    """
+
+    width = img.width + h_pad_before + h_pad_after
+    height = img.height + v_pad_before + v_pad_after
+    mode = pil_mode_from_cval(cval)
+    cval = cval if cval is not None else 0
+
+    if isinstance(cval, np.ndarray) and cval.dtype != np.int32:
+        cval = tuple(np.round(cval).astype(dtype=np.int32))
+
+    padded_img = pil_image.new(mode=mode, size=(width, height), color=cval)
+    padded_img.paste(img, box=(h_pad_before, v_pad_before))
+
+    return padded_img
+
+
+def pil_get_random_crop_area(img, crop_width, crop_height):
+    # type: (pil_image.Image, int, int) -> ((int, int), (int, int))
+
+    """
+    The function returns a random crop from the image as (x1, y1), (x2, y2).
+
+    # Arguments
+        :param np_image: image as a numpy array
+        :param crop_width: width of the crop
+        :param crop_height: height of the crop
+
+    # Returns
+        :return: two integer tuples describing the crop: (x1, y1), (x2, y2)
+    """
+
+    if crop_width > img.width or crop_height > img.height:
+        raise ValueError('Crop dimensions exceed the image dimensions: [{},{}] vs '.format(crop_width, crop_height, img.size))
+
+    x1 = np.random.randint(0, img.width - crop_width + 1)
+    y1 = np.random.randint(0, img.height - crop_height + 1)
+    x2 = x1 + crop_width
+    y2 = y1 + crop_height
+
+    return (x1, y1), (x2, y2)
+
+
+def pil_draw_square(img, center_x, center_y, size, color):
+    # type: (pil_image.Image, int, int, int, tuple) -> pil_image.Image
+
+    if isinstance(center_x, float) and 0 <= center_x <= 1.0:
+        center_x = int(round(center_x * img.width))
+
+    if isinstance(center_y, float) and 0 <= center_y <= 1.0:
+        center_y = int(round(center_y * img.height))
+
+    rb = -(size/2)
+    re = (size/2) + size%2
+
+    for i in range(rb, re):
+        for j in range(rb, re):
+            x = min(max(center_x + i, 0), img.width - 1)
+            y = min(max(center_y + j, 0), img.height - 1)
+            img.putpixel((x, y), color)
+
+    return img
+
 
 ##############################################
 # NUMPY IMAGE FUNCTIONS
 ##############################################
+
+def np_assert_non_negative(image):
+
+    if np.any(image < 0):
+        raise ValueError('Image Correction methods work correctly only on '
+                         'images with non-negative values. Use '
+                         'skimage.exposure.rescale_intensity.')
+
 
 def np_check_image_properties(np_img, min_val=0.0, max_val=255.0, height=None, width=None, dtype=None):
     # type: (np.ndarray, float, float, int, int, np.dtype) -> None
@@ -409,7 +869,7 @@ def np_apply_random_transform(images,
 
             # We need to give the images as type uin8 to maintain the range [0, 255] transform to uint8 and back
             gamma = np.random.uniform(gamma_adjust_ranges[i][0], gamma_adjust_ranges[i][1])
-            images[i] = adjust_gamma(images[i].astype(np.uint8), gamma=gamma).astype(img_dtype)
+            np_adjust_gamma(images[i].astype(np.uint8), gamma=gamma, output=images[i])
 
     # Apply random channel shifts
     # Note: apply before transform to keep the possible cvalue always constant in the transformed images
@@ -422,20 +882,20 @@ def np_apply_random_transform(images,
                 continue
 
             # Images are [0,255] color encoded, multiply intensity [0,1] by 255 to get the real shift intensity
-            images[i] = np_random_channel_shift(images[i], intensity=channel_shift_ranges[i] * 255.0, min_c=0, max_c=255.0, channel_axis=img_channel_axis)
+            np_random_channel_shift(images[i], intensity=channel_shift_ranges[i] * 255.0, min_c=0, max_c=255.0, output=images[i])
 
     # Apply at random a horizontal flip to the image
     if horizontal_flip:
         if np.random.random() < 0.5:
             for i in range(0, len(images)):
-                images[i] = np_flip_axis(images[i], img_col_axis)
+                np_flip_axis(images[i], img_col_axis, output=images[i])
             img_transform.horizontal_flip = True
 
     # Apply at random a vertical flip to the image
     if vertical_flip:
         if np.random.random() < 0.5:
             for i in range(0, len(images)):
-                images[i] = np_flip_axis(images[i], img_row_axis)
+                np_flip_axis(images[i], img_row_axis, output=images[i])
             img_transform.vertical_flip = True
 
     # Rotation
@@ -482,7 +942,7 @@ def np_apply_random_transform(images,
     tf_scale = SimilarityTransform(scale=zoom)
 
     # Build the final transform: (SHIFT)*S*R*T*(SHIFT_INV)
-    tf_final = (tf_shift + (tf_scale + tf_rotate + tf_translate + tf_shift_inv))
+    tf_final = (tf_shift + (tf_scale + tf_rotate + tf_translate) + tf_shift_inv)
     img_transform.transform = tf_final
 
     if tf_final is not None:
@@ -495,12 +955,12 @@ def np_apply_random_transform(images,
             # Note: preserve range is important for example for mask images
             order = ImageInterpolation.NEAREST.value if interpolations is None or i > len(interpolations) else interpolations[i].value
 
-            images[i] = skitransform.warp(image=images[i],
-                                          inverse_map=tf_final.inverse,
-                                          order=order,
-                                          mode=fill_mode,
-                                          cval=temp_cval,
-                                          preserve_range=True).astype(img_dtype)
+            images[i] = warp(image=images[i],
+                             inverse_map=tf_final.inverse,
+                             order=order,
+                             mode=fill_mode,
+                             cval=temp_cval,
+                             preserve_range=True).astype(img_dtype)
 
             # Fix the temporary cvalue to the real cvalue
             # TODO: This can very rarely leave some -900 values which are handled with clipping below - improve by checking all channels?
@@ -522,37 +982,91 @@ def np_apply_random_transform(images,
                 min_val = np.min(images[i])
                 max_val = np.max(images[i])
                 print 'WARNING: Found values outside of range [0, 255] after augmentation: [{}, {}] - clipping'.format(min_val, max_val)
-                images[i] = np.clip(images[i], 0.0, 255.0)
+                np.clip(images[i], 0.0, 255.0, out=images[i])
             else:
                 raise e
 
-    return images, img_transform
+    return img_transform
 
 
-def pil_transform(np_image, matrix, order):
-    # type: (np.ndarray, SimilarityTransform, int) -> np.ndarray
-    p_img = array_to_img(np_image)
-
-    # Parse the similarity transform
-    data = matrix.params.ravel()[0:6]
-    p_img = p_img.transform(size=p_img.size, method=pil_image.AFFINE, data=data, resample=pil_image.BILINEAR)
-    np_image = img_to_array(p_img)
-    return np_image
-
-
-def np_random_channel_shift(x, intensity, min_c=0.0, max_c=255.0, channel_axis=0):
-    # type: (np.ndarray, float, float, float, int) -> np.ndarray
+def np_random_channel_shift(x, intensity, min_c=0.0, max_c=255.0, output=None):
+    # type: (np.ndarray, float, float, float, np.ndarray) -> np.ndarray
     random_intensity = np.random.uniform(-intensity, intensity)
-    x = x + random_intensity
-    x = np.clip(x, min_c, max_c)
-    return x
+    x += random_intensity
+    np.clip(x, min_c, max_c, out=x)
+
+    if output is not None:
+        output = x
+        return None
+    else:
+        return x
 
 
-def np_flip_axis(x, axis):
-    x = np.asarray(x).swapaxes(axis, 0)
+def np_adjust_gamma(image, gamma=1, gain=1, output=None):
+    """Performs Gamma Correction on the input image.
+
+    Also known as Power Law Transform.
+    This function transforms the input image pixelwise according to the
+    equation ``O = I**gamma`` after scaling each pixel to the range 0 to 1.
+
+    Parameters
+    ----------
+    image : ndarray
+        Input image.
+    gamma : float
+        Non negative real number. Default value is 1.
+    gain : float
+        The constant multiplier. Default value is 1.
+    output : ndarray
+        Where to place the output
+    Returns
+    -------
+    out : ndarray
+        Gamma corrected output image.
+
+    See Also
+    --------
+    adjust_log
+
+    Notes
+    -----
+    For gamma greater than 1, the histogram will shift towards left and
+    the output image will be darker than the input image.
+
+    For gamma less than 1, the histogram will shift towards right and
+    the output image will be brighter than the input image.
+
+    References
+    ----------
+    .. [1] http://en.wikipedia.org/wiki/Gamma_correction
+    """
+    np_assert_non_negative(image)
+    dtype = image.dtype.type
+
+    if gamma < 0:
+        raise ValueError("Gamma should be a non-negative real number.")
+
+    scale = float(dtype_limits(image, True)[1] - dtype_limits(image, True)[0])
+
+    if output is not None:
+        output = ((image / scale) ** gamma) * scale * gain
+        output = dtype(image)
+        return None
+    else:
+        out = ((image / scale) ** gamma) * scale * gain
+        return dtype(out)
+
+
+def np_flip_axis(x, axis, output=None):
+    x = x.swapaxes(axis, 0)
     x = x[::-1, ...]
     x = x.swapaxes(0, axis)
-    return x
+
+    if output is not None:
+        output = x
+        return None
+    else:
+        return x
 
 
 def np_crop_image(np_img, x1, y1, x2, y2):
@@ -853,7 +1367,7 @@ def np_get_random_crop_area(np_image, crop_width, crop_height):
     """
 
     if crop_width > np_image.shape[1] or crop_height > np_image.shape[0]:
-        raise ValueError('Crop dimensions are bigger than image dimensions: [{},{}] vs '.format(crop_height, crop_width, np_image.shape))
+        raise ValueError('Crop dimensions exceed the image dimensions: [{},{}] vs '.format(crop_height, crop_width, np_image.shape))
 
     x1 = np.random.randint(0, np_image.shape[1] - crop_width + 1)
     y1 = np.random.randint(0, np_image.shape[0] - crop_height + 1)
@@ -885,6 +1399,7 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
     # Returns
         :return: the superpixel segmentation
     """
+
     from skimage.segmentation import slic, find_boundaries
 
     if normalize_img:
@@ -901,6 +1416,7 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
 
 def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False, borders_only=False):
     # type: (np.ndarray, float, float, int, bool) -> np.ndarray
+
     from skimage.segmentation import felzenszwalb, find_boundaries
 
     if normalize_img:
@@ -917,7 +1433,10 @@ def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, mul
 
 def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_img=False, borders_only=False):
     # type: (np.ndarray, int, float) -> np.ndarray
+
     from skimage.segmentation import watershed, find_boundaries
+    from skimage.color import rgb2gray
+    from skimage.filters import sobel
 
     if normalize_img:
         normalized_img = np_normalize_image_channels(np_img, clamp_to_range=True)
@@ -935,6 +1454,7 @@ def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_
 
 def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5, normalize_img=False, borders_only=False):
     # type: (np.ndarray, float, float, float, float) -> np.ndarray
+
     from skimage.segmentation import quickshift, find_boundaries
 
     if normalize_img:

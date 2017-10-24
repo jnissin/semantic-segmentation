@@ -7,7 +7,7 @@ import numpy as np
 from enum import Enum
 from abc import ABCMeta, abstractmethod, abstractproperty
 
-from PIL import Image
+from PIL import Image as PImage
 
 from utils import dataset_utils
 from utils import image_utils
@@ -524,6 +524,46 @@ class DataGenerator(object):
 
         return image_utils.np_resize_image_with_padding(np_image, shape=target_shape, cval=cval, interp=interp)
 
+    def _pil_resize_image(self, img, resize_shape, cval, interp):
+        # type: (PImage.Image, tuple, np.ndarray, str) -> PImage.Image
+
+        # If the resize shape is None just return the original image
+        if resize_shape is None:
+            return img
+
+        assert(isinstance(resize_shape, list) or isinstance(resize_shape, tuple) or isinstance(resize_shape, np.ndarray))
+        assert(len(resize_shape) == 2)
+        assert(not (resize_shape[0] is None and resize_shape[1] is None))
+
+        # Scale to match the sdim found in index 0
+        if resize_shape[0] is not None and resize_shape[1] is None:
+            target_sdim = resize_shape[0]
+            img_sdim = min(img.size)
+
+            if target_sdim == img_sdim:
+                return img
+
+            scale_factor = float(target_sdim)/float(img_sdim)
+            target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
+        # Scale the match the bdim found in index 1
+        elif resize_shape[0] is None and resize_shape[1] is not None:
+            target_bdim = resize_shape[1]
+            img_bdim = max(img.size)
+
+            if target_bdim == img_bdim:
+                return img
+
+            scale_factor = float(target_bdim)/float(img_bdim)
+            target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
+        # Scale to the exact shape
+        else:
+            target_shape = tuple(resize_shape)
+
+            if target_shape[0] == img.height and target_shape[1] == img.width:
+                return img
+
+        return image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
+
     def _fit_image_to_div2_constraint(self, np_image, cval, interp):
         # type: (np.ndarray, np.ndarray, str) -> np.ndarray
 
@@ -537,6 +577,20 @@ class DataGenerator(object):
             np_image = image_utils.np_resize_image_with_padding(np_image, shape=target_shape, cval=cval, interp=interp)
 
         return np_image
+
+    def _pil_fit_image_to_div2_constraint(self, img, cval, interp):
+        # type: (PImage.Image, np.ndarray, str) -> PImage.Image
+
+        # Make sure the image dimensions satisfy the div2_constraint i.e. are n times divisible
+        # by 2 to work with the network. If the dimensions are not ok pad the images.
+        img_height_div2 = dataset_utils.count_trailing_zeroes(img.height)
+        img_width_div2 = dataset_utils.count_trailing_zeroes(img.width)
+
+        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
+            target_shape = dataset_utils.get_required_image_dimensions((img.height, img.width), self.div2_constraint)
+            img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
+
+        return img
 
     def _normalize_image_batch(self, batch):
         # type: (np.ndarray) -> np.ndarray
@@ -559,7 +613,9 @@ class DataGenerator(object):
             raise ValueError('Batch image values are not between [0, 255], got [{}, {}]'.format(np.min(batch), np.max(batch)))
 
         # Map the values from [0, 255] to [-1, 1]
-        batch = ((batch / 255.0) - 0.5) * 2.0
+        batch /= 255.0
+        batch -= 0.5
+        batch *= 2.0
 
         # Subtract the per-channel-mean from the batch to "center" the data.
         if self.use_per_channel_mean_normalization:
@@ -636,21 +692,64 @@ class DataGenerator(object):
         gamma_adjust_ranges = [self.data_augmentation_params.gamma_adjust_range] * num_images if override_gamma_adjust_ranges is None else override_gamma_adjust_ranges
 
         stime = time.time()
-        images, transform = image_utils.np_apply_random_transform(images=images,
-                                                                  cvals=cvals,
-                                                                  fill_mode=self.data_augmentation_params.fill_mode,
-                                                                  interpolations=interpolations,
-                                                                  transform_origin=transform_origin,
-                                                                  img_data_format=self.img_data_format,
-                                                                  rotation_range=self.data_augmentation_params.rotation_range,
-                                                                  zoom_range=self.data_augmentation_params.zoom_range,
-                                                                  width_shift_range=self.data_augmentation_params.width_shift_range,
-                                                                  height_shift_range=self.data_augmentation_params.height_shift_range,
-                                                                  channel_shift_ranges=channel_shift_ranges,
-                                                                  horizontal_flip=self.data_augmentation_params.horizontal_flip,
-                                                                  vertical_flip=self.data_augmentation_params.vertical_flip,
-                                                                  gamma_adjust_ranges=gamma_adjust_ranges)
+        transform = image_utils.np_apply_random_transform(images=images,
+                                                          cvals=cvals,
+                                                          fill_mode=self.data_augmentation_params.fill_mode,
+                                                          interpolations=interpolations,
+                                                          transform_origin=transform_origin,
+                                                          img_data_format=self.img_data_format,
+                                                          rotation_range=self.data_augmentation_params.rotation_range,
+                                                          zoom_range=self.data_augmentation_params.zoom_range,
+                                                          width_shift_range=self.data_augmentation_params.width_shift_range,
+                                                          height_shift_range=self.data_augmentation_params.height_shift_range,
+                                                          channel_shift_ranges=channel_shift_ranges,
+                                                          horizontal_flip=self.data_augmentation_params.horizontal_flip,
+                                                          vertical_flip=self.data_augmentation_params.vertical_flip,
+                                                          gamma_adjust_ranges=gamma_adjust_ranges)
 
+        self.logger.debug_log('Data augmentation took: {} sec'.format(time.time() - stime))
+
+        return transform
+
+    def _pil_apply_data_augmentation_to_images(self, images, cvals, random_seed, interpolations, transform_origin=None, override_channel_shift_ranges=None, override_gamma_adjust_ranges=None):
+        # type: (list[PImage.Image], list, int, list, np.ndarray, list, list) -> (list[PImage.Image], ImageTransform)
+
+        """
+        Applies (same) data augmentation as per stored DataAugmentationParameters to a list of images.
+
+        # Arguments
+            :param images: images to augment (same augmentation on all)
+            :param cvals: constant fill values for the images
+            :param random_seed: random seed
+            :param interpolations: interpolations for the images
+            :param transform_origin: the origin for the transformations, if None the center of the images is used
+            :param override_channel_shift_ranges: optional channel shift range override (e.g. for mask images), otherwise DataAugmentationParam used for all
+            :param override_gamma_adjust_ranges: optional gamma adjust range override (e.g. for mask images), otherwise DataAugmentationParam used for all
+        # Returns
+            :return: the list of augmented images and ImageTransform as a tuple (images, transform)
+        """
+
+        if not self.use_data_augmentation:
+            self.logger.warn('Apply data augmentation called but use_data_augmentation is false')
+
+        num_images = len(images)
+        channel_shift_ranges = [self.data_augmentation_params.channel_shift_range] * num_images if override_channel_shift_ranges is None else override_channel_shift_ranges
+        gamma_adjust_ranges = [self.data_augmentation_params.gamma_adjust_range] * num_images if override_gamma_adjust_ranges is None else override_gamma_adjust_ranges
+
+        stime = time.time()
+        images, transform = image_utils.pil_apply_random_image_transform(images=images,
+                                                                         cvals=cvals,
+                                                                         random_seed=random_seed,
+                                                                         interpolations=interpolations,
+                                                                         transform_origin=transform_origin,
+                                                                         rotation_range=self.data_augmentation_params.rotation_range,
+                                                                         zoom_range=self.data_augmentation_params.zoom_range,
+                                                                         width_shift_range=self.data_augmentation_params.width_shift_range,
+                                                                         height_shift_range=self.data_augmentation_params.height_shift_range,
+                                                                         channel_shift_ranges=channel_shift_ranges,
+                                                                         horizontal_flip=self.data_augmentation_params.horizontal_flip,
+                                                                         vertical_flip=self.data_augmentation_params.vertical_flip,
+                                                                         gamma_adjust_ranges=gamma_adjust_ranges)
         self.logger.debug_log('Data augmentation took: {} sec'.format(time.time() - stime))
 
         return images, transform
@@ -684,7 +783,7 @@ class DataGenerator(object):
         gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
 
         if gaussian_noise_stddev is not None:
-            teacher_img_batch = teacher_img_batch + np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=teacher_img_batch.shape)
+            teacher_img_batch += np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=teacher_img_batch.shape)
 
         return teacher_img_batch
 
@@ -708,7 +807,7 @@ class DataGenerator(object):
 
         if brightness_shift_range is not None:
             brightness_shift = np.random.uniform(-brightness_shift_range, brightness_shift_range)
-            teacher_img_batch[i] = teacher_img_batch[i] + brightness_shift
+            teacher_img_batch[i] += brightness_shift
 
         # Apply horizontal flips
         horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
@@ -1024,7 +1123,7 @@ class SegmentationDataGenerator(DataGenerator):
         # Resize the photo to match the mask size if necessary, since
         # the original photos are sometimes huge
         if photo.size != mask.size:
-            photo = photo.resize(mask.size, Image.ANTIALIAS)
+            photo = photo.resize(mask.size, PImage.BICUBIC)
 
         if photo.size != mask.size:
             raise ValueError('Non-matching photo and mask dimensions after resize: {} != {}'.format(photo.size, mask.size))
@@ -1748,19 +1847,19 @@ class ClassificationDataGenerator(DataGenerator):
         stime = time.time()
         X, Y, W = self.get_labeled_batch_data(step_idx, labeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
         X_unlabeled, Y_unlabeled, W_unlabeled = self.get_unlabeled_batch_data(step_idx, unlabeled_batch, crop_shape=crop_shape, resize_shape=resize_shape)
-        self.logger.debug_log('Raw data generation took: {}s'.format(time.time() - stime))
 
         X = X + X_unlabeled
         Y = Y + Y_unlabeled
         W = W + W_unlabeled
 
-        num_unlabeled_samples_in_batch = len(X_unlabeled)
-        num_samples_in_batch = len(X)
-
-        # Cast the lists to numpy arrays
+        X = [img_to_array(img) for img in X]
         X = np.asarray(X, dtype=np.float32)
         Y = np.asarray(Y, dtype=np.float32)
         W = np.asarray(W, dtype=np.float32)
+        self.logger.debug_log('Raw data generation took: {}s'.format(time.time() - stime))
+
+        num_unlabeled_samples_in_batch = len(X_unlabeled)
+        num_samples_in_batch = len(X)
 
         # Normalize the photo batch data: color values to [-1, 1], subtract per pixel mean and divide by stddev
         X = self._normalize_image_batch(X)
@@ -1778,7 +1877,7 @@ class ClassificationDataGenerator(DataGenerator):
         if self.use_data_augmentation:
             if self.data_augmentation_params.using_gaussian_noise:
                 gaussian_noise_stddev = self.data_augmentation_params.gaussian_noise_stddev_function(step_idx)
-                X = X + np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=X.shape)
+                X += np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=X.shape)
 
         if self.batch_data_format == BatchDataFormat.SUPERVISED:
             batch_input_data = [X]
@@ -1816,55 +1915,67 @@ class ClassificationDataGenerator(DataGenerator):
             b_min_teacher = np.min(X_teacher) if X_teacher is not None else 0
             b_max_teacher = np.max(X_teacher) if X_teacher is not None else 0
 
+            names = [self.labeled_data_set.samples[x].photo_id for x in labeled_batch]
+            names += [self.unlabeled_data_set.get_index(x).file_name for x in unlabeled_batch] if self.using_unlabeled_data else []
+
             for i in range(0, len(X)):
                 label = np.argmax(Y[i])
                 img = ((X[i] - b_min) / (b_max - b_min)) * 255.0
-                self.logger.debug_log_image(img, '{}_{}_{}_{}_photo.jpg'.format(label, self.name, step_idx, i), scale=False)
+                self.logger.debug_log_image(img, '{}_{}_{}_{}_{}_photo.jpg'.format(label, self.name, step_idx, i, names[i]), scale=False)
 
                 if X_teacher is not None:
                     img = ((X_teacher[i] - b_min_teacher) / (b_max_teacher - b_min_teacher)) * 255.0
-                    self.logger.debug_log_image(img, '{}_{}_{}_{}_photo_teacher.jpg'.format(label, self.name, step_idx, i), scale=False)
+                    self.logger.debug_log_image(img, '{}_{}_{}_{}_{}_photo_teacher.jpg'.format(label, self.name, step_idx, i, names[i]), scale=False)
 
         return batch_input_data, batch_output_data
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
-
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500:
             data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-                (delayed(pickle_method)(self, 'get_labeled_sample_minc_2500', step_index=step_index, sample_index=sample_index, resize_shape=resize_shape) for sample_index in index_array)
+                (delayed(pickle_method)(self,
+                                        'get_labeled_sample_minc_2500',
+                                        step_index=step_index,
+                                        sample_index=sample_index,
+                                        resize_shape=resize_shape) for sample_index in index_array)
         elif self.labeled_data_set.data_set_type == MINCDataSetType.MINC:
             data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-                (delayed(pickle_method)(self, 'get_labeled_sample_minc', step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape) for sample_index in index_array)
+                (delayed(pickle_method)(self,
+                                        'get_labeled_sample_minc',
+                                        step_index=step_index,
+                                        sample_index=sample_index,
+                                        crop_shape=crop_shape,
+                                        resize_shape=resize_shape) for sample_index in index_array)
         else:
             raise ValueError('Unknown data set type: {}'.format(self.labeled_data_set.data_set_type))
 
         X, Y, W = zip(*data)
 
-        return list(X), list(Y), list(W)
+        return X, Y, W
 
     def get_labeled_sample_minc_2500(self, step_index, sample_index, resize_shape):
         minc_sample = self.labeled_data_set.samples[sample_index]
         img_file = self.labeled_data_set.photo_image_set.get_image_file_by_file_name(minc_sample.file_name)
-        np_image = img_to_array(img_file.get_image(self.num_color_channels))
 
         if img_file is None:
             raise ValueError('Could not find image from ImageSet with file name: {}'.format(minc_sample.file_name))
 
+        img = img_file.get_image(self.num_color_channels)
+
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
-            images, _ = self._apply_data_augmentation_to_images(images=[np_image],
-                                                                cvals=[self.photo_cval],
-                                                                interpolations=[ImageInterpolation.BICUBIC])
+            images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
+                                                                    cvals=[self.photo_cval],
+                                                                    random_seed=self.random_seed+step_index,
+                                                                    interpolations=[ImageInterpolation.BICUBIC])
 
-            # Unpack the photo
-            np_image, = images
+            img, = images
 
         # Make sure the image dimensions satisfy the div2_constraint
-        np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
+        img = self._fit_image_to_div2_constraint(np_image=img, cval=self.photo_cval, interp='bicubic')
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -1874,50 +1985,60 @@ class ClassificationDataGenerator(DataGenerator):
         # Construct weight vector
         w = self.class_weights
 
-        return np_image, y, w
+        return img, y, w
 
     def get_labeled_sample_minc(self, step_index, sample_index, crop_shape, resize_shape):
         minc_sample = self.labeled_data_set.samples[sample_index]
         img_file = self.labeled_data_set.photo_image_set.get_image_file_by_file_name(minc_sample.file_name)
-        np_image = img_to_array(img_file.get_image(self.num_color_channels))
 
         if img_file is None:
             raise ValueError('Could not find image from ImageSet with file name: {}'.format(minc_sample.file_name))
+
+        img = img_file.get_image(self.num_color_channels)
 
         if crop_shape is None:
             raise ValueError('MINC data set images cannot be used without setting a crop shape')
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
 
-        img_height, img_width = np_image.shape[0], np_image.shape[1]
-        crop_height, crop_width = crop_shape[0], crop_shape[1]
-        crop_center_y, crop_center_x = minc_sample.y, minc_sample.x
+        img_height = img.height
+        img_width = img.width
+        crop_height = crop_shape[0]
+        crop_width = crop_shape[1]
+        crop_center_y = minc_sample.y
+        crop_center_x = minc_sample.x
+
+        if settings.DEBUG:
+            img = image_utils.pil_draw_square(img, center_x=crop_center_x, center_y=crop_center_y, size=6, color=(255, 0, 0))
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
-            np_image_orig = np.array(np_image, copy=True)
-            images, transform = self._apply_data_augmentation_to_images(images=[np_image],
-                                                                        cvals=[self.photo_cval],
-                                                                        interpolations=[ImageInterpolation.BICUBIC],
-                                                                        transform_origin=np.array([crop_center_y, crop_center_x]))
+            img_orig = img.copy()
+            images, transform = self._pil_apply_data_augmentation_to_images(images=[img],
+                                                                            cvals=[self.photo_cval],
+                                                                            random_seed=self.random_seed+step_index,
+                                                                            interpolations=[ImageInterpolation.BICUBIC],
+                                                                            transform_origin=np.array([crop_center_y, crop_center_x]))
 
-            # Unpack the photo
-            np_image, = images
+            img, = images
 
             crop_center_new = transform.transform_normalized_coordinates(np.array([crop_center_x, crop_center_y]))
             crop_center_x_new, crop_center_y_new = crop_center_new[0], crop_center_new[1]
 
             # If the center has gone out of bounds abandon the augmentation - otherwise, update the crop center values
             if (not (0.0 < crop_center_y_new < 1.0)) or (not (0.0 < crop_center_x_new < 1.0)):
-                np_image = np_image_orig
+                # Destroy the augmented version and revert back to the copy of the original
+                del img
+
+                img = img_orig
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
 
                 # Destroy the backup image
-                del np_image_orig
+                del img_orig
 
         # Crop the image with the specified crop center. Regions going out of bounds are padded with a
         # constant value.
@@ -1947,16 +2068,16 @@ class ClassificationDataGenerator(DataGenerator):
         if crop_size_y != crop_height or x_1 - x_0 != crop_width:
             raise ValueError('Mismatch in crop sizes in sample: {} with size: {}. Original center: {}, used center: {}, used crop coordinates: ({}, {}). Expected size: {}, got: {}.'.format(
                 minc_sample.file_name,
-                np_image.shape,
+                img.size,
                 (minc_sample.x, minc_sample.y),
                 (crop_center_x, crop_center_y),
                 (x_0, y_0),
                 (x_1, y_1),
                 crop_shape,
-                (crop_size_y, crop_size_x)))
+                (crop_size_x, crop_size_y)))
 
-        np_image = image_utils.np_crop_image_with_fill(np_image, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
-        np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
+        img = image_utils.pil_crop_image_with_fill(img, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp='bicubic')
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -1966,51 +2087,56 @@ class ClassificationDataGenerator(DataGenerator):
         # Construct class weight vector
         w = self.class_weights
 
-        return np_image, y, w
+        return img, y, w
 
     def get_unlabeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
         if not self.using_unlabeled_data:
             return [], [], []
 
         # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        unlabeled_data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+        data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
             (delayed(pickle_method)
-             (self, 'get_unlabeled_sample', step_index=step_index, sample_index=sample_index, crop_shape=crop_shape, resize_shape=resize_shape) for sample_index in index_array)
+             (self,
+              'get_unlabeled_sample',
+              step_index=step_index,
+              sample_index=sample_index,
+              crop_shape=crop_shape,
+              resize_shape=resize_shape) for sample_index in index_array)
 
-        X_unlabeled, Y_unlabeled, W_unlabeled = zip(*unlabeled_data)
+        X, Y, W = zip(*data)
 
-        return list(X_unlabeled), list(Y_unlabeled), list(W_unlabeled)
+        return X, Y, W
 
     def get_unlabeled_sample(self, step_index, sample_index, crop_shape, resize_shape):
         img_file = self.unlabeled_data_set.get_index(sample_index)
-        np_image = img_to_array(img_file.get_image(self.num_color_channels))
+        img = img_file.get_image(self.num_color_channels)
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            np_image = self._resize_image(np_image, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic')
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
-        if crop_shape is not None and (np_image.shape[0] < crop_shape[0] or np_image.shape[1] < crop_shape[1]):
+        if crop_shape is not None and (img.height < crop_shape[0] or img.width < crop_shape[1]):
             # Image dimensions must be at minimum the same as the crop dimension
             # on each axis. The photo needs to be filled with the photo_cval
-            min_img_shape = (max(crop_shape[0], np_image.shape[0]), max(crop_shape[1], np_image.shape[1]))
-            np_image = image_utils.np_pad_image_to_shape(np_image, min_img_shape, self.photo_cval)
+            min_img_shape = (max(crop_shape[0], img.height), max(crop_shape[1], img.width))
+            img = image_utils.pil_pad_image_to_shape(img, min_img_shape, self.photo_cval)
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
-            images, _ = self._apply_data_augmentation_to_images(images=[np_image],
-                                                                cvals=[self.photo_cval],
-                                                                interpolations=[ImageInterpolation.BICUBIC])
-            # Unpack the photo
-            np_image, = images
+            images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
+                                                                    cvals=[self.photo_cval],
+                                                                    random_seed=self.random_seed+step_index,
+                                                                    interpolations=[ImageInterpolation.BICUBIC])
+            img, = images
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
-            x1y1, x2y2 = image_utils.np_get_random_crop_area(np_image, crop_shape[1], crop_shape[0])
-            np_image = image_utils.np_crop_image(np_image, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
+            x1y1, x2y2 = image_utils.pil_get_random_crop_area(img, crop_shape[1], crop_shape[0])
+            img = image_utils.pil_crop_image(img, x1y1[0], x1y1[1], x2y2[0], x2y2[1])
 
-        np_image = self._fit_image_to_div2_constraint(np_image=np_image, cval=self.photo_cval, interp='bicubic')
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp='bicubic')
 
         # Create a dummy label vector (one-hot) all zeros
         y = self.dummy_label_vector
@@ -2018,4 +2144,4 @@ class ClassificationDataGenerator(DataGenerator):
         # Construct class weight vector
         w = self.class_weights
 
-        return np_image, y, w
+        return img, y, w
