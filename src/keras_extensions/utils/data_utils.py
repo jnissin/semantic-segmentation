@@ -8,7 +8,6 @@ import threading
 import time
 import datetime
 import os
-import traceback
 
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
@@ -22,7 +21,7 @@ except ImportError:
     import Queue as queue
 
 from src.logger import Logger
-
+from src.utils import multiprocessing_utils
 
 class Sequence(object):
     @abstractmethod
@@ -66,7 +65,9 @@ _UUID_COUNTER = 0
 def _initialize_globals(uuid):
     """Initialize the inner dictionary to manage processes."""
     global _SHARED_DICTS, _MANAGERS
-    _MANAGERS[uuid] = multiprocessing.Manager()
+
+    cached_manager = multiprocessing_utils.get_cached_multiprocessing_manager()
+    _MANAGERS[uuid] = cached_manager if cached_manager is not None else multiprocessing.Manager()
     _SHARED_DICTS[uuid] = _MANAGERS[uuid].dict()
 
 
@@ -221,7 +222,8 @@ class OrderedEnqueuer(SequenceEnqueuer):
         """
         if self.use_multiprocessing:
             _initialize_globals(self.uuid)
-            self.executor = multiprocessing.Pool(workers, _process_init, (self.uuid,))
+            cached_pool = multiprocessing_utils.get_cached_multiprocessing_pool(workers)
+            self.executor = cached_pool if cached_pool is not None else multiprocessing.Pool(workers, _process_init, (self.uuid,))
         else:
             self.executor = ThreadPool(workers)
 

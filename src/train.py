@@ -7,8 +7,6 @@ import multiprocessing
 import os
 import resource
 
-from trainers import SegmentationTrainer, ClassificationTrainer, TrainerBase
-
 import settings
 
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = multiprocessing.Value('i', 0)
@@ -101,12 +99,23 @@ def main():
         soft, hard = resource.getrlimit(rsrc)
         print 'New memory limits: soft: {}, hard: {}'.format(soft, hard)
 
+    if settings.USE_MULTIPROCESSING:
+        from utils import multiprocessing_utils
+        print 'Initializing multiprocessing Pool cache'
+        multiprocessing_utils.initialize_multiprocessing_pool_cache()
+        print 'Initializing multiprocessing Manager cache'
+        multiprocessing_utils.initialize_multiprocessing_manager_cache()
+
     if trainer_super_type == 'segmentation':
+        from trainers import SegmentationTrainer, TrainerBase
+
         trainer = SegmentationTrainer(trainer_type=trainer_type,
                                       model_name=model_name,
                                       model_folder_name=model_folder_name,
                                       config_file_path=trainer_config_file_path)
     elif trainer_super_type == 'classification':
+        from trainers import ClassificationTrainer, TrainerBase
+
         trainer = ClassificationTrainer(trainer_type=trainer_type,
                                         model_name=model_name,
                                         model_folder_name=model_folder_name,
