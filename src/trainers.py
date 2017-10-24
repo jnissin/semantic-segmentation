@@ -426,6 +426,26 @@ class TrainerBase:
         return int(self._get_config_value('num_epochs')) if not settings.PROFILE else settings.PROFILE_NUM_EPOCHS
 
     @property
+    def num_training_data_generation_workers(self):
+        # type: () -> int
+        return min(settings.MAX_NUMBER_OF_JOBS, settings.TRAINING_DATA_GENERATOR_WORKERS)
+
+    @property
+    def num_validation_data_generation_workers(self):
+        # type: () -> int
+        return min(settings.MAX_NUMBER_OF_JOBS, settings.VALIDATION_DATA_GENERATOR_WORKERS)
+
+    @property
+    def training_data_max_queue_size(self):
+        # type: () -> int
+        return settings.TRAINING_DATA_MAX_QUEUE_SIZE
+
+    @property
+    def validation_data_max_queue_size(self):
+        # type: () -> int
+        return settings.VALIDATION_DATA_MAX_QUEUE_SIZE
+
+    @property
     def num_labeled_per_batch(self):
         # type: () -> int
         return int(self._get_config_value('num_labeled_per_batch'))
@@ -1116,6 +1136,13 @@ class MeanTeacherTrainerBase(TrainerBase):
         return self._mean_teacher_method_config
 
     @property
+    def teacher_validation_steps_per_epoch(self):
+        # type: () -> int
+        if self.teacher_validation_data_iterator is None:
+            raise ValueError('Teacher validation data iterator has not been initialized')
+        return self.teacher_validation_data_iterator.num_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH
+
+    @property
     def ema_smoothing_coefficient_function(self):
         if self.using_mean_teacher_method and self._ema_smoothing_coefficient_function is None:
             ema_coefficient_schedule_function = self.mean_teacher_method_config['ema_smoothing_coefficient_function']
@@ -1251,7 +1278,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             num_weights = len(t_weights)
             s_time = time.time()
 
-            for i in range(0, num_weights):
+            for i in xrange(0, num_weights):
                 t_weights[i] = a * t_weights[i] + ((1.0 - a) * s_weights[i])
 
             self.teacher_model.set_weights(t_weights)
@@ -1284,14 +1311,13 @@ class MeanTeacherTrainerBase(TrainerBase):
 
             if self.teacher_validation_data_generator is not None and self.teacher_validation_data_iterator is not None:
                 # Evaluate the mean teacher on the validation data
-                validation_steps_per_epoch = self.teacher_validation_data_iterator.num_steps_per_epoch
-
                 val_outs = self.teacher_model.evaluate_generator(
                     generator=self.teacher_validation_data_iterator,
-                    steps=validation_steps_per_epoch if not settings.PROFILE else settings.PROFILE_STEPS_PER_EPOCH,
-                    workers=max(dataset_utils.get_number_of_parallel_jobs()-1, 1),
+                    steps=self.teacher_validation_steps_per_epoch,
+                    workers=self.num_validation_data_generation_workers,
                     use_multiprocessing=True,
-                    validation=True)
+                    validation=True,
+                    max_queue_size=self.validation_data_max_queue_size)
 
                 # Parse all validation metrics to a single string
                 metrics_names = self.teacher_model.metrics_names
@@ -1833,8 +1859,6 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         assert isinstance(self.model, ExtendedModel)
 
         # Labeled data set size determines the epochs
-        num_workers = max(dataset_utils.get_number_of_parallel_jobs()-1, 1)
-
         if self.using_unlabeled_training_data:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
                             .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
@@ -1845,7 +1869,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
                         .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, self.training_steps_per_epoch, self.validation_steps_per_epoch))
 
-        self.logger.log('Num workers: {}'.format(num_workers))
+        self.logger.log('Num workers: {}, max queue size: {}'.format(self.num_training_data_generation_workers, self.training_data_max_queue_size))
 
         # Get a list of callbacks
         callbacks = self._get_training_callbacks()
@@ -1863,7 +1887,10 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             trainer=self,
             callbacks=callbacks,
             use_multiprocessing=True,
-            workers=num_workers)
+            workers=self.num_training_data_generation_workers,
+            validation_workers=self.num_validation_data_generation_workers,
+            max_queue_size=self.training_data_max_queue_size,
+            validation_max_queue_size=self.validation_data_max_queue_size)
 
         return history
 
@@ -2259,8 +2286,6 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         assert isinstance(self.model, ExtendedModel)
 
         # Labeled data set size determines the epochs
-        num_workers = dataset_utils.get_number_of_parallel_jobs()-1
-
         if self.using_unlabeled_training_data:
             self.logger.log('Labeled data set size: {}, num labeled per batch: {}, unlabeled data set size: {}, num unlabeled per batch: {}'
                             .format(self.training_set_labeled.size, self.num_labeled_per_batch, self.training_set_unlabeled.size, self.num_unlabeled_per_batch))
@@ -2270,7 +2295,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
                         .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, self.training_steps_per_epoch, self.validation_steps_per_epoch))
 
-        self.logger.log('Num workers: {}'.format(num_workers))
+        self.logger.log('Num workers: {}, max queue size: {}'.format(self.num_training_data_generation_workers, self.training_data_max_queue_size))
 
         # Get a list of callbacks
         callbacks = self._get_training_callbacks()
@@ -2288,7 +2313,10 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             trainer=self,
             callbacks=callbacks,
             use_multiprocessing=True,
-            workers=num_workers)
+            workers=self.num_training_data_generation_workers,
+            validation_workers=self.num_validation_data_generation_workers,
+            max_queue_size=self.training_data_max_queue_size,
+            validation_max_queue_size=self.validation_data_max_queue_size)
 
         return history
 

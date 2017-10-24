@@ -349,14 +349,6 @@ class DataSet(object):
         raise NotImplementedError('size is not implemented in abstract DataSet')
 
     @abstractmethod
-    def sort(self):
-        raise NotImplementedError('sort is not implemented in abstract DataSet')
-
-    @abstractmethod
-    def shuffle(self):
-        raise NotImplementedError('shuffle is not implemented in abstract DataSet')
-
-    @abstractmethod
     def get_index(self, idx):
         raise NotImplementedError('get_index is not implemented in abstract DataSet')
 
@@ -420,33 +412,6 @@ class LabeledImageDataSet(DataSet):
     @property
     def size(self):
         return self._photo_image_set.size
-
-    def sort(self):
-        self._photo_image_set.sort()
-        self._mask_image_set.sort()
-
-    def shuffle(self):
-        # Make sure the image sets are ordered in the same way
-        self._photo_image_set.sort()
-        self._mask_image_set.sort()
-
-        # Shuffle two lists in the same way
-        photos = self._photo_image_set.image_files
-        masks = self._mask_image_set.image_files
-
-        shuffled = zip(photos, masks)
-        random.shuffle(shuffled)
-        photos, masks = zip(*shuffled)
-        photos = list(photos)
-        masks = list(masks)
-
-        if len(photos) != self._photo_image_set.size or len(masks) != self._mask_image_set.size:
-            raise ValueError('Sizes have changed during shuffle, photos: {} vs {}, masks: {} vs {}'
-                             .format(len(photos), self._photo_image_set.size, len(masks), self._mask_image_set.size))
-
-        # Assign back
-        self._photo_image_set.image_files = list(photos)
-        self._mask_image_set.image_files = list(masks)
 
     def get_index(self, idx):
         return self._photo_image_set.image_files[idx], self._mask_image_set.image_files[idx]
@@ -541,6 +506,7 @@ class UnlabeledImageDataSet(DataSet):
 
         super(UnlabeledImageDataSet, self).__init__(name=name)
         self._photo_image_set = ImageSet(self.name + '_photos', path_to_photo_archive, photo_file_list)
+        self._photo_image_set.sort()
 
     @property
     def photo_image_set(self):
@@ -549,12 +515,6 @@ class UnlabeledImageDataSet(DataSet):
     @property
     def size(self):
         return self._photo_image_set.size
-
-    def sort(self):
-        self._photo_image_set.sort()
-
-    def shuffle(self):
-        random.shuffle(self._photo_image_set.image_files)
 
     def get_index(self, idx):
         return self._photo_image_set.image_files[idx]

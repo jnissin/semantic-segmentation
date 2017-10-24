@@ -46,7 +46,7 @@ class BatchIndexBuffer(object):
                  shuffle,
                  seed,
                  initial_epoch,
-                 num_queued_epochs=4):
+                 num_queued_epochs=2):
         # type: (int, int, bool, int, int, int) -> None
 
         """
@@ -631,7 +631,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
     A class for iterating through MaterialSample data set as the labeled data set.
     """
 
-    _NUM_QUEUED_EPOCHS = 4
+    _NUM_QUEUED_EPOCHS = 2
     _SHARED_MATERIAL_CATEGORY_PIXELS_SEEN = {}
     _SHARED_MATERIAL_CATEGORY_NEXT_SAMPLE_INDICES = {}
 

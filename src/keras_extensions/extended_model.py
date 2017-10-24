@@ -104,7 +104,9 @@ class ExtendedModel(Model):
                       validation_steps=None,
                       class_weight=None,
                       max_queue_size=10,
+                      validation_max_queue_size=10,
                       workers=1,
+                      validation_workers=1,
                       use_multiprocessing=False,
                       shuffle=True,
                       initial_epoch=0,
@@ -148,8 +150,11 @@ class ExtendedModel(Model):
             class_weight: dictionary mapping class indices to a weight
                 for the class.
             max_queue_size: maximum size for the generator queue
+            validation_max_queue_size: maximum size for the generator queue for validation
             workers: maximum number of processes to spin up
                 when using process based threading
+            validation_workers: maximum number of processes to spin up
+                when running validation
             use_multiprocessing: if True, use process based threading.
                 Note that because
                 this implementation relies on multiprocessing,
@@ -363,8 +368,8 @@ class ExtendedModel(Model):
                             val_outs = self.evaluate_generator(
                                 validation_data,
                                 validation_steps,
-                                max_queue_size=max_queue_size,
-                                workers=workers,
+                                max_queue_size=validation_max_queue_size,
+                                workers=validation_workers,
                                 trainer=trainer,
                                 use_multiprocessing=use_multiprocessing,
                                 validation=True)
