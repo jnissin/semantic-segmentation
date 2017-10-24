@@ -270,6 +270,7 @@ class ImageTransform:
 
         return p
 
+
 ##############################################
 # PIL IMAGE FUNCTIONS
 ##############################################
@@ -441,6 +442,23 @@ def pil_mode_from_cval(cval):
         return 'RGBA'
     else:
         raise ValueError('Could not determine mode from cval: {}'.format(cval))
+
+
+def pil_create_transform(offset, translate, theta, scale):
+    # type: (tuple[float, float], tuple[float, float], float, float) -> SimilarityTransform
+
+    # Prepare transforms to shift the image origin to the image center
+    tf_shift = SimilarityTransform(translation=[-offset[0], -offset[1]])
+    tf_shift_inv = SimilarityTransform(translation=[offset[0], offset[1]])
+
+    # Build the translation, rotation and scale transforms
+    tf_translate = SimilarityTransform(translation=[translate[0], translate[1]])
+    tf_rotate = SimilarityTransform(rotation=theta)
+    tf_scale = SimilarityTransform(scale=scale)
+
+    # Build the final transform: (SHIFT)*S*R*T*(SHIFT_INV)
+    tf_final = (tf_shift + (tf_scale + tf_rotate + tf_translate) + tf_shift_inv)
+    return tf_final
 
 
 def pil_transform_image(img, transform, resample, cval=None):

@@ -754,18 +754,17 @@ class DataGenerator(object):
 
         return images, transform
 
-    def _get_mean_teacher_data_from_image_batch(self, X):
-        # type: (np.ndarray) -> np.ndarray
+    def _get_mean_teacher_data_from_image_batch(self, X, dtype=np.float32):
+        # type: (list[PImage.Image], dtype) -> np.ndarray
 
         if not self.generate_mean_teacher_data:
             raise ValueError('Request to get mean teacher data when generate_mean_teacher_data is False')
 
-        # If not applying any noise - return the same images do not copy
+        # If not applying any noise - return the same images
         if not self.data_augmentation_params.using_mean_teacher_noise:
-            return X
-
-        # Copy the image batch
-        teacher_img_batch = np.array(X, copy=True)
+            X_teacher = [img_to_array(img) for img in X]
+            X_teacher = np.asarray(X_teacher, dtype=dtype)
+            return X_teacher
 
         # Apply noise transformations individually to each image
         # * Horizontal flips
@@ -774,82 +773,65 @@ class DataGenerator(object):
         # * Intensity shifts
         # * Gaussian noise
         noise_params = self.data_augmentation_params.mean_teacher_noise_params
-        batch_size = teacher_img_batch.shape[0]
 
-        Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')(
-            delayed(pickle_method)(self, '_apply_mean_teacher_noise_to_image', teacher_img_batch=teacher_img_batch, i=i) for i in range(batch_size))
+        X_teacher = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')(
+            delayed(pickle_method)(self, '_apply_mean_teacher_noise_to_image', img=img) for img in X)
+
+        # Transform from PIL to Numpy
+        X_teacher = [img_to_array(img) for img in X_teacher]
+        X_teacher = np.asarray(X_teacher, dtype=dtype)
+
+        # Normalize
+        X_teacher = self._normalize_image_batch(X_teacher)
 
         # Apply gaussian noise to the whole batch at once
         gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
 
         if gaussian_noise_stddev is not None:
-            teacher_img_batch += np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=teacher_img_batch.shape)
+            X_teacher += np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=X_teacher.shape)
 
-        return teacher_img_batch
+        return X_teacher
 
-    def _apply_mean_teacher_noise_to_image(self, teacher_img_batch, i):
+    def _apply_mean_teacher_noise_to_image(self, img):
+        # type: (PImage.Image) -> PImage.Image
+
         noise_params = self.data_augmentation_params.mean_teacher_noise_params
-
-        # Figure out the correct axes according to image data format
-        if self.img_data_format == 'channels_first':
-            img_channel_axis = 0
-            img_row_axis = 1
-            img_col_axis = 2
-        elif self.img_data_format == 'channels_last':
-            img_row_axis = 0
-            img_col_axis = 1
-            img_channel_axis = 2
-        else:
-            raise ValueError('Unknown image data format: {}'.format(self.img_data_format))
+        teacher_img = img.copy()
 
         # Apply brightness shift
-        brightness_shift_range = noise_params.get('brightness_shift_range')
+        translate_range = noise_params.get('translate_range')
+        rotation_range = noise_params.get('rotation_range')
+        horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
+        vertical_flip_probability = noise_params.get('vertical_flip_probability')
+        channel_shift_range = noise_params.get('channel_shift_range')
 
-        if brightness_shift_range is not None:
-            brightness_shift = np.random.uniform(-brightness_shift_range, brightness_shift_range)
-            teacher_img_batch[i] += brightness_shift
+        # Apply channel shifts
+        if channel_shift_range is not None:
+            intensity = int(round(np.random.uniform(-channel_shift_range, channel_shift_range) * 255.0))
+            teacher_img = image_utils.pil_intensity_shift(teacher_img, intensity=intensity)
 
         # Apply horizontal flips
-        horizontal_flip_probability = noise_params.get('horizontal_flip_probability')
-
         if horizontal_flip_probability is not None:
             if np.random.random() < horizontal_flip_probability:
-                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_col_axis, 0)
-                teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
-                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_col_axis)
+                teacher_img = image_utils.pil_apply_flip(teacher_img, method=PImage.FLIP_LEFT_RIGHT)
 
         # Apply vertical flips
-        vertical_flip_probability = noise_params.get('vertical_flip_probability')
-
         if vertical_flip_probability is not None:
             if np.random.random() < vertical_flip_probability:
-                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(img_row_axis, 0)
-                teacher_img_batch[i] = teacher_img_batch[i][::-1, ...]
-                teacher_img_batch[i] = teacher_img_batch[i].swapaxes(0, img_row_axis)
+                teacher_img = image_utils.pil_apply_flip(teacher_img, method=PImage.FLIP_TOP_BOTTOM)
 
-        # Apply translations
-        shift_range = noise_params.get('shift_range')
+        # Spatial transforms
+        offset = (teacher_img.width * 0.5, teacher_img.height * 0.5)
+        translate_x = np.random.uniform(-translate_range, translate_range) * teacher_img.width if translate_range is not None else 0.0
+        translate_y = np.random.uniform(-translate_range, translate_range) * teacher_img.height if translate_range is not None else 0.0
+        theta = np.deg2rad(np.random.uniform(-rotation_range, rotation_range)) if rotation_range is not None else 0.0
+        scale = 1.0
 
-        if shift_range is not None:
+        transform = image_utils.pil_create_transform(offset=offset, translate=(translate_x, translate_y), theta=theta, scale=scale)
+        teacher_img = image_utils.pil_transform_image(teacher_img, transform=transform, resample=image_utils.ImageInterpolation.BICUBIC.value, cval=self.photo_cval)
 
-            from scipy.ndimage.interpolation import shift
+        return teacher_img
 
-            if len(shift_range) != 2:
-                raise ValueError('Shift range should be a list of two values (x, y), got: {}'.format(shift_range))
-
-            x_shift = int(float(shift_range[0] * teacher_img_batch[i].shape[img_col_axis]) * np.random.random())
-            y_shift = int(float(shift_range[1] * teacher_img_batch[i].shape[img_row_axis]) * np.random.random())
-            shift_val = [y_shift, x_shift, 0]
-            temp_cval = -900.0
-            shift(input=teacher_img_batch[i], shift=shift_val, output=teacher_img_batch[i], order=3, mode='constant', cval=temp_cval)
-
-            # Replace the invalid constant values from the output
-            if img_channel_axis == 2:
-                cval_mask = teacher_img_batch[i][:, :, 0] == temp_cval
-                teacher_img_batch[i][cval_mask] = self.per_channel_mean
-            else:
-                cval_mask = teacher_img_batch[i][0, :, :] == temp_cval
-                teacher_img_batch[i][cval_mask] = self.per_channel_mean
 
 #######################################
 # SEGMENTATION DATA GENERATOR
@@ -1851,26 +1833,27 @@ class ClassificationDataGenerator(DataGenerator):
         X = X + X_unlabeled
         Y = Y + Y_unlabeled
         W = W + W_unlabeled
-
-        X = [img_to_array(img) for img in X]
-        X = np.asarray(X, dtype=np.float32)
-        Y = np.asarray(Y, dtype=np.float32)
-        W = np.asarray(W, dtype=np.float32)
         self.logger.debug_log('Raw data generation took: {}s'.format(time.time() - stime))
 
-        num_unlabeled_samples_in_batch = len(X_unlabeled)
-        num_samples_in_batch = len(X)
-
-        # Normalize the photo batch data: color values to [-1, 1], subtract per pixel mean and divide by stddev
-        X = self._normalize_image_batch(X)
         X_teacher = None
 
         # Generate possible mean teacher data
         # Note: only applied to inputs ground truth must be the same
         if self.generate_mean_teacher_data:
             stime_t_data = time.time()
-            X_teacher = self._get_mean_teacher_data_from_image_batch(X)
+            X_teacher = self._get_mean_teacher_data_from_image_batch(X, dtype=np.float32)
             self.logger.debug_log('Mean Teacher data generation took: {}s'.format(time.time()-stime_t_data))
+
+        X = [img_to_array(img) for img in X]
+        X = np.asarray(X, dtype=np.float32)
+        Y = np.asarray(Y, dtype=np.float32)
+        W = np.asarray(W, dtype=np.float32)
+
+        num_unlabeled_samples_in_batch = len(X_unlabeled)
+        num_samples_in_batch = len(X)
+
+        # Normalize the photo batch data: color values to [-1, 1], subtract per pixel mean and divide by stddev
+        X = self._normalize_image_batch(X)
 
         # Apply possible gaussian noise
         # Note: applied after generating mean teacher data so teacher can have unnoised data during generation

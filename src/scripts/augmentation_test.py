@@ -221,14 +221,10 @@ def main():
     theta = 0.9
     zoom = 1.5
 
-    x1 = 876
-    x2 = 400
-    y1 = 780
-    y2 = 400
-    coord = (x1, y1)
+    img = img.offset(100, 100)
+    img.show()
 
-    img.putpixel(coord, (255, 0, 0))
-
+    raw_input('Press any key: ')
 
     # Prepare transforms to shift the image origin to the image center
     tf_shift = SimilarityTransform(translation=[-shift_x, -shift_y])
@@ -242,10 +238,6 @@ def main():
     # Build the final transform: (SHIFT)*S*R*T*(SHIFT_INV)
     tf_final = (tf_shift + (tf_scale + tf_rotate + tf_translate) + tf_shift_inv)
     matrix = inv(tf_final.params)
-
-    tf_coord = skitransform.matrix_transform(np.array(coord), tf_final.params)
-
-    print 'Coord: {}, Tf coord: {}'.format(coord, tf_coord)
 
     # PIL transform
     # Parse the similarity transform
