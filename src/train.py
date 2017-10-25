@@ -9,6 +9,8 @@ import resource
 
 import settings
 
+from utils.multiprocessing_utils import MultiprocessingManager
+
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = multiprocessing.Value('i', 0)
 _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
 _MAIN_PROCESS_PID = multiprocessing.Value('i', -1)
@@ -100,11 +102,9 @@ def main():
         print 'New memory limits: soft: {}, hard: {}'.format(soft, hard)
 
     if settings.USE_MULTIPROCESSING:
-        from utils import multiprocessing_utils
-        print 'Initializing multiprocessing Pool cache'
-        multiprocessing_utils.initialize_multiprocessing_pool_cache()
-        print 'Initializing multiprocessing Manager cache'
-        multiprocessing_utils.initialize_multiprocessing_manager_cache()
+        print 'Instantiating MultiprocessingManager'
+        mp = MultiprocessingManager()
+        print 'MultiprocessingManager instantiated - currently hosting: {} clients'.format(mp.num_current_clients)
 
     if trainer_super_type == 'segmentation':
         from trainers import SegmentationTrainer, TrainerBase

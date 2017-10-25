@@ -21,7 +21,8 @@ except ImportError:
     import Queue as queue
 
 from src.logger import Logger
-from src.utils import multiprocessing_utils
+from src.utils.multiprocessing_utils import MultiprocessingManager
+
 
 class Sequence(object):
     @abstractmethod
@@ -57,25 +58,13 @@ class Sequence(object):
 
 # Global variables to be shared across processes
 _SHARED_SEQUENCES = {}
-_MANAGERS = {}
 _SHARED_DICTS = {}
-_UUID_COUNTER = 0
 
 
 def _initialize_globals(uuid):
     """Initialize the inner dictionary to manage processes."""
-    global _SHARED_DICTS, _MANAGERS
-
-    cached_manager = multiprocessing_utils.get_cached_multiprocessing_manager()
-    _MANAGERS[uuid] = cached_manager if cached_manager is not None else multiprocessing.Manager()
-    _SHARED_DICTS[uuid] = _MANAGERS[uuid].dict()
-
-
-def _get_next_uuid():
-    global _UUID_COUNTER
-    uuid = _UUID_COUNTER
-    _UUID_COUNTER += 1
-    return uuid
+    global _SHARED_DICTS
+    _SHARED_DICTS[uuid] = MultiprocessingManager.instance().get_shared_dict_for_uuid(uuid)
 
 
 def get_index(uuid, e_idx, b_idx):
@@ -201,7 +190,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self._logger = None
 
         # Assign a unique id
-        self.uuid = _get_next_uuid()
+        self.uuid = MultiprocessingManager.instance().get_new_client_uuid()
 
     @property
     def logger(self):
@@ -222,8 +211,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         """
         if self.use_multiprocessing:
             _initialize_globals(self.uuid)
-            cached_pool = multiprocessing_utils.get_cached_multiprocessing_pool(workers)
-            self.executor = cached_pool if cached_pool is not None else multiprocessing.Pool(workers, _process_init, (self.uuid,))
+            self.executor = multiprocessing.Pool(workers, _process_init, (self.uuid,))
         else:
             self.executor = ThreadPool(workers)
 
@@ -322,15 +310,13 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.run_thread.join(timeout)
 
         # Clean up any resources shared by the processes
-        global _SHARED_DICTS, _SHARED_SEQUENCES, _MANAGERS
+        global _SHARED_DICTS, _SHARED_SEQUENCES
         _SHARED_SEQUENCES[self.uuid] = None
 
         if self.use_multiprocessing:
             if _SHARED_DICTS.get(self.uuid) is not None:
                 self.clear_shared_dict()
                 _SHARED_DICTS[self.uuid] = None
-
-            _MANAGERS[self.uuid] = None
 
     def clear_shared_dict(self):
         """

@@ -3,8 +3,6 @@
 import threading
 import multiprocessing
 
-from src import settings
-
 class ThreadsafeIter:
     """
     Takes an iterator/generator and makes it thread-safe by
@@ -34,97 +32,60 @@ def threadsafe(f):
     return g
 
 
-class MultiprocessingPool(object):
-    def __init__(self, num_workers):
-        # type: (int) -> None
+class Singleton(type):
 
-        self._num_workers = num_workers
-        self._pool = multiprocessing.Pool(num_workers)
-        self._used = False
+    _instances = {}
 
-    @property
-    def num_workers(self):
-        return self._num_workers
-
-    @property
-    def pool(self):
-        return self._pool
-
-    @property
-    def used(self):
-        return self._used
-
-    @used.setter
-    def used(self, val):
-        self._used = val
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
 
 
 class MultiprocessingManager(object):
+    __metaclass__ = Singleton
+
+    _MANAGER = None
+    _INSTANCE = None
+    _NEXT_CLIENT_UUID = None
+    _NUM_CURRENT_CLIENTS = None
+    _SHARED_DICTS = {}
+
     def __init__(self):
-        # type: () -> None
-        self._manager = multiprocessing.Manager()
-        self._used = False
+        MultiprocessingManager._MANAGER = multiprocessing.Manager()
+        MultiprocessingManager._NEXT_CLIENT_UUID = multiprocessing.Value('i', 0)
+        MultiprocessingManager._NUM_CURRENT_CLIENTS = multiprocessing.Value('i', 0)
+        MultiprocessingManager._INSTANCE = self
+
+    @staticmethod
+    def instance():
+        # type: () -> MultiprocessingManager
+        if MultiprocessingManager._INSTANCE is None:
+            MultiprocessingManager._INSTANCE = MultiprocessingManager()
+
+        return MultiprocessingManager._INSTANCE
+
+    @property
+    def num_current_clients(self):
+        # type: () -> int
+        return MultiprocessingManager._NUM_CURRENT_CLIENTS.value
 
     @property
     def manager(self):
-        return self._manager
+        # type: () -> multiprocessing.Manager
+        return MultiprocessingManager._MANAGER
 
-    @property
-    def used(self):
-        return self._used
+    def get_new_client_uuid(self):
+        # type: () -> int
+        uuid = MultiprocessingManager._NEXT_CLIENT_UUID.value
+        MultiprocessingManager._NEXT_CLIENT_UUID.value += 1
+        MultiprocessingManager._NUM_CURRENT_CLIENTS.value += 1
+        return uuid
 
-    @used.setter
-    def used(self, val):
-        self._used = val
+    def get_shared_dict_for_uuid(self, client_uuid):
+        # type: () -> dict
 
+        if client_uuid not in MultiprocessingManager._SHARED_DICTS:
+            MultiprocessingManager._SHARED_DICTS[client_uuid] = MultiprocessingManager._MANAGER.dict()
 
-_CACHED_POOL_SIZES = [settings.TRAINING_DATA_GENERATOR_WORKERS, settings.VALIDATION_DATA_GENERATOR_WORKERS, settings.VALIDATION_DATA_GENERATOR_WORKERS]
-_POOL_CACHE = []
-_MANAGER_CACHE = []
-
-
-def initialize_multiprocessing_pool_cache():
-    if settings.USE_MULTIPROCESSING:
-        global _WORKERS_IN_POOL
-        global _USED_POOLS
-        global _POOL_CACHE
-
-        for val in _CACHED_POOL_SIZES:
-            _POOL_CACHE.append(MultiprocessingPool(num_workers=val))
-
-
-def get_cached_multiprocessing_pool(num_workers):
-    # type: (int) -> multiprocessing.Pool
-
-    if settings.USE_MULTIPROCESSING:
-        global _POOL_CACHE
-
-        for pool in _POOL_CACHE:
-            if not pool.used and pool.num_workers == num_workers:
-                pool.used = True
-                return pool.pool
-
-    # No cached Pools available or not using multiprocessing
-    return None
-
-
-def initialize_multiprocessing_manager_cache():
-    if settings.USE_MULTIPROCESSING:
-        global _CACHED_POOL_SIZES
-        global _MANAGER_CACHE
-
-        for _ in _CACHED_POOL_SIZES:
-            _MANAGER_CACHE.append(MultiprocessingManager())
-
-
-def get_cached_multiprocessing_manager():
-    if settings.USE_MULTIPROCESSING:
-        global _MANAGER_CACHE
-
-        for manager in _MANAGER_CACHE:
-            if not manager.used:
-                manager.used = True
-                return manager.manager
-
-    # No cached Managers available or not using multiprocessing
-    return None
+        return MultiprocessingManager._SHARED_DICTS[client_uuid]
