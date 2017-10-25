@@ -21,7 +21,8 @@ except ImportError:
     import Queue as queue
 
 from src.logger import Logger
-from src.utils import multiprocessing_utils
+from src.utils.multiprocessing_utils import MultiprocessingManager
+
 
 class Sequence(object):
     @abstractmethod
@@ -56,26 +57,16 @@ class Sequence(object):
 
 
 # Global variables to be shared across processes
-_SHARED_SEQUENCES = {}
-_MANAGERS = {}
-_SHARED_DICTS = {}
-_UUID_COUNTER = 0
+# _SHARED_SEQUENCES = {}
 
 
-def _initialize_globals(uuid):
-    """Initialize the inner dictionary to manage processes."""
-    global _SHARED_DICTS, _MANAGERS
-
-    cached_manager = multiprocessing_utils.get_cached_multiprocessing_manager()
-    _MANAGERS[uuid] = cached_manager if cached_manager is not None else multiprocessing.Manager()
-    _SHARED_DICTS[uuid] = _MANAGERS[uuid].dict()
-
-
-def _get_next_uuid():
-    global _UUID_COUNTER
-    uuid = _UUID_COUNTER
-    _UUID_COUNTER += 1
-    return uuid
+# def _get_shared_sequences():
+#     global _SHARED_SEQUENCES
+#
+#     if _SHARED_SEQUENCES is None:
+#         _SHARED_SEQUENCES = {}
+#
+#     return _SHARED_SEQUENCES
 
 
 def get_index(uuid, e_idx, b_idx):
@@ -91,19 +82,27 @@ def get_index(uuid, e_idx, b_idx):
     # Returns
         The value at index `i`.
     """
-    global _SHARED_SEQUENCES
-    return _SHARED_SEQUENCES[uuid].get_batch(e_idx=e_idx, b_idx=b_idx)
+    seq = MultiprocessingManager.instance().get_shared_object_for_client(uuid)
+    return seq.get_batch(e_idx=e_idx, b_idx=b_idx)
 
 
-def _update_sequence(uuid, seq):
-    """Update current process with a new Sequence.
-    # Arguments
-        seq: Sequence object
-    """
-    global _SHARED_SEQUENCES, _SHARED_DICTS
-    if not multiprocessing.current_process().pid in _SHARED_DICTS[uuid]:
-        _SHARED_SEQUENCES[uuid] = seq
-        _SHARED_DICTS[uuid][multiprocessing.current_process().pid] = 0
+# def _update_sequence(uuid, seq):
+#     """Update current process with a new Sequence.
+#     # Arguments
+#         seq: Sequence object
+#     """
+#     current_process_pid = multiprocessing.current_process().pid
+#     print('Current process pid: {}'.format(current_process_pid))
+#
+#     shared_dict = MultiprocessingManager.instance().get_shared_dict_for_client(uuid)
+#
+#     if current_process_pid not in shared_dict:
+#         shared_sequences = _get_shared_sequences()
+#         shared_sequences[uuid] = seq
+#         shared_dict[current_process_pid] = 0
+#
+#     print('Current process pid: {} - starting sleep'.format(current_process_pid))
+#     time.sleep(0.100)
 
 
 def _process_init(uuid):
@@ -201,7 +200,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self._logger = None
 
         # Assign a unique id
-        self.uuid = _get_next_uuid()
+        self.uuid = MultiprocessingManager.instance().get_next_client_uuid()
 
     @property
     def logger(self):
@@ -221,9 +220,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
                 (when full, workers could block on `put()`)
         """
         if self.use_multiprocessing:
-            _initialize_globals(self.uuid)
-            cached_pool = multiprocessing_utils.get_cached_multiprocessing_pool(workers)
-            self.executor = cached_pool if cached_pool is not None else multiprocessing.Pool(workers, _process_init, (self.uuid,))
+            self.executor = MultiprocessingManager.instance().get_process_pool_for_client(workers, self.uuid)
         else:
             self.executor = ThreadPool(workers)
 
@@ -282,23 +279,27 @@ class OrderedEnqueuer(SequenceEnqueuer):
 
     def _send_sequence(self):
         """Send current Sequence to all workers."""
-        global _SHARED_SEQUENCES, _SHARED_DICTS
 
-        _SHARED_SEQUENCES[self.uuid] = self.sequence  # For new processes that may spawn
+        #shared_sequences = _get_shared_sequences()
+        #shared_sequences[self.uuid] = self.sequence  # For new processes that may spawn
 
         if not self.use_multiprocessing:
             # Threads are from the same process so they already share the sequence.
             return
 
-        self.clear_shared_dict()
+        MultiprocessingManager.instance().set_shared_object_for_client(self.uuid, self.sequence)
+        #self._clear_shared_dict()
+        #workers_updated = len(MultiprocessingManager.instance().get_shared_dict_for_client(self.uuid))
 
-        while len(_SHARED_DICTS[self.uuid]) < self.workers and not self.stop_signal.is_set():
-            try:
-                # Ask the pool to update till everyone is updated.
-                self.executor.apply(_update_sequence, args=(self.uuid, self.sequence,))
-            except socket_error as e:
-                self.logger.warn('Failed to update sequence: {}'.format(e.strerror))
-                break
+        #while workers_updated < self.workers and not self.stop_signal.is_set():
+        #    try:
+        #        # Ask the pool to update till everyone is updated.
+        #        self.executor.apply(_update_sequence, args=(self.uuid, self.sequence,))
+        #    except socket_error as e:
+        #        self.logger.warn('Failed to update sequence: {}'.format(e.strerror))
+        #        break
+        #
+        #    workers_updated = len(MultiprocessingManager.instance().get_shared_dict_for_client(self.uuid))
 
         # We're done with the update
 
@@ -322,24 +323,21 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.run_thread.join(timeout)
 
         # Clean up any resources shared by the processes
-        global _SHARED_DICTS, _SHARED_SEQUENCES, _MANAGERS
-        _SHARED_SEQUENCES[self.uuid] = None
+        #shared_sequences = _get_shared_sequences()
+        #shared_sequences[self.uuid] = None
 
         if self.use_multiprocessing:
-            if _SHARED_DICTS.get(self.uuid) is not None:
-                self.clear_shared_dict()
-                _SHARED_DICTS[self.uuid] = None
+            MultiprocessingManager.instance().set_shared_object_for_client(self.uuid, None)
+            MultiprocessingManager.instance().release_client_process_pools(self.uuid)
 
-            _MANAGERS[self.uuid] = None
-
-    def clear_shared_dict(self):
+    def _clear_shared_dict(self):
         """
         Clears the shared dict with the uuid associated with this OrderedEnqueuer
         uuid.
         """
 
         try:
-            _SHARED_DICTS[self.uuid].clear()
+            MultiprocessingManager.instance().clear_shared_dict_for_client(self.uuid)
         except socket_error as e:
             self.logger.warn('Failed to clear _SHARED_DICTS: {}'.format(e.strerror))
 

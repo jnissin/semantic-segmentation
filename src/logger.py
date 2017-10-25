@@ -8,6 +8,7 @@ from enum import Enum
 
 from utils.image_utils import array_to_img
 from utils import general_utils
+
 import settings
 
 
@@ -64,6 +65,12 @@ class Logger(object):
     @staticmethod
     def instance():
         # type: () -> Logger
+
+        if Logger._instance is None:
+            print 'Logger has not been initialized!'
+            Logger._instance = Logger(log_file_path=None, stdout_only=True)
+            #raise ValueError('Logger has not been initialized')
+
         return Logger._instance
 
     @staticmethod
@@ -95,16 +102,16 @@ class Logger(object):
         message = Logger.format_message(message, log_level=log_level, use_timestamp=self.use_timestamp)
 
         # Log to file - make sure there is a newline
-        if not self.stdout_only:
-            # If log file is not open - open
-            if not Logger.log_file_is_open():
-                self.open_log()
-
-            with Logger._file_write_lock:
-                if not message.endswith('\n'):
-                    Logger._log_file.write(message + '\n')
-                else:
-                    Logger._log_file.write(message)
+        # if not self.stdout_only:
+        #     # If log file is not open - open
+        #     if not Logger.log_file_is_open():
+        #         self.open_log()
+        #
+        #     with Logger._file_write_lock:
+        #         if not message.endswith('\n'):
+        #             Logger._log_file.write(message + '\n')
+        #         else:
+        #             Logger._log_file.write(message)
 
         # Log to stdout - no newline needed
         if log_to_stdout or self.log_to_stdout_default or self.stdout_only:
@@ -136,10 +143,10 @@ class Logger(object):
         # Create and open the log file
         if not Logger.log_file_is_open():
             with Logger._file_write_lock:
-                if Logger._log_file_path:
-                        general_utils.create_path_if_not_existing(Logger._log_file_path)
-                        mode = 'a' if os.path.exists(Logger._log_file_path) else 'w'
-                        Logger._log_file = open(Logger._log_file_path, mode, Logger._buf_size)
+                if Logger._log_file_path is not None:
+                    general_utils.create_path_if_not_existing(Logger._log_file_path)
+                    mode = 'a' if os.path.exists(Logger._log_file_path) else 'w'
+                    Logger._log_file = open(Logger._log_file_path, mode, Logger._buf_size)
                 else:
                     raise ValueError('Invalid log file path, cannot log')
 

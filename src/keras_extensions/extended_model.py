@@ -8,6 +8,7 @@ except ImportError:
     import Queue as queue
 
 import warnings
+import traceback
 import numpy as np
 
 from keras.engine.training import Model
@@ -398,7 +399,10 @@ class ExtendedModel(Model):
                 epoch += 1
                 if callback_model.stop_training:
                     break
-
+        except Exception as e:
+            tb = traceback.format_exc()
+            self.logger.warn(tb)
+            raise e
         finally:
             if self.enqueuer is not None:
                 self.enqueuer.stop()

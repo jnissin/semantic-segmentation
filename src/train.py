@@ -101,10 +101,9 @@ def main():
 
     if settings.USE_MULTIPROCESSING:
         from utils import multiprocessing_utils
-        print 'Initializing multiprocessing Pool cache'
-        multiprocessing_utils.initialize_multiprocessing_pool_cache()
-        print 'Initializing multiprocessing Manager cache'
-        multiprocessing_utils.initialize_multiprocessing_manager_cache()
+        print 'Initializing Multiprocessing caches'
+        mp = multiprocessing_utils.MultiprocessingManager()
+        print 'MultiprocessingManager created'
 
     if trainer_super_type == 'segmentation':
         from trainers import SegmentationTrainer, TrainerBase
