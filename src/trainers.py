@@ -237,6 +237,17 @@ class TrainerBase:
         model_loss_weights = self._get_model_loss_weights()
         model_metrics = self._get_model_metrics()
 
+        # TODO: Remove test
+        if settings.USE_MULTIPROCESSING:
+            self.logger.log('Pre creating enqueuer')
+            self.model.pre_create_enqueuer(generator=self.training_data_iterator,
+                                           epochs=self.num_epochs,
+                                           initial_epoch=self.initial_epoch,
+                                           use_multiprocessing=True,
+                                           workers=self.num_training_data_generation_workers,
+                                           max_queue_size=self.training_data_max_queue_size)
+        # END OF REMOVE
+
         # Compile the model
         self.model.compile(optimizer=model_optimizer,
                            loss=model_loss,

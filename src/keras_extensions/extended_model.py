@@ -44,6 +44,7 @@ class ExtendedModel(Model):
         self.process_clean_up_called = False
         self.logger = Logger.instance()
         self.enqueuer = None
+        self.enqueuer_pre_created = False
 
     def stop_training_loop(self):
         self.fit_generator_stopped = True
@@ -67,6 +68,29 @@ class ExtendedModel(Model):
                 callback_model.stop_training = True
         except (AttributeError, ValueError):
             pass
+
+    def pre_create_enqueuer(self, generator, use_multiprocessing, shuffle, epochs, initial_epoch, workers, max_queue_size):
+        self.enqueuer = None
+        wait_time = 0.01  # in seconds
+        is_sequence = isinstance(generator, Sequence)
+
+        try:
+            if is_sequence:
+                self.enqueuer = OrderedEnqueuer(generator,
+                                                use_multiprocessing=use_multiprocessing,
+                                                shuffle=shuffle,
+                                                initial_epoch=initial_epoch,
+                                                max_epoch=epochs)
+            else:
+                self.enqueuer = GeneratorEnqueuer(generator,
+                                                  use_multiprocessing=use_multiprocessing,
+                                                  wait_time=wait_time)
+            self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+        finally:
+            if self.enqueuer is not None:
+                self.enqueuer.stop()
+
+        self.enqueuer_pre_created = True
 
     def predict_on_batch(self, x, use_training_phase_layers=False):
         """Returns predictions for a single batch of samples.
@@ -265,20 +289,21 @@ class ExtendedModel(Model):
                             ' and multiple workers may duplicate your data.'
                             ' Please consider using the`keras.utils.Sequence'
                             ' class.'))
-        self.enqueuer = None
-
         try:
-            if is_sequence:
-                self.enqueuer = OrderedEnqueuer(generator,
-                                                use_multiprocessing=use_multiprocessing,
-                                                shuffle=shuffle,
-                                                initial_epoch=initial_epoch,
-                                                max_epoch=epochs)
-            else:
-                self.enqueuer = GeneratorEnqueuer(generator,
-                                                  use_multiprocessing=use_multiprocessing,
-                                                  wait_time=wait_time)
-            self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            if not self.enqueuer_pre_created and self.enqueuer is not None:
+                self.enqueuer = None
+
+                if is_sequence:
+                    self.enqueuer = OrderedEnqueuer(generator,
+                                                    use_multiprocessing=use_multiprocessing,
+                                                    shuffle=shuffle,
+                                                    initial_epoch=initial_epoch,
+                                                    max_epoch=epochs)
+                else:
+                    self.enqueuer = GeneratorEnqueuer(generator,
+                                                      use_multiprocessing=use_multiprocessing,
+                                                      wait_time=wait_time)
+                self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             output_generator = self.enqueuer.get()
 
             callback_model.stop_training = False
