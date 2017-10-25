@@ -14,29 +14,26 @@ from utils.multiprocessing_utils import MultiprocessingManager
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = multiprocessing.Value('i', 0)
 _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
 _MAIN_PROCESS_PID = multiprocessing.Value('i', -1)
+_TRAINER = None
 
 
-def get_signal_handler(trainer):
-    # type: (TrainerBase) -> ()
+def signal_handler(s, f):
 
-    def signal_handler(s, f):
-        global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED
-        process_pid = multiprocessing.current_process().pid
-        print 'Received signal: {} in process {} - main process pid: {}'.format(s, process_pid, _MAIN_PROCESS_PID.value)
+    global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED, _TRAINER
+    process_pid = multiprocessing.current_process().pid
+    print 'Received signal: {} in process {} - main process pid: {}'.format(s, process_pid, _MAIN_PROCESS_PID.value)
 
-        if _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value == 0 and (process_pid == _MAIN_PROCESS_PID.value or _MAIN_PROCESS_PID.value == -1):
-            _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value = 1
+    if _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value == 0 and (process_pid == _MAIN_PROCESS_PID.value or _MAIN_PROCESS_PID.value == -1):
+        _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value = 1
 
-            if trainer is not None:
-                trainer.handle_early_exit()
-            else:
-                print 'No trainer present, exiting'
-
-            sys.exit(0)
+        if _TRAINER is not None:
+            _TRAINER.handle_early_exit()
         else:
-            print 'Not the main process - waiting for parent process to join'
+            print 'No trainer present, exiting'
 
-    return signal_handler
+        sys.exit(0)
+    else:
+        print 'Not the main process - waiting for parent process to join'
 
 
 def main():
@@ -74,7 +71,7 @@ def main():
     if settings.PROFILE:
         print 'RUNNING IN PROFILE MODE'
 
-    global _MAIN_PROCESS_PID
+    global _MAIN_PROCESS_PID, _TRAINER
 
     if _MAIN_PROCESS_PID.value == -1:
         pid = multiprocessing.current_process().pid
@@ -106,30 +103,30 @@ def main():
         mp = MultiprocessingManager()
         print 'MultiprocessingManager instantiated - currently hosting: {} clients'.format(mp.num_current_clients)
 
-    if trainer_super_type == 'segmentation':
-        from trainers import SegmentationTrainer, TrainerBase
-
-        trainer = SegmentationTrainer(trainer_type=trainer_type,
-                                      model_name=model_name,
-                                      model_folder_name=model_folder_name,
-                                      config_file_path=trainer_config_file_path)
-    elif trainer_super_type == 'classification':
-        from trainers import ClassificationTrainer, TrainerBase
-
-        trainer = ClassificationTrainer(trainer_type=trainer_type,
-                                        model_name=model_name,
-                                        model_folder_name=model_folder_name,
-                                        config_file_path=trainer_config_file_path)
-    else:
-        raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
-
     # Register early exit signal handlers
     for sig in _EARLY_EXIT_SIGNALS:
         print 'Registering early exit signal handler for signal: {}'.format(sig)
-        signal.signal(sig, get_signal_handler(trainer))
+        signal.signal(sig, signal_handler)
+
+    if trainer_super_type == 'segmentation':
+        from trainers import SegmentationTrainer
+
+        _TRAINER = SegmentationTrainer(trainer_type=trainer_type,
+                                       model_name=model_name,
+                                       model_folder_name=model_folder_name,
+                                       config_file_path=trainer_config_file_path)
+    elif trainer_super_type == 'classification':
+        from trainers import ClassificationTrainer
+
+        _TRAINER = ClassificationTrainer(trainer_type=trainer_type,
+                                         model_name=model_name,
+                                         model_folder_name=model_folder_name,
+                                         config_file_path=trainer_config_file_path)
+    else:
+        raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
 
     print 'Starting training'
-    history = trainer.train()
+    history = _TRAINER.train()
 
 
 if __name__ == "__main__":

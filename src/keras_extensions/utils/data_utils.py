@@ -325,7 +325,8 @@ class OrderedEnqueuer(SequenceEnqueuer):
         """
 
         try:
-            _SHARED_DICTS[self.uuid].clear()
+            if self.uuid in _SHARED_DICTS:
+                _SHARED_DICTS[self.uuid].clear()
         except socket_error as e:
             self.logger.warn('Failed to clear _SHARED_DICTS: {}'.format(e.strerror))
 
