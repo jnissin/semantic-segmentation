@@ -244,6 +244,7 @@ class TrainerBase:
                                            epochs=self.num_epochs,
                                            initial_epoch=self.initial_epoch,
                                            use_multiprocessing=True,
+                                           shuffle=True,
                                            workers=self.num_training_data_generation_workers,
                                            max_queue_size=self.training_data_max_queue_size)
         # END OF REMOVE
