@@ -2313,7 +2313,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         # Note: the student model should not be evaluated using the validation data generator
         # the generator input will not be meaning
         history = self.model.fit_generator(
-            generator=self.training_data_iterator,
+            generator=self.training_data_iterator if not self.model.training_enqueuer_pre_created else None,
             steps_per_epoch=self.training_steps_per_epoch,
             epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
