@@ -46,6 +46,10 @@ class ExtendedModel(Model):
         self.enqueuer = None
         self.enqueuer_pre_created = False
 
+    @property
+    def training_enqueuer_pre_created(self):
+        return self.enqueuer_pre_created and self.enqueuer is not None
+
     def stop_training_loop(self):
         self.fit_generator_stopped = True
 
@@ -89,6 +93,8 @@ class ExtendedModel(Model):
         except Exception as e:
             if self.enqueuer is not None:
                 self.enqueuer.stop()
+
+            raise e
 
         self.enqueuer_pre_created = True
 
@@ -282,15 +288,21 @@ class ExtendedModel(Model):
                 val_data += [0.]
             for cbk in callbacks:
                 cbk.validation_data = val_data
-        is_sequence = isinstance(generator, Sequence)
-        if not is_sequence and use_multiprocessing and workers > 1:
-            warnings.warn(
-                UserWarning('Using a generator with `use_multiprocessing=True`'
-                            ' and multiple workers may duplicate your data.'
-                            ' Please consider using the`keras.utils.Sequence'
-                            ' class.'))
+
+        if not self.training_enqueuer_pre_created and generator is None:
+            raise ValueError('Invalid generator passed - must either pass a valid generator or pre create the enqueuer')
+
         try:
-            if not self.enqueuer_pre_created and self.enqueuer is not None:
+            if not self.training_enqueuer_pre_created:
+                is_sequence = isinstance(generator, Sequence)
+
+                if not is_sequence and use_multiprocessing and workers > 1:
+                    warnings.warn(
+                        UserWarning('Using a generator with `use_multiprocessing=True`'
+                                    ' and multiple workers may duplicate your data.'
+                                    ' Please consider using the`keras.utils.Sequence'
+                                    ' class.'))
+
                 self.enqueuer = None
 
                 if is_sequence:
@@ -304,6 +316,7 @@ class ExtendedModel(Model):
                                                       use_multiprocessing=use_multiprocessing,
                                                       wait_time=wait_time)
                 self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+
             output_generator = self.enqueuer.get()
 
             callback_model.stop_training = False
