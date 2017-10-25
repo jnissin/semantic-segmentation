@@ -86,7 +86,7 @@ class ExtendedModel(Model):
                                                   use_multiprocessing=use_multiprocessing,
                                                   wait_time=wait_time)
             self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
-        finally:
+        except Exception as e:
             if self.enqueuer is not None:
                 self.enqueuer.stop()
 
