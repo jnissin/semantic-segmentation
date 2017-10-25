@@ -64,6 +64,9 @@ class Logger(object):
     @staticmethod
     def instance():
         # type: () -> Logger
+        if Logger._instance is None:
+            raise ValueError('Logger has not been initialized')
+
         return Logger._instance
 
     @staticmethod
