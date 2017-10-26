@@ -71,10 +71,11 @@
       "gamma_adjust_range": 0.5,
       "mean_teacher_noise_params": {
         "gaussian_noise_stddev": 0.08,
-        "shift_range": [0.06, 0.06],
+        "translate_range": 0.05,
+        "rotation_range": 10.0,
         "horizontal_flip_probability": 0.5,
         "vertical_flip_probability": null,
-        "brightness_shift_range": 0.10
+        "channel_shift_range": 0.10
       }
     },
 

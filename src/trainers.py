@@ -242,7 +242,7 @@ class TrainerBase:
             self.model.pre_create_enqueuer(generator=self.training_data_iterator,
                                            epochs=self.num_epochs,
                                            initial_epoch=self.initial_epoch,
-                                           use_multiprocessing=True,
+                                           use_multiprocessing=settings.USE_MULTIPROCESSING,
                                            shuffle=True,
                                            workers=self.num_training_data_generation_workers,
                                            max_queue_size=self.training_data_max_queue_size)
@@ -1325,7 +1325,7 @@ class MeanTeacherTrainerBase(TrainerBase):
                     generator=self.teacher_validation_data_iterator,
                     steps=self.teacher_validation_steps_per_epoch,
                     workers=self.num_validation_data_generation_workers,
-                    use_multiprocessing=True,
+                    use_multiprocessing=settings.USE_MULTIPROCESSING,
                     validation=True,
                     max_queue_size=self.validation_data_max_queue_size)
 
@@ -1896,7 +1896,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             verbose=1,
             trainer=self,
             callbacks=callbacks,
-            use_multiprocessing=True,
+            use_multiprocessing=settings.USE_MULTIPROCESSING,
             workers=self.num_training_data_generation_workers,
             validation_workers=self.num_validation_data_generation_workers,
             max_queue_size=self.training_data_max_queue_size,
@@ -2322,7 +2322,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             verbose=1,
             trainer=self,
             callbacks=callbacks,
-            use_multiprocessing=True,
+            use_multiprocessing=settings.USE_MULTIPROCESSING,
             workers=self.num_training_data_generation_workers,
             validation_workers=self.num_validation_data_generation_workers,
             max_queue_size=self.training_data_max_queue_size,
