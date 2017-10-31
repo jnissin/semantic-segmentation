@@ -5,10 +5,11 @@ import multiprocessing
 import os
 import numpy as np
 
+from PIL import ImageFile
+from joblib import Parallel, delayed
+
 from src.enums import SuperpixelSegmentationFunctionType
 from src.utils import image_utils, general_utils
-
-from joblib import Parallel, delayed
 
 
 _NUM_PROCESSED_IMAGES = multiprocessing.Value('i', 0)
@@ -69,6 +70,9 @@ def main():
     function_type = function_name_to_type.get(function_name, SuperpixelSegmentationFunctionType.NONE)
     n_jobs = args['jobs']
     verbose = args['verbose']
+
+    # Without this some truncated images can throw errors
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
 
     print 'Reading photos from: {}'.format(photos_path)
     photos = image_utils.list_pictures(photos_path)
