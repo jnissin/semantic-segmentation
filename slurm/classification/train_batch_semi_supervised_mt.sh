@@ -10,7 +10,8 @@
 
 module purge
 module load anaconda2
-source activate semantic-segmentation
-module load CUDA/8.0.61 cudnn/5.1-CUDA-7.5
+module load teflon
+source activate ss-new
+module load CUDA/9.0.176 cuDNN/7-CUDA-9.0.176
 
 srun python -m src.train --model enet-naive-upsampling-encoder-only --mfolder enet-naive-upsampling-encoder-only/semi-supervised-mt --trainer classification_semi_supervised_mean_teacher --config ./configs/config-classification.json --wdir /scratch/work/jhnissin/semantic-segmentation/ --maxjobs 6
