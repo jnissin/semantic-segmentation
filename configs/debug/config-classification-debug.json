@@ -33,8 +33,8 @@
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
 
-    "num_labeled_per_batch": 25,
-    "num_unlabeled_per_batch": 25,
+    "num_labeled_per_batch": 3,
+    "num_unlabeled_per_batch": 3,
     "validation_num_labeled_per_batch": 25,
     "validation_crop_shape": [336, 336],
     "validation_resize_shape": null,

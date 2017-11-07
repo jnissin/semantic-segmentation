@@ -17,6 +17,28 @@ from src import settings
 
 
 ###################################################
+#
+###################################################
+
+def get_distinct_colors(n, seed=None):
+    from colorsys import hls_to_rgb
+
+    if seed is not None:
+        np.random.seed(seed)
+
+    colors = []
+    step = float(n) / 360.0
+
+    for i in range(0, n):
+        h = i * step
+        l = (50 + np.random.rand() * 10) / 100.
+        s = (90 + np.random.rand() * 10) / 100.
+        colors.append(hls_to_rgb(h, l, s))
+
+    return colors
+
+
+###################################################
 # IMAGE PREPROCESSING FUNCTIONS
 ###################################################
 
