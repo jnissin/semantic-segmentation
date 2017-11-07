@@ -47,11 +47,15 @@ def generate_mask_for_unlabeled_image(f_type, img_path, output_path, verbose=Fal
         else:
             raise ValueError('Invalid dtype parameter: {}'.format(dtype))
 
-    # Check that the output path exists i.e. is valid
+    # Check that the output path exists and is valid
     if os.path.isdir(output_path):
         mask_save_path = os.path.join(output_path, os.path.basename(img_path))
     else:
         mask_save_path = output_path
+
+    # Check that the output format is PNG if not replace it to be. JPG compression
+    # can cause issues with masks
+    mask_save_path = os.path.splitext(mask_save_path)[0] + '.png'
 
     # Check if existing should be ignored
     if ignore_existing and os.path.exists(mask_save_path):
