@@ -31,7 +31,7 @@ from callbacks.optimizer_checkpoint import OptimizerCheckpoint
 from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
 from generators import DataGenerator, SegmentationDataGenerator, MINCDataSet, ClassificationDataGenerator
 from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters
-from enums import BatchDataFormat, SuperpixelSegmentationFunctionType
+from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ClassWeightType
 
 from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
@@ -127,6 +127,8 @@ class TrainerBase:
 
         self._initial_epoch = None
         self._initial_step = None
+        self._class_weight_type = None
+        self._ignore_classes = None
         self.last_completed_epoch = -1
 
         # Profiling related variables
@@ -227,6 +229,7 @@ class TrainerBase:
                 self.logger.warn('Should not transfer weights when continuing from last checkpoint. Skipping weight transfer')
                 lr_scalers = dict()
             else:
+                self.logger.log('Transferring weights to model')
                 lr_scalers = self._transfer_weights(to_model_wrapper=self.model_wrapper)
         else:
             lr_scalers = dict()
@@ -313,10 +316,20 @@ class TrainerBase:
         # type: () -> np.ndarray
         pass
 
+    @abstractproperty
+    def class_weights(self):
+        # type: () -> np.ndarray
+        pass
+
     @property
     def image_data_format(self):
         # type: () -> str
         return self._get_config_value('image_data_format')
+
+    @property
+    def resized_image_cache_path(self):
+        # type: () -> str
+        return self._get_config_value('resized_image_cache_path')
 
     @property
     def random_seed(self):
@@ -398,6 +411,41 @@ class TrainerBase:
     def use_class_weights(self):
         # type: () -> bool
         return bool(self._get_config_value('use_class_weights'))
+
+    @property
+    def class_weight_type(self):
+        # type: () -> ClassWeightType
+        if self._class_weight_type is None:
+
+            if not self.use_class_weights:
+                self._class_weight_type = ClassWeightType.NONE
+            else:
+                type_str = self._get_config_value('class_weight_type')
+
+                if type_str is None:
+                    self._class_weight_type = ClassWeightType.NONE
+                elif type_str == 'median_frequency_balancing' or type_str == 'mfb':
+                    self._class_weight_type = ClassWeightType.MEDIAN_FREQUENCY_BALANCING
+                elif type_str == 'enet':
+                    self._class_weight_type = ClassWeightType.ENET
+                else:
+                    raise ValueError('Unknown class weight type: {}'.format(type_str))
+
+        return self._class_weight_type
+
+    @property
+    def ignore_classes(self):
+        # type: () -> list
+
+        if self._ignore_classes is None:
+            ignore_classes = self._get_config_value('ignore_classes')
+
+            if ignore_classes is None:
+                ignore_classes = []
+
+            self._ignore_classes = ignore_classes
+
+        return self._ignore_classes
 
     @property
     def use_transfer_weights(self):
@@ -878,10 +926,12 @@ class TrainerBase:
 
         return initial_epoch
 
-    def _transfer_weights(self, to_model_wrapper):
+    def _transfer_weights(self, to_model_wrapper, transfer_weights_options=None):
         # type: (ModelBase) -> dict
 
-        transfer_weights_options = self._get_config_value('transfer_weights_options')
+        # If a transfer weights options dict was provided use that otherwise search from config for default
+        if transfer_weights_options is None:
+            transfer_weights_options = self._get_config_value('transfer_weights_options')
 
         if transfer_weights_options is None:
             raise ValueError('Could not find transfer weights options with key: transfer_weights_options')
@@ -906,9 +956,9 @@ class TrainerBase:
         to_layer_index = int(transfer_weights_options['to_layer_index'])
         freeze_from_layer_index = transfer_weights_options.get('freeze_from_layer_index')
         freeze_to_layer_index = transfer_weights_options.get('freeze_to_layer_index')
+        scale_lr_factor = transfer_weights_options.get('scale_lr_factor')
         scale_lr_from_layer_index = transfer_weights_options.get('scale_lr_from_layer_index')
         scale_lr_to_layer_index = transfer_weights_options.get('scale_lr_to_layer_index')
-        scale_lr_factor = transfer_weights_options.get('scale_lr_factor')
 
         self.logger.log('Transferring weights from layer range: [{}:{}], freezing transferred layer range: [{}:{}], lr scaling layer range: [{}:{}]'
                         .format(from_layer_index, to_layer_index, freeze_from_layer_index, freeze_to_layer_index, scale_lr_from_layer_index, scale_lr_to_layer_index))
@@ -1085,8 +1135,6 @@ class MeanTeacherTrainerBase(TrainerBase):
     def _init_teacher_model(self):
         # If we are using the mean teacher method create the teacher model
         if self.using_mean_teacher_method:
-            # Get the optimizer for the model
-            optimizer = self._get_model_optimizer()
             teacher_model_lambda_loss_type = self._get_teacher_model_lambda_loss_type()
 
             self.logger.log('Creating teacher model {} instance with lambda loss type: {}, input shape: {}, num classes: {}'.format(self.model_name, teacher_model_lambda_loss_type, self.input_shape, self.num_classes))
@@ -1103,8 +1151,21 @@ class MeanTeacherTrainerBase(TrainerBase):
             else:
                 self.teacher_model.set_weights(self.model.get_weights())
 
+            if self.teacher_use_transfer_weights:
+                if self.initial_epoch != 0:
+                    self.logger.warn('Should not transfer teacher weights when continuing from last checkpoint. Skipping teacher weight transfer')
+                    lr_scalers = dict()
+                else:
+                    self.logger.log('Transferring weights to teacher model')
+                    lr_scalers = self._transfer_weights(to_model_wrapper=self.teacher_model_wrapper, transfer_weights_options=self.teacher_transfer_weights_options)
+            else:
+                lr_scalers = dict()
+
             teacher_model_loss = self._get_teacher_model_loss()
             teacher_model_metrics = self._get_teacher_model_metrics()
+
+            # Get the optimizer for the model
+            optimizer = self._get_model_optimizer(lr_scalers=lr_scalers)
 
             self.teacher_model.compile(optimizer=optimizer,
                                        loss=teacher_model_loss,
@@ -1144,6 +1205,22 @@ class MeanTeacherTrainerBase(TrainerBase):
                 raise ValueError('Could not find entry for mean_teacher_params from the configuration JSON')
 
         return self._mean_teacher_method_config
+
+    @property
+    def teacher_use_transfer_weights(self):
+        # type: () -> bool
+        if self.using_mean_teacher_method:
+            return bool(self.mean_teacher_method_config.get('transfer_weights'))
+        return False
+
+    @property
+    def teacher_transfer_weights_options(self):
+        # type: () -> dict
+        if self.using_mean_teacher_method:
+            if self.teacher_use_transfer_weights:
+                return self.mean_teacher_method_config['transfer_weights_options']
+
+        return None
 
     @property
     def teacher_validation_steps_per_epoch(self):
@@ -1466,7 +1543,6 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self._data_set_information = None
         self._material_class_information = None
         self._class_weights = None
-        self._ignore_classes = None
         self._training_data_generator_params = None
         self._validation_data_generator_params = None
         self._superpixel_params = None
@@ -1486,6 +1562,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
     @property
     def superpixel_method_config(self):
+        # type: () -> dict
         if self.using_superpixel_method and self._superpixel_params is None:
             self.logger.log('Reading superpixel method configuration')
             self._superpixel_params = self._get_config_value('superpixel_params')
@@ -1497,12 +1574,21 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
     @property
     def superpixel_label_generation_function_type(self):
+        # type: () -> SuperpixelSegmentationFunctionType
         if self.using_superpixel_method and self._superpixel_label_generation_function_type == SuperpixelSegmentationFunctionType.NONE:
             label_generation_function_name = self.superpixel_method_config['label_generation_function_name']
             self.logger.log('Superpixel label generation function name: {}'.format(label_generation_function_name))
             self._superpixel_label_generation_function_type = self._get_superpixel_label_generation_function_type(label_generation_function_name)
 
         return self._superpixel_label_generation_function_type
+
+    @property
+    def superpixel_mask_cache_path(self):
+        # type: () -> str
+        if self.using_superpixel_method:
+            return self.superpixel_method_config['superpixel_mask_cache_path']
+
+        return None
 
     @property
     def superpixel_unlabeled_cost_coefficient_function(self):
@@ -1515,6 +1601,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
     @property
     def num_unlabeled_per_batch(self):
+        # type: () -> int
         num_unlabeled_per_batch = int(self._get_config_value('num_unlabeled_per_batch'))
 
         # Sanity check for number of unlabeled per batch
@@ -1569,60 +1656,35 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
     @property
     def class_weights(self):
+        # type: () -> np.ndarray
+
         # Lazy load class weights when needed
         if self._class_weights is None:
             if self.use_class_weights:
-                class_weights = self.data_set_information.class_weights
+
                 override_class_weights = self._get_config_value('override_class_weights')
 
-                # Legacy support for data sets without material_samples_class_weights
-                if self.using_material_samples and hasattr(self.data_set_information, 'material_samples_class_weights'):
-                    if self.data_set_information.material_samples_class_weights is not None and len(self.data_set_information.material_samples_class_weights) > 0:
-                        class_weights = self.data_set_information.material_samples_class_weights
-                    else:
-                        self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
-                                         'could be found - use override class weights or recreate the dataset.')
-                elif self.using_material_samples and not hasattr(self.data_set_information, 'material_samples_class_weights'):
-                    self.logger.warn('The trainer is using material samples but no material_samples_class_weights '
-                                     'could be found - use override class weights or recreate the dataset.')
-
                 if override_class_weights is not None:
+                    self._class_weights = override_class_weights
                     self.logger.log('Found override class weights: {}'.format(override_class_weights))
                     self.logger.log('Using override class weights instead of data set information class weights')
-                    class_weights = override_class_weights
+                    return self._class_weights
 
-                if class_weights is None:
-                    raise ValueError('Existing class weights were not found')
-                if len(class_weights) != self.num_classes:
-                    raise ValueError('Number of classes in class weights did not match number of material classes: {} vs {}'
-                                     .format(len(class_weights), self.num_classes))
-
-                self.logger.log('Using class weights: {}'.format(class_weights))
-                class_weights = np.array(class_weights, dtype=np.float32)
-                self._class_weights = class_weights
+                class_weights = self.data_set_information.get_class_weights(class_weight_type=self.class_weight_type,
+                                                                            ignore_classes=self.ignore_classes,
+                                                                            use_material_samples=self.using_material_samples)
+                self.logger.log('Using class weight type {}, ignore_classes: {}, weights: {}'.format(self.class_weight_type, self.ignore_classes, class_weights))
+                self._class_weights = np.array(class_weights, dtype=np.float32)
             else:
                 self._class_weights = np.ones([self.num_classes], dtype=np.float32)
 
         return self._class_weights
 
     @property
-    def ignore_classes(self):
-        if self._ignore_classes is None:
-            ignore_classes = np.squeeze(np.where(np.equal(self.class_weights, 0.0))).astype(dtype=np.int32)
-
-            # If there is only a single ignored class the shape will be empty - expand to dim 1
-            if ignore_classes.shape == ():
-                ignore_classes = np.expand_dims(ignore_classes, axis=-1)
-
-            self._ignore_classes = ignore_classes
-
-        return self._ignore_classes
-
-    @property
     def training_data_generator_params(self):
         if self._training_data_generator_params is None:
-            # Note: the initial epoch is an index but the property is a number starting from 1
             self._training_data_generator_params = SegmentationDataGeneratorParameters(
+                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
                 name='tr',
@@ -1641,7 +1703,11 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=self.data_augmentation_parameters,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                initial_epoch=self.initial_epoch)
+                initial_epoch=self.initial_epoch,
+                generate_mean_teacher_data=self.using_mean_teacher_method,
+                resized_image_cache_path=self.resized_image_cache_path,
+                superpixel_segmentation_function=self.superpixel_label_generation_function_type,
+                superpixel_mask_cache_path=self.superpixel_mask_cache_path)
 
         return self._training_data_generator_params
 
@@ -1649,6 +1715,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     def validation_data_generator_params(self):
         if self._validation_data_generator_params is None:
             self._validation_data_generator_params = SegmentationDataGeneratorParameters(
+                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
                 material_class_information=self.material_class_information,
                 num_color_channels=self.num_color_channels,
                 name='val',
@@ -1666,7 +1733,11 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 use_adaptive_sampling=False,
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
-                div2_constraint=self.div2_constraint)
+                div2_constraint=self.div2_constraint,
+                generate_mean_teacher_data=False,
+                resized_image_cache_path=self.resized_image_cache_path,
+                superpixel_segmentation_function=SuperpixelSegmentationFunctionType.NONE,
+                superpixel_mask_cache_path=None)
 
         return self._validation_data_generator_params
 
@@ -1781,17 +1852,6 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                                              material_samples=self.data_set_information.validation_set.material_samples)
         self.logger.log('Labeled validation set creation took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
 
-        # Labeled test set
-        #self.logger.log('Creating test set')
-        #stime = time.time()
-        #test_set = LabeledImageDataSet('test_set',
-        #                                    path_to_photo_archive=self.path_to_labeled_photos,
-        #                                    path_to_mask_archive=self.path_to_labeled_masks,
-        #                                    photo_file_list=self.data_set_information.test_set.labeled_photos,
-        #                                    mask_file_list=self.data_set_information.test_set.labeled_masks,
-        #                                    material_samples=self.data_set_information.test_set.material_samples)
-        #self.logger.log('Labeled test set creation took: {} s, size: {}'.format(time.time()-stime, test_set.size))
-
         if training_set_unlabeled is not None:
             total_data_set_size = training_set_labeled.size + training_set_unlabeled.size + validation_set.size
         else:
@@ -1815,9 +1875,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             num_labeled_per_batch=self.num_labeled_per_batch,
             num_unlabeled_per_batch=self.num_unlabeled_per_batch if self.using_unlabeled_training_data else 0,
             params=self.training_data_generator_params,
-            class_weights=self.class_weights,
-            batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
-            label_generation_function_type=self.superpixel_label_generation_function_type)
+            class_weights=self.class_weights)
 
         self.logger.log('Creating validation data generator')
 
@@ -1831,9 +1889,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             num_labeled_per_batch=self.validation_num_labeled_per_batch,
             num_unlabeled_per_batch=0,
             params=self.validation_data_generator_params,
-            class_weights=self.class_weights,
-            batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
-            label_generation_function_type=SuperpixelSegmentationFunctionType.NONE)
+            class_weights=self.class_weights)
 
         self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
         self.logger.log('Using material samples: {}'.format(training_data_generator.use_material_samples))
@@ -1848,15 +1904,16 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         if self.using_mean_teacher_method:
             self.logger.log('Creating teacher validation data generator')
 
+            teacher_validation_data_generator_params = self.validation_data_generator_params
+            teacher_validation_data_generator_params.batch_data_format = BatchDataFormat.SUPERVISED
+
             teacher_validation_data_generator = SegmentationDataGenerator(
                 labeled_data_set=self.validation_set,
                 unlabeled_data_set=None,
                 num_labeled_per_batch=self.validation_num_labeled_per_batch,
                 num_unlabeled_per_batch=0,
-                params=self.validation_data_generator_params,
-                class_weights=self.class_weights,
-                batch_data_format=BatchDataFormat.SUPERVISED,
-                label_generation_function_type=SuperpixelSegmentationFunctionType.NONE)
+                params=teacher_validation_data_generator_params,
+                class_weights=self.class_weights)
         else:
             teacher_validation_data_generator = None
 
@@ -2013,9 +2070,11 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         else:
             raise ValueError('Invalid superpixel label generation function name: {}'.format(function_name))
 
+
 #############################################
 # CLASSIFICATION TRAINER
 #############################################
+
 
 class ClassificationTrainer(MeanTeacherTrainerBase):
 
@@ -2027,7 +2086,6 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
         # Declare instance variables
         self._classification_data_set_config = None
-        self._ignore_classes = None
         self._class_weights = None
 
         self._training_data_generator_params = None
@@ -2103,22 +2161,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 class_weights = np.array(override_class_weights, dtype=np.float32)
                 self._class_weights = class_weights
             else:
-                self._class_weights = np.ones([self.num_classes], dtype=np.float32)
+                self._class_weights = np.ones(self.num_classes, dtype=np.float32)
 
         return self._class_weights
-
-    @property
-    def ignore_classes(self):
-        if self._ignore_classes is None:
-            ignore_classes = np.squeeze(np.where(np.equal(self.class_weights, 0.0))).astype(dtype=np.int32)
-
-            # If there is only a single ignored class the shape will be empty - expand to dim 1
-            if ignore_classes.shape == ():
-                ignore_classes = np.expand_dims(ignore_classes, axis=-1)
-
-            self._ignore_classes = ignore_classes
-
-        return self._ignore_classes
 
     @property
     def is_supervised_only_trainer(self):
@@ -2135,8 +2180,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
     @property
     def training_data_generator_params(self):
         if self._training_data_generator_params is None:
-            # Note: the initial epoch is an index but the property is a number starting from 1
             self._training_data_generator_params = DataGeneratorParameters(
+                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
                 num_color_channels=self.num_color_channels,
                 name='tr',
                 random_seed=self.random_seed,
@@ -2151,7 +2196,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
                 initial_epoch=self.initial_epoch,
-                generate_mean_teacher_data=self.using_mean_teacher_method)
+                generate_mean_teacher_data=self.using_mean_teacher_method,
+                resized_image_cache_path=self.resized_image_cache_path)
 
         return self._training_data_generator_params
 
@@ -2159,6 +2205,7 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
     def validation_data_generator_params(self):
         if self._validation_data_generator_params is None:
             self._validation_data_generator_params = DataGeneratorParameters(
+                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
                 num_color_channels=self.num_color_channels,
                 name='val',
                 random_seed=self.random_seed,
@@ -2172,7 +2219,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 data_augmentation_params=None,
                 shuffle_data_after_epoch=True,
                 div2_constraint=self.div2_constraint,
-                generate_mean_teacher_data=False)
+                generate_mean_teacher_data=False,
+                resized_image_cache_path=self.resized_image_cache_path)
 
         return self._validation_data_generator_params
 
@@ -2230,14 +2278,6 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                                      data_set_file_path=self.path_to_validation_set_file)
         self.logger.log('Validation set construction took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
 
-        #self.logger.log('Creating test set')
-        #stime = time.time()
-        #test_set = MINCDataSet(name='test_set',
-        #                       path_to_photo_archive=self.path_to_labeled_photos,
-        #                       label_mappings_file_path=self.path_to_label_mapping_file,
-        #                       data_set_file_path=self.path_to_test_set_file)
-        #self.logger.log('Test set construction took: {} s, size: {}'.format(time.time()-stime, test_set.size))
-
         return training_set_labeled, training_set_unlabeled, validation_set
 
     def _get_data_generators(self):
@@ -2260,7 +2300,6 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                                                               num_labeled_per_batch=self.num_labeled_per_batch,
                                                               num_unlabeled_per_batch=self.num_unlabeled_per_batch if self.using_unlabeled_training_data else 0,
                                                               class_weights=self.class_weights,
-                                                              batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
                                                               params=self.training_data_generator_params)
 
         self.logger.log('Creating validation data generator')
@@ -2269,7 +2308,6 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                                                                 num_labeled_per_batch=self.validation_num_labeled_per_batch,
                                                                 num_unlabeled_per_batch=0,
                                                                 class_weights=self.class_weights,
-                                                                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
                                                                 params=self.validation_data_generator_params)
 
         self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
@@ -2359,12 +2397,15 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
     def _get_teacher_validation_data_generator(self):
         if self.using_mean_teacher_method:
+
+            teacher_validation_data_generator_params = self.validation_data_generator_params
+            teacher_validation_data_generator_params.batch_data_format = BatchDataFormat.SUPERVISED
+
             teacher_validation_data_generator = ClassificationDataGenerator(labeled_data_set=self.validation_set,
                                                                             unlabeled_data_set=None,
-                                                                            num_labeled_per_batch=self.validation_num_labeled_per_batch,
+                                                                            num_labeled_per_batch=teacher_validation_data_generator_params,
                                                                             num_unlabeled_per_batch=0,
                                                                             class_weights=self.class_weights,
-                                                                            batch_data_format=BatchDataFormat.SUPERVISED,
                                                                             params=self.validation_data_generator_params)
         else:
             teacher_validation_data_generator = None

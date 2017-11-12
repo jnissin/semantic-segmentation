@@ -2,12 +2,15 @@
 
 import os
 import datetime
+import numpy as np
 
+from PIL import Image as PImage
 from multiprocessing import Lock
 from enum import Enum
 
 from utils.image_utils import array_to_img
 from utils import general_utils
+
 import settings
 
 
@@ -116,9 +119,15 @@ class Logger(object):
     def warn(self, message, log_to_stdout=False):
         self.log(message, log_level=LogLevel.WARNING, log_to_stdout=log_to_stdout)
 
-    def log_image(self, np_image, file_name, scale=True, format='JPEG'):
+    def log_image(self, img, file_name, scale=True, format='JPEG'):
         if Logger._log_images_folder_path is not None:
-            image = array_to_img(np_image, scale=scale)
+            if isinstance(img, np.ndarray):
+                image = array_to_img(img, scale=scale)
+            elif isinstance(img, PImage.Image):
+                image = img
+            else:
+                raise ValueError('Unsupported image type: {}'.format(type(img)))
+
             image.save(os.path.join(Logger._log_images_folder_path, file_name), format=format)
         else:
             self.log('Attempting to use log_image when log_images_folder_path is None, stdout_only: {}'.format(self.stdout_only), LogLevel.WARNING)

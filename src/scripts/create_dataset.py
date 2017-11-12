@@ -4,13 +4,13 @@ import argparse
 import time
 import random
 import numpy as np
-from PIL import ImageFile
 import jsonpickle
+
+from PIL import ImageFile
 
 from .. import settings
 from ..utils import dataset_utils
 from ..utils.dataset_utils import SegmentationSetInformation, SegmentationTrainingSetInformation, SegmentationDataSetInformation
-
 from ..data_set import ImageSet
 
 
@@ -24,9 +24,7 @@ def main():
     ap.add_argument("-c", "--categories", required=True, type=str, help="Path to materials CSV file")
     ap.add_argument("-r", "--rseed", required=True, type=int, help="Random seed")
     ap.add_argument("-s", "--split", required=True, type=str, help="Dataset split e.g. '0.8,0.05,0.15'")
-    ap.add_argument("--iclasses", required=False, type=str, help="List of ignored classes e.g. '0,1' when calculating weights (zero weights assigned)")
     ap.add_argument("--stats", required=False, type=bool, default=False, help="Calculate statistics for the new training set")
-    ap.add_argument("--msamples", required=False, type=bool, default=False, help="Calculate material sample data for labeled data")
     ap.add_argument("-o", "--output", required=True, help="Path to the output JSON file")
     ap.add_argument("--maxjobs", required=False, type=int, help="Specify maximum number of parallel jobs")
     args = vars(ap.parse_args())
@@ -37,11 +35,10 @@ def main():
     materials_path = args["categories"]
     rseed = args["rseed"]
     calculate_statistics = args["stats"]
-    calculate_material_samples = args["msamples"]
     split = [float(v.strip()) for v in args["split"].split(',')]
-    ignored_classes = [int(v.strip()) for v in args["iclasses"].split(',')] if args["iclasses"] else None
     max_jobs = args["maxjobs"]
     output_path = args["output"]
+    parallellization_backend = 'multiprocessing'
 
     # Without this some truncated images can throw errors
     ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -67,11 +64,8 @@ def main():
     print 'Found {} mask images'.format(mask_image_set.size)
 
     print 'Splitting the dataset using split: {}'.format(split)
-    training, validation, test = dataset_utils.split_labeled_dataset(photo_files=photo_image_set.image_files,
-                                                                     mask_files=mask_image_set.image_files,
-                                                                     split=split)
+    training, validation, test = dataset_utils.split_labeled_dataset(photo_files=photo_image_set.image_files, mask_files=mask_image_set.image_files, split=split, random_seed=rseed)
 
-    training_labeled_photos = [f[0] for f in training]
     training_labeled_masks = [f[1] for f in training]
     validation_labeled_masks = [f[1] for f in validation]
     test_labeled_masks = [f[1] for f in test]
@@ -91,101 +85,38 @@ def main():
     test_labeled_photos_file_names = [f[0].file_name for f in test]
     test_labeled_masks_file_names = [f[1].file_name for f in test]
 
-    training_material_samples, validation_material_samples, test_material_samples = None, None, None
+    print 'Calculating material samples for training set'
+    s_time = time.time()
+    training_material_samples = dataset_utils.get_material_samples(mask_files=training_labeled_masks, material_class_information=materials, parallelization_backend=parallellization_backend, verbose=True)
+    print 'Training set material samples calculation finished in: {}s'.format(time.time()-s_time)
 
-    if calculate_material_samples:
-        print 'Calculating material samples for training set'
-        s_time = time.time()
-        training_material_samples = dataset_utils.get_material_samples(mask_files=training_labeled_masks, material_class_information=materials)
-        print 'Training material samples calculation finished in: {}s'.format(time.time()-s_time)
+    print 'Calculating material samples for validation set'
+    s_time = time.time()
+    validation_material_samples = dataset_utils.get_material_samples(mask_files=validation_labeled_masks, material_class_information=materials, parallelization_backend=parallellization_backend, verbose=True)
+    print 'Validation set material samples calculation finished in: {}s'.format(time.time()-s_time)
 
-        print 'Calculating material samples for validation set'
-        s_time = time.time()
-        validation_material_samples = dataset_utils.get_material_samples(mask_files=validation_labeled_masks, material_class_information=materials)
-        print 'Validation material samples calculation finished in: {}s'.format(time.time()-s_time)
+    print 'Calculating material samples for test set'
+    s_time = time.time()
+    test_material_samples = dataset_utils.get_material_samples(mask_files=test_labeled_masks, material_class_information=materials, parallelization_backend=parallellization_backend, verbose=True)
+    print 'Test set material samples calculation finished in: {}s'.format(time.time()-s_time)
 
-        print 'Calculating material samples for test set'
-        s_time = time.time()
-        test_material_samples = dataset_utils.get_material_samples(mask_files=test_labeled_masks, material_class_information=materials)
-        print 'Test material samples calculation finished in: {}s'.format(time.time()-s_time)
-
-
-    training_set = SegmentationTrainingSetInformation(training_labeled_photos_file_names,
-                                                      training_labeled_masks_file_names,
-                                                      training_unlabeled_photos_file_names,
-                                                      training_material_samples)
-
-    validation_set = SegmentationSetInformation(validation_labeled_photos_file_names,
-                                                validation_labeled_masks_file_names,
-                                                validation_material_samples)
-
-    test_set = SegmentationSetInformation(test_labeled_photos_file_names,
-                                          test_labeled_masks_file_names,
-                                          test_material_samples)
-
-    per_channel_mean = []
-    per_channel_stddev = []
-    class_weights = []
-    material_samples_class_weights = []
-    labeled_per_channel_mean = []
-    labeled_per_channel_stddev = []
+    training_set = SegmentationTrainingSetInformation('training set', training_labeled_photos_file_names, training_labeled_masks_file_names, training_unlabeled_photos_file_names, training_material_samples)
+    validation_set = SegmentationSetInformation('validation set', validation_labeled_photos_file_names, validation_labeled_masks_file_names, validation_material_samples)
+    test_set = SegmentationSetInformation('test set', test_labeled_photos_file_names, test_labeled_masks_file_names, test_material_samples)
+    data_set = SegmentationDataSetInformation(training_set, validation_set, test_set, rseed)
 
     if calculate_statistics:
-        print 'Starting statistics calculation for the training set'
+        print 'Starting statistics calculation for the data set'
 
-        n_jobs = dataset_utils.get_number_of_parallel_jobs()
+        data_set.load_statistics(labeled_photos_folder_path=photos_path,
+                                 unlabeled_photos_folder_path=unlabeled_path,
+                                 masks_folder_path=masks_path,
+                                 material_class_information=materials,
+                                 parallelization_backend=parallellization_backend,
+                                 verbose=True)
 
-        if_photos = training_labeled_photos + training_unlabeled_photos
-        if_masks = training_labeled_masks
-
-        print 'Starting per-channel mean calculation for {} photos with {} jobs'.format(len(if_photos), n_jobs)
-        start_time = time.time()
-        per_channel_mean = dataset_utils.calculate_per_channel_mean(if_photos, 3, verbose=True).tolist()
-        print 'Per-channel mean calculation for {} files finished in {} seconds'.format(len(if_photos), time.time()-start_time)
-
-        print 'Starting per-channel stddev calculation for {} photos with {} jobs'.format(len(if_photos), n_jobs)
-        start_time = time.time()
-        per_channel_stddev = dataset_utils.calculate_per_channel_stddev(if_photos, per_channel_mean, 3, verbose=True).tolist()
-        print 'Per-channel stddev calculation for {} files finished in {} seconds'.format(len(if_photos), time.time()-start_time)
-
-        # Separate statistics for labeled only photos
-        print 'Starting labeled only per-channel mean calculation for {} labeled photos with {} jobs'.format(len(training_labeled_photos), n_jobs)
-        start_time = time.time()
-        labeled_per_channel_mean = dataset_utils.calculate_per_channel_mean(training_labeled_photos, 3, verbose=True).tolist()
-        print 'Labeled only per-channel mean calculation for {} files finished in {} seconds'.format(len(training_labeled_photos), time.time()-start_time)
-
-        print 'Starting labeled only per-channel stddev calculation for {} labeled photos with {} jobs'.format(len(training_labeled_photos), n_jobs)
-        start_time = time.time()
-        labeled_per_channel_stddev = dataset_utils.calculate_per_channel_stddev(training_labeled_photos, labeled_per_channel_mean, 3).tolist()
-        print 'Labeled only per-channel stddev calculation for {} files finished in {} seconds'.format(len(training_labeled_photos), time.time()-start_time)
-
-        # Median frequency balancing weights for full images
-        print 'Starting median frequency balancing weights calculation for {} masks with {} jobs. Ignoring classes: {}'.format(len(if_masks), n_jobs, ignored_classes)
-        start_time = time.time()
-        class_weights = dataset_utils.calculate_median_frequency_balancing_weights(if_masks, material_class_information=materials, ignored_classes=ignored_classes).tolist()
-        print 'Median frequency balancing weight calculation for {} files finished in {} seconds'.format(len(if_masks), time.time()-start_time)
-
-        if calculate_material_samples:
-            num_material_samples = sum([len(material_sample_category) for material_sample_category in training_material_samples])
-            # Median frequency balancing weights for material samples only
-            print 'Starting median frequency balancing weights calculation for {} material samples.'.format(num_material_samples)
-            start_time = time.time()
-            material_samples_class_weights = dataset_utils.calculate_material_samples_mfb_class_weights(training_material_samples)
-            print 'Median frequency balancing weight calculation for {} material samples finished in {} seconds'.format(num_material_samples, time.time()-start_time)
-
-    data_set = SegmentationDataSetInformation(training_set,
-                                              validation_set,
-                                              test_set,
-                                              rseed,
-                                              per_channel_mean,
-                                              per_channel_stddev,
-                                              class_weights,
-                                              material_samples_class_weights,
-                                              labeled_per_channel_mean,
-                                              labeled_per_channel_stddev)
-
+    print 'Encoding data set information to JSON'
     json_str = jsonpickle.encode(data_set)
-
     print 'Writing data set information to: {}'.format(output_path)
 
     with open(output_path, 'w') as f:

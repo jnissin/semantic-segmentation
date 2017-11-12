@@ -134,22 +134,25 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_
     y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled)
 
     # Calculate the gradients for the softmax output using a convolution with a Sobel mask
-    # the kernel dimensions must be: 3x3xN_CLASSESx1
     sobel_x = K.tf.stop_gradient(K.tf.constant([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], dtype=K.tf.float32))
-    sobel_x = K.tf.stop_gradient(K.tf.expand_dims(sobel_x, dim=-1))
-    sobel_x = K.tf.stop_gradient(K.tf.tile(sobel_x, [1, 1, num_classes]))
-    sobel_x = K.tf.stop_gradient(K.tf.expand_dims(sobel_x, dim=-1))
-    sobel_y = K.tf.stop_gradient(K.tf.transpose(sobel_x, [1, 0, 2, 3]))
+    sobel_x_filter = K.tf.stop_gradient(K.tf.reshape(sobel_x, [3, 3, 1, 1]))
+    sobel_y_filter = K.tf.stop_gradient(K.tf.transpose(sobel_x_filter, [1, 0, 2, 3]))
 
-    Gx = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, sobel_x, strides=[1, 1, 1, 1], padding='SAME')
-    Gy = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, sobel_y, strides=[1, 1, 1, 1], padding='SAME')
+    Gx = K.tf.nn.conv2d(y_pred_unlabeled_softmax, sobel_x_filter, strides=[1, 1, 1, 1], padding='SAME')
+    Gy = K.tf.nn.conv2d(y_pred_unlabeled_softmax, sobel_y_filter, strides=[1, 1, 1, 1], padding='SAME')
 
     # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), B_SIZExHxW
-    # Note: Add epsilon to avoid NaN values due to: (small grad value)^2
-    Gx2 = K.tf.square(K.tf.add(Gx, epsilon))
-    Gy2 = K.tf.square(K.tf.add(Gy, epsilon))
+    # Note: clip by epsilon to avoid NaN values due to: (small grad value)^2
+    Gx = K.tf.clip_by_value(Gx, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
+    Gy = K.tf.clip_by_value(Gy, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
+
+    Gx2 = K.tf.square(Gx)
+    Gy2 = K.tf.square(Gy)
     G_mag = K.tf.sqrt(K.tf.add(Gx2, Gy2))
     G_mag = K.tf.reduce_mean(G_mag, axis=-1)
+
+    # Ensure the y_true_unlabeled are binary masks with borders denoted by 0s and everything else as 1s
+    y_true_unlabeled = K.tf.stop_gradient(K.tf.clip_by_value(y_true_unlabeled, clip_value_min=0, clip_value_max=1))
 
     # For each image - extract each superpixel and calculate the cost
     batch_entropy = K.tf.reduce_sum(G_mag * K.tf.cast(y_true_unlabeled, dtype=K.tf.float32))

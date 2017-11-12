@@ -709,7 +709,7 @@ class MaterialSampleDataSetIterator(DataSetIterator):
             if num_samples_in_category == 0 and i != 0:
                 self.logger.warn('Material class {} has 0 material samples'.format(i))
 
-        self.logger.debug_log('Material category sampling probabilities: {}'.format(self._material_category_sampling_probabilities))
+        self.logger.debug_log('Material category sampling probabilities: {}'.format(list(self._material_category_sampling_probabilities)))
 
         # Keep track of the next material sample index for each material category: 1D array with ints
         self._material_category_ignore_mask = np.equal(self._material_category_sampling_probabilities, 0.0)

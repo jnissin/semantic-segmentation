@@ -17,7 +17,7 @@ from src import settings
 
 
 ###################################################
-#
+# VISUALISATION UTILITIES
 ###################################################
 
 def get_distinct_colors(n, seed=None):
@@ -92,7 +92,7 @@ def array_to_img(x, data_format=None, scale=True):
         raise ValueError('Unsupported channel number: ', x.shape[2])
 
 
-def img_to_array(img, data_format=None):
+def img_to_array(img, data_format=None, dtype=None):
     """Converts a PIL Image instance to a Numpy array.
 
     # Arguments
@@ -112,7 +112,11 @@ def img_to_array(img, data_format=None):
     # Numpy array x has format (height, width, channel)
     # or (channel, height, width)
     # but original PIL image has format (width, height, channel)
-    x = np.asarray(img, dtype=settings.DEFAULT_NUMPY_FLOAT_DTYPE)
+    if dtype is None:
+        x = np.asarray(img, dtype=settings.DEFAULT_NUMPY_FLOAT_DTYPE)
+    else:
+        x = np.asarray(img, dtype=dtype)
+
     if len(x.shape) == 3:
         if data_format == 'channels_first':
             x = x.transpose(2, 0, 1)
@@ -489,19 +493,22 @@ def pil_transform_image(img, transform, resample, cval=None):
     # Get the affine transformation matrix
     matrix = inv(transform.params).ravel()
 
+    # Store original image mode and check if cval is non-black
+    mode = img.mode
+    non_black_cval = cval is not None and (isinstance(cval, int) and cval == 0) and sum(cval) != 0
+
     # Add alpha channel (all pixels full alpha) to detect out-of-bounds values (will have alpha 0)
-    if cval is not None:
+    if non_black_cval:
         img.putalpha(255)
 
     img = img.transform(size=img.size, method=pil_image.AFFINE, data=matrix, resample=resample)
 
     # Replace out-of-bounds values with the cval - if cval is None default is black
-    if cval is not None:
+    if non_black_cval:
+        cval = np.round(cval).astype(dtype=np.int32)
+        cval = tuple(cval)
 
-        if isinstance(cval, np.ndarray) and cval.dtype != np.int32:
-            cval = tuple(np.round(cval).astype(dtype=np.int32))
-
-        background = pil_image.new(pil_mode_from_cval(cval), img.size, cval)
+        background = pil_image.new(mode, img.size, cval)
         background.paste(img, mask=img.split()[3])
         img = background
 
@@ -534,8 +541,8 @@ def pil_apply_flip(img, method):
     return img
 
 
-def pil_crop_image(img, x1, y1, x2, y2):
-    # type: (pil_image.Image, int, int, int, int) -> pil_image.Image
+def pil_crop_image(img, x1, y1, x2, y2, load=True):
+    # type: (pil_image.Image, int, int, int, int, bool) -> pil_image.Image
 
     """
     Crops a PIL Image object.
@@ -546,6 +553,7 @@ def pil_crop_image(img, x1, y1, x2, y2):
         :param y1: vertical top left corner of crop
         :param x2: horizontal bottom right corner of crop
         :param y2: vertical bottom right corner of crop
+        :param load: should the crop be separated from the original image with a call to load?
     # Returns
         :return: The cropped PIL Image object
     """
@@ -564,7 +572,10 @@ def pil_crop_image(img, x1, y1, x2, y2):
         raise ValueError('Invalid crop parameters for image shape: {}, ({}, {}), ({}, {})'.format(img.size, x1, y1, x2, y2))
 
     cropped_img = img.crop(box=(x1, y1, x2, y2))
-    cropped_img.load()
+
+    if load:
+        cropped_img.load()
+
     return cropped_img
 
 
@@ -705,42 +716,19 @@ def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cva
 
     width = img.width + h_pad_before + h_pad_after
     height = img.height + v_pad_before + v_pad_after
-    mode = pil_mode_from_cval(cval)
-    cval = cval if cval is not None else 0
+    mode = img.mode
 
-    if isinstance(cval, np.ndarray) and cval.dtype != np.int32:
-        cval = tuple(np.round(cval).astype(dtype=np.int32))
+    # Make sure the cval is in the correct format if None default to black
+    if cval is not None:
+        cval = np.round(cval).astype(dtype=np.int32)
+        cval = tuple(cval)
+    else:
+        cval = 0
 
     padded_img = pil_image.new(mode=mode, size=(width, height), color=cval)
     padded_img.paste(img, box=(h_pad_before, v_pad_before))
 
     return padded_img
-
-
-def pil_get_random_crop_area(img, crop_width, crop_height):
-    # type: (pil_image.Image, int, int) -> ((int, int), (int, int))
-
-    """
-    The function returns a random crop from the image as (x1, y1), (x2, y2).
-
-    # Arguments
-        :param np_image: image as a numpy array
-        :param crop_width: width of the crop
-        :param crop_height: height of the crop
-
-    # Returns
-        :return: two integer tuples describing the crop: (x1, y1), (x2, y2)
-    """
-
-    if crop_width > img.width or crop_height > img.height:
-        raise ValueError('Crop dimensions exceed the image dimensions: [{},{}] vs '.format(crop_width, crop_height, img.size))
-
-    x1 = np.random.randint(0, img.width - crop_width + 1)
-    y1 = np.random.randint(0, img.height - crop_height + 1)
-    x2 = x1 + crop_width
-    y2 = y1 + crop_height
-
-    return (x1, y1), (x2, y2)
 
 
 def pil_draw_square(img, center_x, center_y, size, color):
@@ -761,6 +749,31 @@ def pil_draw_square(img, center_x, center_y, size, color):
             y = min(max(center_y + j, 0), img.height - 1)
             img.putpixel((x, y), color)
 
+    return img
+
+
+def pil_image_band_contains_value(img, band, val):
+    # type: (pil_image.Image, int, int) -> bool
+    return val in img.getdata(band=band)
+
+
+def pil_image_band_only_contains_value(img, band, val):
+    # type: (pil_image.Image, int, int) -> bool
+    unique_band_values = pil_image_get_unique_band_values(img, band=0)
+    return len(unique_band_values) == 1 and val in unique_band_values
+
+
+def pil_image_get_unique_band_values(img, band):
+    # type: (pil_image.Image, int) -> list
+    return list(set(img.getdata(band=band)))
+
+
+def pil_image_mask_by_band_value(img, band, val, cval=0):
+    # type: (pil_image.Image, int, int) -> pil_image.Image
+    np_img = img_to_array(img)
+    mask = np_img[:, :, band] != val
+    np_img[mask] = cval
+    img = array_to_img(np_img)
     return img
 
 
@@ -1391,30 +1404,14 @@ def np_normalize_image_channels(img_array, per_channel_mean=None, per_channel_st
     return normalized_img_array
 
 
-def np_get_random_crop_area(np_image, crop_width, crop_height):
-    # type: (np.ndarray, int, int) -> ((int, int), (int, int))
+def np_adaptive_histogram_equalization(np_img, nbins=256):
+    from skimage import exposure
 
-    """
-    The function returns a random crop from the image as (x1, y1), (x2, y2).
-
-    # Arguments
-        :param np_image: image as a numpy array
-        :param crop_width: width of the crop
-        :param crop_height: height of the crop
-
-    # Returns
-        :return: two integer tuples describing the crop: (x1, y1), (x2, y2)
-    """
-
-    if crop_width > np_image.shape[1] or crop_height > np_image.shape[0]:
-        raise ValueError('Crop dimensions exceed the image dimensions: [{},{}] vs '.format(crop_height, crop_width, np_image.shape))
-
-    x1 = np.random.randint(0, np_image.shape[1] - crop_width + 1)
-    y1 = np.random.randint(0, np_image.shape[0] - crop_height + 1)
-    x2 = x1 + crop_width
-    y2 = y1 + crop_height
-
-    return (x1, y1), (x2, y2)
+    orig_dtype = np_img.dtype
+    np_img = np_img.astype(dtype=np.uint8)
+    np_img = exposure.equalize_adapthist(np_img, nbins=nbins)
+    np_img = np_img.astype(dtype=orig_dtype)
+    return np_img
 
 
 #######################################################

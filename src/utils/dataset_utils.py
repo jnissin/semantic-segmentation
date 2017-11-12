@@ -3,22 +3,136 @@
 import os
 import random
 import multiprocessing
+import time
 
 import numpy as np
 
 from PIL import Image
 from joblib import Parallel, delayed
 
-import image_utils
-from image_utils import load_img, img_to_array
+from image_utils import load_img, img_to_array, ImageTransform
 
 from .. import settings
 from ..data_set import ImageFile
+from ..enums import CoordinateType, ClassWeightType
+
+##############################################
+# GLOBALS
+##############################################
+
+_per_channel_mean_processed = multiprocessing.Value('i', 0)
+_per_channel_stddev_processed = multiprocessing.Value('i', 0)
+_material_samples_processed = multiprocessing.Value('i', 0)
 
 
 ##############################################
 # UTILITY CLASSES
 ##############################################
+
+class BoundingBox(object):
+
+    def __init__(self, y_min, x_min, y_max, x_max, coordinate_type):
+
+        if y_min >= y_max:
+            raise ValueError('Invalid Y values: y_min >= y_max: {} >= {}'.format(y_min, y_max))
+
+        if x_min >= x_max:
+            raise ValueError('Invalid X values: x_min >= x_max: {} >= {}'.format(x_min, x_max))
+
+        self._y_min = y_min
+        self._x_min = x_min
+        self._y_max = y_max
+        self._x_max = x_max
+        self._coordinate_type = coordinate_type
+
+    @property
+    def y_min(self):
+        return self._y_min
+
+    @property
+    def x_min(self):
+        return self._x_min
+
+    @property
+    def y_max(self):
+        return self._y_max
+
+    @property
+    def x_max(self):
+        return self._x_max
+
+    @property
+    def top_left(self):
+        return self._y_min, self._x_min
+
+    @property
+    def top_right(self):
+        return self._y_min, self._x_max
+
+    @property
+    def bottom_right(self):
+        return self._y_max, self._x_max
+
+    @property
+    def bottom_left(self):
+        return self._y_max, self._x_min
+
+    @property
+    def corners(self):
+        return self.top_left, self.top_right, self.bottom_right, self.bottom_left
+
+    @property
+    def coordinate_type(self):
+        # type: () -> CoordinateType
+        return self._coordinate_type
+
+    def transform(self, transform, min_transformed_bbox_size=4):
+        """
+        Transforms the bounding box using the parameter ImageTransform. Returns a new
+        bounding box describing the transformed bounding box or None if the bounding box
+        is smaller than the min_transformed_bbox_size or out of bounds after transform.
+
+        # Arguments
+            :param transform: an ImageTransform used to transform this bounding box
+            :param min_transformed_bbox_size: minimum size of the transformed bounding box
+        # Returns
+            :return: a new transformed bounding box
+        """
+
+        # type: ImageTransform -> BoundingBox
+
+        # Bounding box as np ndarray: tlc, trc, brc, blc
+        np_bbox = np.array((self.top_left, self.top_right, self.bottom_right, self.bottom_left), dtype=np.float32)
+
+        # The transform needs to get the coordinates in (x,y) instead of (y,x), so flip the coordinates there and back
+        if self.coordinate_type is CoordinateType.NORMALIZED:
+            np_transformed_bbox = np.fliplr(transform.transform_normalized_coordinates(np.fliplr(np_bbox)))
+        elif self.coordinate_type is CoordinateType.ABSOLUTE:
+            np_transformed_bbox = np.fliplr(transform.transform_coordinates(np.fliplr(np_bbox)))
+
+            # Switch to absolute coordinates
+            np_transformed_bbox[:, 0] *= transform.image_height
+            np_transformed_bbox[:, 1] *= transform.image_width
+            np_transformed_bbox = np.round(np_transformed_bbox).astype(dtype=np.int32)
+        else:
+            raise ValueError('Invalid coordinate type: {}'.format(self.coordinate_type))
+
+        y_limit = 1.0 if self.coordinate_type is CoordinateType.NORMALIZED else transform.image_height
+        x_limit = 1.0 if self.coordinate_type is CoordinateType.ABSOLUTE else transform.image_width
+
+        # Clamp the values of the corners into valid ranges [[0, img_height], [0, img_width]]
+        tf_y_min = np.clip(np.min(np_transformed_bbox[:, 0]), 0, y_limit)
+        tf_y_max = np.clip(np.max(np_transformed_bbox[:, 0]), 0, y_limit)
+        tf_x_min = np.clip(np.min(np_transformed_bbox[:, 1]), 0, x_limit)
+        tf_x_max = np.clip(np.max(np_transformed_bbox[:, 1]), 0, x_limit)
+
+        # If the area is less than the minimum transformed bbox size return None
+        tf_size = (tf_y_max - tf_y_min) * (tf_x_max - tf_x_min)
+
+        if tf_size <= min_transformed_bbox_size:
+            return None
+
+        return BoundingBox(tf_y_min, tf_x_min, tf_y_max, tf_x_max, self.coordinate_type)
 
 
 class MaterialSample(object):
@@ -88,10 +202,14 @@ class MaterialSample(object):
         return float(self.yx_max[0])/float(self.image_height), float(self.yx_min[1])/float(self.image_width)
 
     def get_bbox_abs(self):
-        return self.bbox_top_left_corner_abs, self.bbox_top_right_corner_abs, self.bbox_bottom_right_corner_abs, self.bbox_bottom_left_corner_abs
+        # type: () -> BoundingBox
+        return BoundingBox(y_min=self.yx_min[0], x_min=self.yx_min[1], y_max=self.yx_max[0], x_max=self.yx_max[1], coordinate_type=CoordinateType.ABSOLUTE)
 
     def get_bbox_rel(self):
-        return self.bbox_top_left_corner_rel, self.bbox_top_right_corner_rel, self.bbox_bottom_right_corner_rel, self.bbox_bottom_left_corner_rel
+        # type: () -> BoundingBox
+        rel_yx_min = self.bbox_top_left_corner_rel
+        rel_yx_max = self.bbox_bottom_right_corner_rel
+        return BoundingBox(y_min=rel_yx_min[0], x_min=rel_yx_min[1], y_max=rel_yx_max[0], x_max=rel_yx_max[1], coordinate_type=CoordinateType.NORMALIZED)
 
 
 class MINCSample(object):
@@ -130,62 +248,254 @@ class MaterialClassInformation(object):
 class SegmentationSetInformation(object):
 
     def __init__(self,
+                 name,
                  labeled_photos,
                  labeled_masks,
                  material_samples=None):
-        # type: (list[str], list[str], list[list[MaterialSample]]) -> None
+        # type: (str, list[str], list[str], list[list[MaterialSample]]) -> None
 
         if len(labeled_photos) != len(labeled_masks):
-            raise ValueError('Unmatching photo and mask lengths in the data set: {} vs {}'
-                             .format(len(labeled_photos), len(labeled_masks)))
+            raise ValueError('Unmatching photo and mask lengths in the data set: {} vs {}'.format(len(labeled_photos), len(labeled_masks)))
 
+        self.name = name
         self.labeled_photos = labeled_photos
         self.labeled_masks = labeled_masks
         self.labeled_size = len(labeled_photos)
         self.material_samples = material_samples
+        self.statistics_loaded = False
+
+        # Per-file statistics
+        self.total_pixels = 0
+        self.class_pixel_frequencies = []
+
+        # Material samples statistics
+        self.material_samples_total_pixels = 0
+        self.material_samples_class_pixel_frequencies = []
+        self.material_samples_class_instance_frequencies = []
+
+    def load_statistics(self, masks_folder_path, red_color_to_material_id, parallelization_backend='threading'):
+        # type: (str, dict, str) -> None
+
+        # Find the maximum class id value
+        num_classes = max(red_color_to_material_id.values()) + 1
+
+        # Calculate per-file statistics
+        n_jobs = get_number_of_parallel_jobs()
+
+        statistics = Parallel(n_jobs=n_jobs, backend=parallelization_backend)(
+            delayed(get_mask_statistics)(
+                os.path.join(masks_folder_path, mask_file), red_color_to_material_id, num_classes) for mask_file in self.labeled_masks)
+
+        num_pixels, material_frequencies = zip(*statistics)
+
+        self.total_pixels = sum(num_pixels)
+        self.class_pixel_frequencies = list(sum(material_frequencies))
+
+        # Calculate material samples statistics
+        if self.material_samples is not None:
+            self.material_samples_total_pixels = 0
+            self.material_samples_class_pixel_frequencies = np.zeros(num_classes, dtype=np.uint64)
+            self.material_samples_class_instance_frequencies = np.zeros(num_classes, dtype=np.uint64)
+
+            for material_id in range(0, len(self.material_samples)):
+                self.material_samples_class_instance_frequencies[material_id] = len(self.material_samples[material_id])
+                for material_sample in self.material_samples[material_id]:
+                    self.material_samples_total_pixels += material_sample.bbox_size
+                    self.material_samples_class_pixel_frequencies[material_id] += material_sample.num_material_pixels
+
+            self.material_samples_class_instance_frequencies = list(self.material_samples_class_instance_frequencies)
+            self.material_samples_class_pixel_frequencies = list(self.material_samples_class_pixel_frequencies)
+
+        self.statistics_loaded = True
 
 
 class SegmentationTrainingSetInformation(SegmentationSetInformation):
 
     def __init__(self,
+                 name,
                  labeled_photos,
                  labeled_masks,
                  unlabeled_photos=[],
                  material_samples=None):
-        # type: (list[str], list[str], list[str], list[list[MaterialSample]]) -> ()
+        # type: (str, list[str], list[str], list[str], list[list[MaterialSample]]) -> ()
 
-        super(SegmentationTrainingSetInformation, self).__init__(labeled_photos, labeled_masks, material_samples)
+        super(SegmentationTrainingSetInformation, self).__init__(name, labeled_photos, labeled_masks, material_samples)
         self.unlabeled_photos = unlabeled_photos
         self.unlabeled_size = len(unlabeled_photos)
 
 
 class SegmentationDataSetInformation(object):
+
     def __init__(self,
                  training_set,
                  validation_set,
                  test_set,
-                 random_seed,
-                 per_channel_mean=[],
-                 per_channel_stddev=[],
-                 class_weights=[],
-                 material_samples_class_weights=[],
-                 labeled_per_channel_mean=[],
-                 labeled_per_channel_stddev=[]):
-        # type: (SegmentationTrainingSetInformation, SegmentationSetInformation, SegmentationSetInformation, int, list[float], list[float], list[float], list[float]) -> None
+                 random_seed):
+        # type: (SegmentationTrainingSetInformation, SegmentationSetInformation, SegmentationSetInformation, int) -> None
 
         self.training_set = training_set
         self.validation_set = validation_set
         self.test_set = test_set
         self.random_seed = random_seed
 
-        self.per_channel_mean = per_channel_mean
-        self.per_channel_stddev = per_channel_stddev
-        self.class_weights = class_weights
-        self.material_samples_class_weights = material_samples_class_weights
+        self.per_channel_mean = None
+        self.per_channel_stddev = None
+        self.labeled_per_channel_mean = None
+        self.labeled_per_channel_stddev = None
 
-        self.labeled_per_channel_mean = labeled_per_channel_mean
-        self.labeled_per_channel_stddev = labeled_per_channel_stddev
+    def load_statistics(self, labeled_photos_folder_path, unlabeled_photos_folder_path, masks_folder_path, material_class_information, parallelization_backend='threading', verbose=False):
+        """
+        Loads the statistics for all the data sets and calculates per-channel mean and stddev for
+        labeled only and labeled + unlabeled training set configurations.
 
+        # Arguments
+
+        # Returns
+            :return: Nothing
+        """
+
+        red_color_to_material_id = get_red_color_to_material_id_lookup_dict(material_class_information)
+
+        if not self.training_set.statistics_loaded:
+            self._print('Starting training set statistics calculation', verbose)
+            s_time = time.time()
+            self.training_set.load_statistics(masks_folder_path=masks_folder_path, red_color_to_material_id=red_color_to_material_id, parallelization_backend=parallelization_backend)
+            self._print('Training set statistics calculation finished in: {} s'.format(time.time()-s_time), verbose)
+
+        if not self.validation_set.statistics_loaded:
+            self._print('Starting validation set statistics calculation', verbose)
+            s_time = time.time()
+            self.validation_set.load_statistics(masks_folder_path=masks_folder_path, red_color_to_material_id=red_color_to_material_id, parallelization_backend=parallelization_backend)
+            self._print('Validation set statistics calculation finished in: {} s'.format(time.time()-s_time), verbose)
+
+        if not self.test_set.statistics_loaded:
+            self._print('Starting test set statistics calculation', verbose)
+            s_time = time.time()
+            self.test_set.load_statistics(masks_folder_path=masks_folder_path, red_color_to_material_id=red_color_to_material_id, parallelization_backend=parallelization_backend)
+            self._print('Test set statistics calculation finished in: {} s'.format(time.time()-s_time), verbose)
+
+        # Calculate per-channel mean for labeled only and full training set
+        photo_file_paths = [os.path.join(labeled_photos_folder_path, f) for f in self.training_set.labeled_photos]
+
+        self._print('Starting labeled only per-channel mean calculation for {} training set photo files'.format(len(photo_file_paths)), verbose)
+        s_time = time.time()
+        per_channel_mean = calculate_per_channel_mean(image_files=photo_file_paths, verbose=verbose, parallelization_backend=parallelization_backend)
+        self._print('Labeled only per-channel mean: {} calculation completed in {} s'.format(list(per_channel_mean), time.time()-s_time), verbose)
+
+        self._print('Starting labeled only per-channel stddev calculation for {} training set photo files'.format(len(photo_file_paths)), verbose)
+        s_time = time.time()
+        per_channel_stddev = calculate_per_channel_stddev(image_files=photo_file_paths, per_channel_mean=per_channel_mean, verbose=verbose, parallelization_backend=parallelization_backend)
+        self._print('Labeled only per-channel stddev: {} calculation completed in {} s'.format(list(per_channel_stddev), time.time()-s_time), verbose)
+
+        self.labeled_per_channel_mean = list(per_channel_mean)
+        self.labeled_per_channel_stddev = list(per_channel_stddev)
+
+        # Calculate per-channel stddev for labeled only and full training set
+        if self.training_set.unlabeled_photos is not None and len(self.training_set.unlabeled_photos) > 0:
+            unlabeled_photo_file_paths = [os.path.join(unlabeled_photos_folder_path, f) for f in self.training_set.unlabeled_photos]
+            photo_file_paths = photo_file_paths + unlabeled_photo_file_paths
+
+            self._print('Starting per-channel mean calculation for {} training set photo files'.format(len(photo_file_paths)), verbose)
+            s_time = time.time()
+            per_channel_mean = calculate_per_channel_mean(image_files=photo_file_paths, verbose=verbose, parallelization_backend=parallelization_backend)
+            self._print('Per-channel mean: {} calculation completed in {} s'.format(list(per_channel_mean), time.time()-s_time), verbose)
+
+            self._print('Starting labeled only per-channel stddev calculation for {} training set photo files'.format(len(photo_file_paths)), verbose)
+            s_time = time.time()
+            per_channel_stddev = calculate_per_channel_stddev(image_files=photo_file_paths, per_channel_mean=per_channel_mean, verbose=verbose, parallelization_backend=parallelization_backend)
+            self._print('Per-channel stddev: {} calculation completed in {} s'.format(list(per_channel_stddev), time.time()-s_time), verbose)
+
+            self.per_channel_mean = list(per_channel_mean)
+            self.per_channel_stddev = list(per_channel_stddev)
+
+    def get_class_weights(self, class_weight_type, ignore_classes, use_material_samples):
+        # type: (ClassWeightType, list, bool) -> list
+
+        ignore_classes = ignore_classes if ignore_classes is not None else []
+
+        if class_weight_type is ClassWeightType.NONE:
+            class_weights = list(np.ones(24, dtype=np.float32))
+            for idx in ignore_classes:
+                class_weights[idx] = 0.0
+            return class_weights
+
+        if use_material_samples:
+            class_probabilities = self._calculate_material_samples_class_probabilities(ignore_classes=ignore_classes)
+        else:
+            class_probabilities = self._calculate_class_probabilities(ignore_classes=ignore_classes)
+
+        if class_weight_type is ClassWeightType.MEDIAN_FREQUENCY_BALANCING:
+            return self._calculate_mfb_class_weights(class_probabilities=class_probabilities)
+        elif class_weight_type is ClassWeightType.ENET and use_material_samples:
+            return self._calculate_enet_class_weights(class_probabilities=class_probabilities)
+        else:
+            raise ValueError('Unknown class weight type: {}'.format(class_weight_type))
+
+    def _calculate_mfb_class_weights(self, class_probabilities):
+        class_probabilities = np.array(class_probabilities, dtype=np.float64)
+        non_zero_class_probabilities = np.array([p for p in class_probabilities if p > 0.0])
+        median_probability = np.median(non_zero_class_probabilities)
+
+        # Calculate class weights and avoid division by zero for ignored classes such as
+        # the background
+        class_weights = []
+
+        for p in class_probabilities:
+            if p > 0.0:
+                class_weights.append(median_probability / p)
+            else:
+                class_weights.append(0.0)
+
+        return class_weights
+
+    def _calculate_enet_class_weights(self, class_probabilities):
+        c = 1.02
+        class_probabilities = np.array(class_probabilities)
+
+        # Calculate class weights and avoid division by zero for ignored classes such as
+        # the background
+        class_weights = []
+
+        for p in class_probabilities:
+            if p > 0.0:
+                class_weights.append(1.0 / np.log(c + p))
+            else:
+                class_weights.append(0.0)
+
+        return class_weights
+
+    def _calculate_class_probabilities(self, ignore_classes):
+        # type: (list) -> list
+
+        total_pixels = self.training_set.total_pixels
+        class_pixels = np.array(self.training_set.class_pixel_frequencies, dtype=np.float64)
+
+        for class_id in ignore_classes:
+            total_pixels -= class_pixels[class_id]
+            class_pixels[class_id] = 0
+
+        class_probabilities = class_pixels / total_pixels
+        return list(class_probabilities)
+
+    def _calculate_material_samples_class_probabilities(self, ignore_classes):
+        # type: (list) -> list
+
+        if self.training_set.material_samples is None:
+            raise ValueError('Cannot calculate material sample class probabilities, training set does not contain material samples')
+
+        total_pixels = self.training_set.material_samples_total_pixels
+        class_pixels = np.array(self.training_set.material_samples_class_pixel_frequencies, dtype=np.float64)
+
+        for class_id in ignore_classes:
+            total_pixels -= class_pixels[class_id]
+            class_pixels[class_id] = 0
+
+        class_probabilities = class_pixels / total_pixels
+        return list(class_probabilities)
+
+    def _print(self, str, verbose):
+        if verbose:
+            print str
 
 ##############################################
 # UTILITY FUNCTIONS
@@ -262,6 +572,19 @@ def load_material_class_information(material_labels_file_path):
     return materials
 
 
+def get_red_color_to_material_id_lookup_dict(material_class_information):
+    # type: (list[MaterialClassInformation]) -> dict
+
+    # Create a look up table for material red color -> material id
+    r_color_to_material_id = dict()
+
+    for mci in material_class_information:
+        for r_color in mci.r_color_values:
+            r_color_to_material_id[r_color] = mci.id
+
+    return r_color_to_material_id
+
+
 def get_number_of_parallel_jobs(override_max=None):
     """
     Returns the optimal number of parallel jobs by inspecting the available CPU
@@ -298,7 +621,7 @@ def get_bit(n, i):
 
 
 def get_color_for_category_index(idx):
-    # type: (int) -> np.array[np.uint8]
+    # type: (int) -> np.ndarray[np.uint8]
 
     """
     Returns a color for class index. The index is used in the red channel
@@ -345,19 +668,17 @@ def get_files(path, ignore_hidden_files=True):
     return files
 
 
-_per_channel_mean_processed = 0
-
-
-def calculate_per_channel_mean(image_files, num_channels, verbose=False):
-    # type: (list[ImageFile], int, bool) -> np.array[np.float32]
+def calculate_per_channel_mean(image_files, verbose=False, parallelization_backend='threading'):
+    # type: (list[ImageFile], bool, str) -> np.ndarray
 
     """
-    Calculates the per-channel mean from all the images in the given
-    path and returns it as a num_channels dimensional numpy array.
+    Calculates the per-channel mean from all the given ImageFiles or image paths and returns it as
+    a N_CHANNELS dimensional numpy array.
 
     # Arguments
         :param image_files: ImageFiles to be used in the calculation
-        :param num_channels: number of channels in the image 1,3 or 4
+        :param verbose: should we print progress information
+        :param parallelization_backend: which parallelization method to use 'threading' or 'multiprocessing'
     # Returns
         :return: numpy array with the channel means in range [-1, 1]
     """
@@ -365,67 +686,68 @@ def calculate_per_channel_mean(image_files, num_channels, verbose=False):
     # Parallelize per-channel sum calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
-        delayed(_calculate_per_channel_mean)(image_file, num_channels, verbose) for image_file in image_files)
+    channel_sums = Parallel(n_jobs=n_jobs, backend=parallelization_backend)(
+        delayed(_get_per_channel_sum)(image_file, np.uint64, verbose) for image_file in image_files)
 
     # Calculate the final value
-    sums = np.sum(np.vstack(data), axis=0)
-    color_tot = sums[:-1]
-    px_tot = sums[-1]
+    channel_sums = sum(channel_sums)
+    num_pixels = channel_sums[-1]
+    channel_sums = channel_sums[:-1]
+    per_channel_mean = channel_sums.astype(dtype=np.float128) / float(num_pixels)
+    per_channel_mean = per_channel_mean.astype(dtype=np.float32)
 
-    per_channel_mean = color_tot / px_tot
-    print 'Per-channel mean calculation complete: {}'.format(per_channel_mean)
+    # Normalize to range [-1.0, 1.0]
+    per_channel_mean = per_channel_mean / 255.0
+    per_channel_mean = per_channel_mean - 0.5
+    per_channel_mean = per_channel_mean * 2.0
 
-    global _per_channel_mean_processed
-    _per_channel_mean_processed = 0
+    if verbose:
+        global _per_channel_mean_processed
+        _per_channel_mean_processed.value = 0
 
     return per_channel_mean
 
 
-def _calculate_per_channel_mean(image_file, num_channels, verbose):
-    # type: (ImageFile, int, bool) -> np.array[np.float32]
+def _get_per_channel_sum(image_file, dtype=np.uint64, verbose=False):
+    # type: (ImageFile, np.dtype, bool) -> np.ndarray
 
-    img = image_file.get_image(color_channels=num_channels)
-    img_array = img_to_array(img)
+    if isinstance(image_file, ImageFile):
+        img = image_file.get_image()
+    elif isinstance(image_file, str):
+        img = load_img(image_file)
+    else:
+        raise ValueError('Expected image_file parameter to be either ImageFile or str')
 
-    # Normalize color channels to zero-centered range [-1, 1]
-    img_array = image_utils.np_normalize_image_channels(img_array)
+    num_channels = len(img.getbands())
+    channel_sums = np.zeros(num_channels+1, dtype=dtype)
 
-    # Accumulate the sums of the different color channels
-    tot = np.array([0.0] * (num_channels + 1))
-
-    # Store the color value sums
     for i in range(0, num_channels):
-        tot[i] = np.sum(img_array[:, :, i])
+        channel_sums[i] = sum(img.getdata(i))
 
-    # In the final index store the number of pixels
-    tot[num_channels] = img_array.shape[0] * img_array.shape[1]
+    channel_sums[-1] = img.width * img.height
 
     if verbose:
         global _per_channel_mean_processed
-        _per_channel_mean_processed += 1
+        _per_channel_mean_processed.value += 1
 
-        if _per_channel_mean_processed%1000 == 0:
-            print 'Per-channel mean: processed {} images'.format(_per_channel_mean_processed)
+        if _per_channel_mean_processed.value % 1000 == 0:
+            print 'Per-channel mean: processed {} images'.format(_per_channel_mean_processed.value)
 
-    return tot
-
-
-_per_channel_stddev_processed = 0
+    return channel_sums
 
 
-def calculate_per_channel_stddev(image_files, per_channel_mean, num_channels, verbose=False):
-    # type: (list[ImageFile], np.array[np.float32], int, bool) -> np.array[np.float32]
+def calculate_per_channel_stddev(image_files, per_channel_mean, verbose=False, parallelization_backend='threading'):
+    # type: (list[ImageFile], np.ndarray, bool, str) -> np.ndarray
 
     """
-    Calculates the per-channel standard deviation from all the images in the given
-    path and returns it as a num_channels dimensional numpy array.
+    Calculates the per-channel standard deviation from all the given ImageFiles or image paths and returns it as
+    a N_CHANNELS dimensional numpy array.
 
     # Arguments
-        :param image_files: list of ImageFiles to be used in the calculation
+        :param image_files: list of ImageFiles or image paths to be used in the calculation
         :param per_channel_mean: per channel mean for the data set in range [-1,1]
-        :param num_channels: number of channels in the image 1,3 or 4
         :param verbose: print information about the progress of the calculation
+        :param parallelization_backend: which parallelization method to use 'threading' or 'multiprocessing'
     # Returns
         :return: numpy array with the channel means in range [-1, 1]
     """
@@ -433,133 +755,63 @@ def calculate_per_channel_stddev(image_files, per_channel_mean, num_channels, ve
     # Parallelize per-channel variance calculations
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='multiprocessing')(
-        delayed(_calculate_per_channel_stddev)(
-            image_file, per_channel_mean, num_channels, verbose) for image_file in image_files)
+    channel_variances = Parallel(n_jobs=n_jobs, backend=parallelization_backend)(
+        delayed(_get_per_channel_var)(
+            image_file, per_channel_mean, np.float64, verbose) for image_file in image_files)
 
     # Calculate the final value
-    sums = np.sum(np.vstack(data), axis=0)
-    var_tot = sums[:-1]
-    px_tot = sums[-1]
+    channel_variances = sum(channel_variances)
+    num_pixels = channel_variances[-1]
+    channel_variances = channel_variances[:-1]
 
     # Calculate final variance value
-    per_channel_var = var_tot / px_tot
-    print 'Final per-channel variance: {}'.format(per_channel_var)
+    per_channel_var = channel_variances / num_pixels
 
     # Calculate the stddev
     per_channel_stddev = np.sqrt(per_channel_var)
-    print 'Per-channel stddev calculation complete: {}'.format(per_channel_stddev)
 
-    global _per_channel_stddev_processed
-    _per_channel_stddev_processed = 0
+    if verbose:
+        global _per_channel_stddev_processed
+        _per_channel_stddev_processed.value = 0
 
     return per_channel_stddev
 
 
-def _calculate_per_channel_stddev(image_file, per_channel_mean, num_channels, verbose):
-    # type: (ImageFile, np.array[np.float32], int, bool) -> np.array[np.float32]
+def _get_per_channel_var(image_file, per_channel_mean, dtype=np.float64, verbose=False):
+    # type: (ImageFile, np.ndarray, np.dtype, bool) -> np.ndarray
 
-    var_tot = np.array([0.0] * (num_channels + 1))
+    if isinstance(image_file, ImageFile):
+        img = image_file.get_image()
+    elif isinstance(image_file, str):
+        img = load_img(image_file)
+    else:
+        raise ValueError('Expected image_file parameter to be either ImageFile or str')
 
-    # Load the image as numpy array
-    img = image_file.get_image(color_channels=num_channels)
-    img_array = img_to_array(img)
+    np_img = img_to_array(img)
+    num_channels = np_img.shape[-1]
+    channel_variances = np.zeros(num_channels+1, dtype=dtype)
 
-    # Normalize colors to zero-centered range [-1, 1]
-    img_array = image_utils.np_normalize_image_channels(img_array)
+    # Normalize to [-1 ,1]
+    np_img /= 255.0
+    np_img -= 0.5
+    np_img *= 2.0
 
-    # Var: SUM_0..N {(val-mean)^2} / N
-    for i in range(0, num_channels):
-        var_tot[i] = np.sum(np.square(img_array[:, :, i] - per_channel_mean[i]))
+    # Calculate variance
+    np_img -= per_channel_mean
+    np_img **= 2
+    channel_variances[:-1] = np.sum(np_img, axis=(0,1))
 
-    # Accumulate the number of total pixels
-    var_tot[-1] = img_array.shape[0] * img_array.shape[1]
+    # Append number of pixels
+    channel_variances[-1] = img.width * img.height
 
     if verbose:
         global _per_channel_stddev_processed
-        _per_channel_stddev_processed += 1
+        _per_channel_stddev_processed.value += 1
 
-        if _per_channel_stddev_processed%1000 == 0:
-            print 'Per-channel stddev: processed {} images'.format(_per_channel_stddev_processed)
+        if _per_channel_stddev_processed.value % 1000 == 0:
+            print 'Per-channel stddev: processed {} images'.format(_per_channel_stddev_processed.value)
 
-    return var_tot
-
-
-def calculate_median_frequency_balancing_weights(image_files, material_class_information, ignored_classes=None):
-    # type: (list[ImageFile], list[MaterialClassInformation], list[int]) -> np.array[np.float32]
-
-    """
-    Calculates the median frequency balancing weights for provided
-    segmentation masks.
-
-    # Arguments
-        :param image_files: list of ImageFiles of the mask files
-        :param material_class_information: material class information of the dataset
-        :param ignored_classes: a list of ignored class indices. Will assign zero as class weights to these classes and ignore when defining median.
-    # Returns
-        :return: a Numpy array with N_CLASSES values each describing the weight for that specific class
-    """
-
-    # Validate ignored classes before starting
-    if ignored_classes is not None:
-        num_classes = len(material_class_information)
-        for class_idx in ignored_classes:
-            if class_idx >= num_classes or class_idx < 0:
-                raise ValueError('Invalid ignore class index: {} for {} classes'.format(class_idx, num_classes))
-
-    n_jobs = get_number_of_parallel_jobs()
-
-    data = Parallel(n_jobs=n_jobs, backend='threading')(
-        delayed(_calculate_mask_class_frequencies)(
-            image_file, material_class_information) for image_file in image_files)
-    data = zip(*data)
-
-    class_pixels = data[0]
-    img_pixels = data[1]
-    class_pixels = np.sum(class_pixels, axis=0)
-    img_pixels = np.sum(img_pixels, axis=0)
-
-    # freq(c) is the number of pixels of class c divided
-    # by the total number of pixels in images where c is present.
-    # Median freq is the median of these frequencies.
-    class_frequencies = np.zeros_like(class_pixels, dtype=np.float32)
-
-    # Avoid NaNs/infs by looping
-    for i in range(class_frequencies.shape[0]):
-        if class_pixels[i] != 0 and img_pixels[i] != 0:
-            class_frequencies[i] = class_pixels[i] / img_pixels[i]
-
-    # Zero out ignored classes
-    if ignored_classes is not None:
-        for class_idx in ignored_classes:
-            class_frequencies[class_idx] = 0
-
-    # Only take into account non zero class frequencies
-    non_zero_class_frequencies = [freq for freq in class_frequencies if freq != 0]
-    median_frequency = np.median(non_zero_class_frequencies)
-
-    # Avoid NaNs/infs by looping
-    median_frequency_weights = np.zeros_like(class_frequencies, dtype=np.float32)
-
-    for i in range(class_frequencies.shape[0]):
-        if class_frequencies[i] != 0:
-            median_frequency_weights[i] = median_frequency / class_frequencies[i]
-
-    return median_frequency_weights
-
-
-def _calculate_mask_class_frequencies(image_file, material_class_information):
-    # type: (ImageFile, list[MaterialClassInformation]) -> (np.array[np.int32], int)
-
-    img_array = img_to_array(image_file.get_image())
-    expanded_mask = one_hot_encode_mask(img_array, material_class_information)
-    class_pixels = np.sum(expanded_mask, axis=(0, 1))
-
-    # Select all classes which appear in the picture i.e. have a value over zero
-    num_pixels = img_array.shape[0] * img_array.shape[1]
-    img_pixels = (class_pixels > 0.0) * num_pixels
-
-    return class_pixels, img_pixels
+    return channel_variances
 
 
 def calculate_material_samples_class_probabilities(material_samples):
@@ -615,7 +867,31 @@ def calculate_material_samples_enet_class_weights(material_samples):
     return class_weights
 
 
-def get_material_samples(mask_files, material_class_information, background_class=0, min_sample_size=5):
+def get_mask_statistics(mask_file_path, red_color_to_material_id, num_classes, class_frequencies_dtype=np.uint64):
+    # type: (str, dict, int, np.dtype) -> (int, np.ndarray)
+
+    # Load the red channel of the mask image
+    img = load_img(mask_file_path)
+    img = img.split()[0]
+
+    num_pixels = img.width * img.height
+    red_histogram = img.histogram()
+    material_frequencies = np.zeros(num_classes, dtype=class_frequencies_dtype)
+
+    for r_color, num_r_color_pixels in enumerate(red_histogram):
+        if num_r_color_pixels != 0:
+            material_id = red_color_to_material_id.get(r_color)
+
+            if material_id is None:
+                print 'WARNING: Could not find material id for red color {} with {} pixels in mask {}'.format(r_color, num_r_color_pixels, mask_file_path)
+                continue
+
+            material_frequencies[material_id] += num_r_color_pixels
+
+    return num_pixels, material_frequencies
+
+
+def get_material_samples(mask_files, material_class_information, background_class=0, min_sample_size=5, parallelization_backend='threading', verbose=False):
     """
     Given a set of mask files calculates the MaterialSamples in those mask files.
     Will return a list where each index contains a list of material samples for the
@@ -625,30 +901,30 @@ def get_material_samples(mask_files, material_class_information, background_clas
         :param mask_files: a list of segmentation mask files as ImageFiles
         :param material_class_information:
         :param background_class: index of the background class, default 0
-        :param min_sample_size: minimum pixels per MaterialSample to avoid degenerate
-        sets due to artefacts in the mask images
+        :param min_sample_size: minimum pixels per MaterialSample to avoid degenerate sets due to artefacts in the mask images
+        :param parallelization_backend: parallelization method, 'threading' or 'multiprocessing'
+        :param verbose: print progress information
     # Returns
         :return: A list of material sample lists (24xN_SAMPLES_IN_CLASS)
     """
     # type: (list[ImageFile]) -> list[list[MaterialSample]]
     import itertools
 
-    # Create a look up table for material red color -> material id
-    r_color_to_material_id = dict()
-
-    for mci in material_class_information:
-        for r_color in mci.r_color_values:
-            r_color_to_material_id[r_color] = mci.id
+    r_color_to_material_id = get_red_color_to_material_id_lookup_dict(material_class_information)
 
     # Parallelize the calculation for different files
     n_jobs = get_number_of_parallel_jobs()
 
-    data = Parallel(n_jobs=n_jobs, backend='threading')(
+    data = Parallel(n_jobs=n_jobs, backend=parallelization_backend)(
         delayed(_get_material_samples)(
-            mask_file, r_color_to_material_id, background_class, min_sample_size) for mask_file in mask_files)
+            mask_file, r_color_to_material_id, background_class, min_sample_size, verbose) for mask_file in mask_files)
 
     data = list(itertools.chain.from_iterable(data))
-    #print 'Found {} material samples'.format(len(data))
+
+    if verbose:
+        global _material_samples_processed
+        print 'Found in total {} material samples'.format(len(data))
+        _material_samples_processed.value = 0
 
     # Order the material samples according to their material index (id)
     material_samples = [list() for _ in range(len(material_class_information))]
@@ -663,17 +939,17 @@ def _from_2d_to_1d_index(y, x, width):
     return y * width + x
 
 
-def _get_material_samples(mask_file, r_color_to_material_id, background_class=0, min_sample_size=5):
+def _get_material_samples(mask_file, r_color_to_material_id, background_class=0, min_sample_size=5, verbose=False):
     # type: (ImageFile, dict, int, int) -> list[MaterialSample]
 
     from collections import deque
 
-    pil_mask_img = mask_file.get_image()
-    np_mask_img = img_to_array(pil_mask_img).astype(np.uint8)
+    # Take only the red channel of the image
+    pil_r_channel = mask_file.get_image().split()[0]
+    width = pil_r_channel.width
+    height = pil_r_channel.height
 
-    r_channel = np_mask_img[:, :, 0]
-    height = r_channel.shape[0]
-    width = r_channel.shape[1]
+    r_channel = img_to_array(pil_r_channel, dtype=np.uint8).squeeze()
     pixel_set_references = [None] * (height * width)
     unique_pixel_sets = []
     queue = deque()
@@ -723,7 +999,13 @@ def _get_material_samples(mask_file, r_color_to_material_id, background_class=0,
     # Filter sets smaller than min_set_size
     unique_pixel_sets = [s for s in unique_pixel_sets if len(s) >= min_sample_size]
 
-    print 'Found {} unique pixel sets for file {}'.format(len(unique_pixel_sets), mask_file.file_name)
+    if verbose:
+        global _material_samples_processed
+        _material_samples_processed.value += 1
+
+        if _material_samples_processed.value % 1000 == 0:
+            print 'Material samples: {} images processed'.format(_material_samples_processed.value)
+        #print 'Found {} unique pixel sets for file {}'.format(len(unique_pixel_sets), mask_file.file_name)
 
     # Build the material samples from the unique pixel sets
     material_samples = []
@@ -734,8 +1016,8 @@ def _get_material_samples(mask_file, r_color_to_material_id, background_class=0,
         material_samples.append(MaterialSample(file_name=mask_file.file_name,
                                                material_id=material_id,
                                                material_r_color=material_r_color,
-                                               image_width=np_mask_img.shape[1],
-                                               image_height=np_mask_img.shape[0],
+                                               image_width=width,
+                                               image_height=height,
                                                pixel_info_list=s))
 
     return material_samples
@@ -835,8 +1117,8 @@ def index_encode_mask(np_mask_img, material_class_information, verbose=False):
     return index_mask
 
 
-def split_labeled_dataset(photo_files, mask_files, split):
-    # type: (list[str], list[str], list[float]) -> (list[str], list[str], list[str])
+def split_labeled_dataset(photo_files, mask_files, split, random_seed):
+    # type: (list[str], list[str], list[float], int) -> (list[str], list[str], list[str])
 
     """
     Splits the whole dataset randomly into three different groups: training,
@@ -848,6 +1130,7 @@ def split_labeled_dataset(photo_files, mask_files, split):
         :param photo_files: photo files
         :param mask_files: segmentation mask files
         :param split: a list of floats describing the dataset split, must sum to one: [training, validation, test]
+        :param random_seed: random seed
     # Returns
         :return: a tuple of filename arrays describing the sets: (training, validation, test)
     """
@@ -867,6 +1150,8 @@ def split_labeled_dataset(photo_files, mask_files, split):
     photo_mask_files = zip(photo_files, mask_files)
 
     # Shuffle the list of files
+    random.seed(random_seed)
+    np.random.seed(random_seed)
     random.shuffle(photo_mask_files)
 
     # Divide the dataset to three different parts: training, validation and test
@@ -878,17 +1163,17 @@ def split_labeled_dataset(photo_files, mask_files, split):
 
     # If the sizes don't match exactly add/subtract the different
     # from the training set
-    if training_set_size + validation_set_size + test_set_size != dataset_size:
+    total_size = training_set_size + validation_set_size + test_set_size
+
+    if total_size != dataset_size:
         diff = dataset_size - (training_set_size + validation_set_size + test_set_size)
         training_set_size += diff
 
-    if training_set_size + validation_set_size + test_set_size != dataset_size:
+    total_size = training_set_size + validation_set_size + test_set_size
+
+    if total_size != dataset_size:
         raise ValueError('The split set sizes do not sum to total dataset size: {} + {} + {} = {} != {}'
-                         .format(training_set_size,
-                                 validation_set_size,
-                                 test_set_size,
-                                 training_set_size + validation_set_size + test_set_size,
-                                 dataset_size))
+                         .format(training_set_size, validation_set_size, test_set_size, total_size, dataset_size))
 
     training_set = photo_mask_files[0:training_set_size]
     validation_set = photo_mask_files[training_set_size:training_set_size + validation_set_size]
