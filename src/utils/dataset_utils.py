@@ -154,16 +154,21 @@ class MaterialSample(object):
         self.image_height = int(image_height)
 
         # Note: pixel info list values are tuples of (pixel value, y coord, x coord)
-        y_min = min(pixel_info_list, key=lambda t: t[1])[1]
-        x_min = min(pixel_info_list, key=lambda t: t[2])[2]
-        y_max = max(pixel_info_list, key=lambda t: t[1])[1]
-        x_max = max(pixel_info_list, key=lambda t: t[2])[2]
+        y_min = int(min(pixel_info_list, key=lambda t: t[1])[1])
+        x_min = int(min(pixel_info_list, key=lambda t: t[2])[2])
+        y_max = int(max(pixel_info_list, key=lambda t: t[1])[1])
+        x_max = int(max(pixel_info_list, key=lambda t: t[2])[2])
 
         self.yx_min = (y_min, x_min)
         self.yx_max = (y_max, x_max)
 
-        self.bbox_center = ((self.yx_min[0] + self.yx_max[0]) / 2, (self.yx_min[1] + self.yx_max[1]) / 2)
-        self.bbox_size = (self.yx_max[0] - self.yx_min[0]) * (self.yx_max[1] - self.yx_min[1])
+        center_y = int((self.yx_min[0] + self.yx_max[0]) / 2)
+        center_x = int((self.yx_min[1] + self.yx_max[1]) / 2)
+        self.bbox_center = (center_y, center_x)
+
+        bbox_height = int(self.yx_max[0] - self.yx_min[0])
+        bbox_width = int(self.yx_max[1] - self.yx_min[1])
+        self.bbox_size = bbox_height * bbox_width
 
     @property
     def file_name_no_ext(self):
@@ -298,7 +303,9 @@ class SegmentationSetInformation(object):
             self.material_samples_class_instance_frequencies = np.zeros(num_classes, dtype=np.uint64)
 
             for material_id in range(0, len(self.material_samples)):
+
                 self.material_samples_class_instance_frequencies[material_id] = len(self.material_samples[material_id])
+
                 for material_sample in self.material_samples[material_id]:
                     self.material_samples_total_pixels += material_sample.bbox_size
                     self.material_samples_class_pixel_frequencies[material_id] += material_sample.num_material_pixels
@@ -493,13 +500,14 @@ class SegmentationDataSetInformation(object):
         class_probabilities = class_pixels / total_pixels
         return list(class_probabilities)
 
-    def _print(self, str, verbose):
+    def _print(self, s, verbose):
         if verbose:
-            print str
+            print s
 
 ##############################################
 # UTILITY FUNCTIONS
 ##############################################
+
 
 def load_segmentation_data_set_information(data_set_information_file_path):
     # type: (str) -> SegmentationDataSetInformation
@@ -799,7 +807,7 @@ def _get_per_channel_var(image_file, per_channel_mean, dtype=np.float64, verbose
     # Calculate variance
     np_img -= per_channel_mean
     np_img **= 2
-    channel_variances[:-1] = np.sum(np_img, axis=(0,1))
+    channel_variances[:-1] = np.sum(np_img, axis=(0, 1))
 
     # Append number of pixels
     channel_variances[-1] = img.width * img.height

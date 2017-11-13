@@ -1,6 +1,6 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_data_set_information_file": "data/debug/1024/data-set-information.json",
+    "path_to_data_set_information_file": "data/debug/1024/data-set-information-new.json",
     "path_to_labeled_photos": "data/debug/1024/labeled/photos",
     "path_to_labeled_masks": "data/debug/1024/labeled/masks",
     "path_to_unlabeled_photos": "data/debug/1024/unlabeled",
