@@ -299,8 +299,8 @@ class SegmentationSetInformation(object):
         # Calculate material samples statistics
         if self.material_samples is not None:
             self.material_samples_total_pixels = 0
-            self.material_samples_class_pixel_frequencies = np.zeros(num_classes, dtype=np.uint64)
-            self.material_samples_class_instance_frequencies = np.zeros(num_classes, dtype=np.uint64)
+            self.material_samples_class_pixel_frequencies = [0] * num_classes
+            self.material_samples_class_instance_frequencies = [0] * num_classes
 
             for material_id in range(0, len(self.material_samples)):
 
