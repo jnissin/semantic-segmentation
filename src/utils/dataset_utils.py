@@ -293,8 +293,9 @@ class SegmentationSetInformation(object):
 
         num_pixels, material_frequencies = zip(*statistics)
 
-        self.total_pixels = sum(num_pixels)
+        self.total_pixels = int(sum(num_pixels))
         self.class_pixel_frequencies = list(sum(material_frequencies))
+        self.class_pixel_frequencies = [int(x) for x in self.class_pixel_frequencies]
 
         # Calculate material samples statistics
         if self.material_samples is not None:
