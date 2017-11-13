@@ -294,8 +294,7 @@ class SegmentationSetInformation(object):
         num_pixels, material_frequencies = zip(*statistics)
 
         self.total_pixels = int(sum(num_pixels))
-        self.class_pixel_frequencies = list(sum(material_frequencies))
-        self.class_pixel_frequencies = [int(x) for x in self.class_pixel_frequencies]
+        self.class_pixel_frequencies = [int(x) for x in sum(material_frequencies)]   # Make JSON encoding compatible
 
         # Calculate material samples statistics
         if self.material_samples is not None:
@@ -310,9 +309,6 @@ class SegmentationSetInformation(object):
                 for material_sample in self.material_samples[material_id]:
                     self.material_samples_total_pixels += material_sample.bbox_size
                     self.material_samples_class_pixel_frequencies[material_id] += material_sample.num_material_pixels
-
-            self.material_samples_class_instance_frequencies = list(self.material_samples_class_instance_frequencies)
-            self.material_samples_class_pixel_frequencies = list(self.material_samples_class_pixel_frequencies)
 
         self.statistics_loaded = True
 
@@ -395,8 +391,8 @@ class SegmentationDataSetInformation(object):
         per_channel_stddev = calculate_per_channel_stddev(image_files=photo_file_paths, per_channel_mean=per_channel_mean, verbose=verbose, parallelization_backend=parallelization_backend)
         self._print('Labeled only per-channel stddev: {} calculation completed in {} s'.format(list(per_channel_stddev), time.time()-s_time), verbose)
 
-        self.labeled_per_channel_mean = list(per_channel_mean)
-        self.labeled_per_channel_stddev = list(per_channel_stddev)
+        self.labeled_per_channel_mean = [float(x) for x in per_channel_mean]        # Make JSON encoding compatible
+        self.labeled_per_channel_stddev = [float(x) for x in per_channel_stddev]    # Make JSON encoding compatible
 
         # Calculate per-channel stddev for labeled only and full training set
         if self.training_set.unlabeled_photos is not None and len(self.training_set.unlabeled_photos) > 0:
@@ -413,8 +409,8 @@ class SegmentationDataSetInformation(object):
             per_channel_stddev = calculate_per_channel_stddev(image_files=photo_file_paths, per_channel_mean=per_channel_mean, verbose=verbose, parallelization_backend=parallelization_backend)
             self._print('Per-channel stddev: {} calculation completed in {} s'.format(list(per_channel_stddev), time.time()-s_time), verbose)
 
-            self.per_channel_mean = list(per_channel_mean)
-            self.per_channel_stddev = list(per_channel_stddev)
+            self.per_channel_mean = [float(x) for x in per_channel_mean]            # Make JSON encoding compatible
+            self.per_channel_stddev = [float(x) for x in per_channel_stddev]        # Make JSON encoding compatible
 
     def get_class_weights(self, class_weight_type, ignore_classes, use_material_samples):
         # type: (ClassWeightType, list, bool) -> list
@@ -508,7 +504,6 @@ class SegmentationDataSetInformation(object):
 ##############################################
 # UTILITY FUNCTIONS
 ##############################################
-
 
 def load_segmentation_data_set_information(data_set_information_file_path):
     # type: (str) -> SegmentationDataSetInformation
