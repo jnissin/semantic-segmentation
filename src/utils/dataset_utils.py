@@ -267,7 +267,6 @@ class SegmentationSetInformation(object):
         self.labeled_masks = labeled_masks
         self.labeled_size = len(labeled_photos)
         self.material_samples = material_samples
-        self.statistics_loaded = False
 
         # Per-file statistics
         self.total_pixels = 0
@@ -297,7 +296,7 @@ class SegmentationSetInformation(object):
         self.class_pixel_frequencies = [int(x) for x in sum(material_frequencies)]   # Make JSON encoding compatible
 
         # Calculate material samples statistics
-        if self.material_samples is not None:
+        if self.has_material_samples:
             self.material_samples_total_pixels = 0
             self.material_samples_class_pixel_frequencies = [0] * num_classes
             self.material_samples_class_instance_frequencies = [0] * num_classes
@@ -310,7 +309,19 @@ class SegmentationSetInformation(object):
                     self.material_samples_total_pixels += material_sample.bbox_size
                     self.material_samples_class_pixel_frequencies[material_id] += material_sample.num_material_pixels
 
-        self.statistics_loaded = True
+    @property
+    def has_material_samples(self):
+        return self.material_samples is not None
+
+    @property
+    def statistics_loaded(self):
+        per_file_stats_loaded = bool(self.total_pixels > 0 and self.class_pixel_frequencies is not None and len(self.class_pixel_frequencies) > 0)
+
+        if self.has_material_samples:
+            per_material_sample_stats_loaded = bool(self.has_material_samples and self.material_samples_total_pixels > 0 and self.material_samples_class_pixel_frequencies is not None and len(self.material_samples_class_pixel_frequencies) > 0)
+            return per_file_stats_loaded and per_material_sample_stats_loaded
+
+        return per_file_stats_loaded
 
 
 class SegmentationTrainingSetInformation(SegmentationSetInformation):
