@@ -1371,7 +1371,6 @@ class SegmentationDataGenerator(DataGenerator):
                             else:
                                 # Warn if the crop contains only zero and the mask is not all zero
                                 valid_crop_found = False
-                                self.logger.warn('Only background found within crop area of shape: {}'.format(crop_shape))
                 else:
                     # If the mask contains pixels of the desired material
                     valid_crop_found = image_utils.pil_image_band_contains_value(pil_mask_crop, band=0, val=material_sample.material_r_color)
@@ -1380,11 +1379,13 @@ class SegmentationDataGenerator(DataGenerator):
                 stop_iteration = valid_crop_found or attempt-1 <= 0 or not retry_crops
 
                 if stop_iteration:
-
                     # If valid crop was not found at all after all the retry attempts
-                    if not valid_crop_found:
-                        self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}, crop: {}, bbox: {}, img_size: {}'
-                                         .format(crop_shape, material_sample.material_id, material_sample.material_r_color, (y1x1, y2x2), bbox.corners, (pil_mask.size[1], pil_mask.size[0])))
+                    if not valid_crop_found and not dummy_mask:
+                        if material_sample is not None and bbox is not None:
+                            self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}, crop: {}, bbox: {}, img_size: {}'
+                                             .format(crop_shape, material_sample.material_id, material_sample.material_r_color, (y1x1, y2x2), bbox.corners, (pil_mask.size[1], pil_mask.size[0])))
+                        else:
+                            self.logger.warn('Only background found within crop area of shape: {}'.format(crop_shape))
 
                     pil_mask_crop.load()
                     pil_mask = pil_mask_crop
