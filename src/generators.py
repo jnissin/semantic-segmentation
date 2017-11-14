@@ -1177,8 +1177,8 @@ class SegmentationDataGenerator(DataGenerator):
         if material_sample is not None:
             # Sanity check: material samples are supposed to guarantee material instances
             if not self._mask_crop_is_valid(pil_mask, requested_material_r_color=material_sample.material_r_color):
-                photo_filename = '{}_crop_missing_id_{}_r_.jpg'.format(photo_file.file_name, material_sample.material_id, material_sample.material_r_color)
-                mask_filename = '{}_crop_missing_id_{}_r_.png'.format(photo_file.file_name, material_sample.material_id, material_sample.material_r_color)
+                photo_filename = '{}_crop_missing_id_{}_r_{}.jpg'.format(photo_file.file_name, material_sample.material_id, material_sample.material_r_color)
+                mask_filename = '{}_crop_missing_id_{}_r_{}.png'.format(photo_file.file_name, material_sample.material_id, material_sample.material_r_color)
 
                 self.logger.log_image(pil_photo, file_name=photo_filename, format='JPEG', scale=False)
                 self.logger.log_image(pil_mask, file_name=mask_filename, format='PNG', scale=False)
