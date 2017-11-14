@@ -1357,25 +1357,10 @@ class SegmentationDataGenerator(DataGenerator):
 
                 # If we retry (=validate) crops - check that the crop is non-black/has the material color
                 if retry_crops and not dummy_mask:
-                    valid_crop_found = False
-
-                    if material_sample is None:
-                        # If the crop has something else besides background
-                        if not image_utils.pil_image_band_only_contains_value(pil_mask_crop, band=0, val=0):
-                            valid_crop_found = True
-                        else:
-                            # If we are retrying crops and there are attempts left
-                            if retry_crops and attempt-1 != 0:
-                                # Check if the full mask image contains only black
-                                mask_unique_r_values = image_utils.pil_image_get_unique_band_values(pil_mask, band=0)
-
-                                if not (len(mask_unique_r_values) == 1 and mask_unique_r_values[0] == 0):
-                                    valid_crop_found = True
-                                else:
-                                    valid_crop_found = False
+                    if material_sample is not None:
+                        valid_crop_found = self._mask_crop_is_valid(pil_mask_crop, requested_material_r_color=material_sample.material_r_color)
                     else:
-                        # If the mask contains pixels of the desired material
-                        valid_crop_found = image_utils.pil_image_band_contains_value(pil_mask_crop, band=0, val=material_sample.material_r_color)
+                        valid_crop_found = self._mask_crop_is_valid(pil_mask_crop)
                 else:
                     valid_crop_found = True
 
@@ -1401,6 +1386,28 @@ class SegmentationDataGenerator(DataGenerator):
         pil_mask = self._pil_fit_image_to_div2_constraint(img=pil_mask, cval=mask_cval, interp='nearest')
 
         return pil_photo, pil_mask
+
+    def _mask_crop_is_valid(self, pil_mask_crop, requested_material_r_color=None):
+        # type: (PILImage, int) -> bool
+
+        """
+        Returns true if the material crop is valid i.e. contains the requested material red color
+        or is not all black if no color is given.
+
+        # Arguments
+            :param pil_mask_crop: the crop area
+            :param requested_material_r_color: requested material color
+        # Returns
+            :return: True if the crop is valid False otherwise
+        """
+
+        # If there is no requested color make sure the mask is not all black
+        if requested_material_r_color is None:
+            is_valid_crop = not image_utils.pil_image_band_only_contains_value(pil_mask_crop, band=0, val=0)
+        else:
+            is_valid_crop = image_utils.pil_image_band_contains_value(pil_mask_crop, band=0, val=requested_material_r_color)
+
+        return is_valid_crop
 
     def _get_random_bbox_crop_area(self, bbox, img_width, img_height, crop_width, crop_height, material_sample):
         # type: (BoundingBox, int, int, int, int, MaterialSample) -> tuple[tuple[int, int], tuple[int, int]]
