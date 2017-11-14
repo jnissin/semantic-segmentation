@@ -16,7 +16,7 @@ LOG_RUSAGE = True
 LOG_RUSAGE_INTERVAL = 2000  # How many steps between RUSAGE logs
 
 # Enables various debug prints and saving of batch images etc.
-DEBUG = True
+DEBUG = False
 
 # Enables profiling information to be shown - runs a shorter run for profiling
 PROFILE = False
