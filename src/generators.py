@@ -1378,7 +1378,7 @@ class SegmentationDataGenerator(DataGenerator):
                         if material_sample is not None and bbox is not None:
                             mask_contains_material_color = image_utils.pil_image_band_only_contains_value(pil_mask, band=0, val=material_sample.material_r_color)
                             self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}. Crop: {}, bbox: {}, img_size: {}. Mask image contains material color: {}'
-                                             .format(crop_shape, material_sample.material_id, material_sample.material_r_color, mask_contains_material_color, (y1x1, y2x2), bbox.corners, (pil_mask.size[1], pil_mask.size[0])))
+                                             .format(crop_shape, material_sample.material_id, material_sample.material_r_color, (y1x1, y2x2), bbox.corners, (pil_mask.size[1], pil_mask.size[0]), mask_contains_material_color))
                         else:
                             self.logger.warn('Only background found within crop area of shape: {}'.format(crop_shape))
 
