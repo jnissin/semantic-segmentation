@@ -1,6 +1,6 @@
 #!/bin/bash
 
-sinteractive -t 00:30:00 -p gpushort --gres=gpu:1 --constraint=hsw -c 8 --mem=42G
+sinteractive -t 00:30:00 -p gpushort --gres=gpu:teslap100:1 --constraint=hsw -c 8 --mem=42G
 
 module purge
 module load anaconda2

@@ -34,9 +34,9 @@
     "num_crop_reattempts": 5,
     "resized_image_cache_path": "/tmp/semantic-segmentation/resized/",
 
-    "num_labeled_per_batch": 5,
-    "num_unlabeled_per_batch": 5,
-    "validation_num_labeled_per_batch": 10,
+    "num_labeled_per_batch": 20,
+    "num_unlabeled_per_batch": 20,
+    "validation_num_labeled_per_batch": 20,
     "validation_crop_shape": null,
     "validation_resize_shape": [1024, 1024],
 
@@ -146,10 +146,10 @@
     },
 
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": false,
+    "continue_from_last_checkpoint": true,
     "use_class_weights": true,
     "ignore_classes": [0],
     "class_weight_type": "median_frequency_balancing",
     "_override_class_weights": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-    "save_values_on_early_exit": false
+    "save_values_on_early_exit": true
 }
