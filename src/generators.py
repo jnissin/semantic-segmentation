@@ -1145,7 +1145,6 @@ class SegmentationDataGenerator(DataGenerator):
             :param photo_file: photo as ImageFile
             :param mask_file: segmentation mask as ImageFile
             :param material_sample: material sample information for the files
-            :param mask_type:
         # Returns
             :return: a tuple of numpy arrays (image, mask)
         """
@@ -1173,19 +1172,25 @@ class SegmentationDataGenerator(DataGenerator):
                                                                         material_sample=material_sample,
                                                                         crop_shape=crop_shape,
                                                                         resize_shape=resize_shape,
-                                                                        retry_crops=True)
+                                                                        validate_crops=True)
 
         if material_sample is not None:
             # Sanity check: material samples are supposed to guarantee material instances
-            if not image_utils.pil_image_band_contains_value(pil_mask, band=0, val=material_sample.material_r_color):
-                self.logger.log_image(pil_photo, file_name='{}_crop_missing_id_{}_r_.jpg'.format(photo_file.file_name, material_sample.material_id, material_sample.material_r_color))
-                self.logger.warn('Material sample for material id: {}, red color: {},  was given but no corresponding entries were found in the cropped mask. Found r colors: {}'
-                                 .format(material_sample.material_id, material_sample.material_r_color, image_utils.pil_image_get_unique_band_values(pil_mask, band=0)))
-            else:
-                # If we are using selective attention mark everything else as zero (background) besides
-                # the red channel representing the current material sample
-                if self.use_selective_attention:
-                    pil_mask = image_utils.pil_image_mask_by_band_value(pil_mask, band=0, val=material_sample.material_r_color, cval=0)
+            if not self._mask_crop_is_valid(pil_mask, requested_material_r_color=material_sample.material_r_color):
+                photo_filename = '{}_crop_missing_id_{}_r_.jpg'.format(photo_file.file_name, material_sample.material_id, material_sample.material_r_color)
+                mask_filename = '{}_crop_missing_id_{}_r_.png'.format(photo_file.file_name, material_sample.material_id, material_sample.material_r_color)
+
+                self.logger.log_image(pil_photo, file_name=photo_filename, format='JPEG', scale=False)
+                self.logger.log_image(pil_mask, file_name=mask_filename, format='PNG', scale=False)
+
+                unique_red_colors = image_utils.pil_image_get_unique_band_values(pil_mask, band=0)
+                self.logger.warn('Crop of material sample with material id: {} was missing red color: {}. Found red colors: {}'
+                                 .format(material_sample.material_id, material_sample.material_r_color, unique_red_colors))
+
+            # If we are using selective attention mark everything else as zero (background) besides
+            # the red channel representing the current material sample
+            if self.use_selective_attention:
+                pil_mask = image_utils.pil_image_mask_by_band_value(pil_mask, band=0, val=material_sample.material_r_color, cval=0)
 
         return pil_photo, pil_mask
 
@@ -1222,12 +1227,12 @@ class SegmentationDataGenerator(DataGenerator):
                                                                         mask_cval=[0],
                                                                         crop_shape=crop_shape,
                                                                         resize_shape=resize_shape,
-                                                                        retry_crops=False,
+                                                                        validate_crops=False,
                                                                         dummy_mask=self.superpixel_segmentation_function is SuperpixelSegmentationFunctionType.NONE)
 
         return pil_photo, pil_mask
 
-    def process_segmentation_photo_mask_pair(self, step_idx, pil_photo, pil_mask, photo_cval, mask_cval, material_sample=None, crop_shape=None, resize_shape=None, retry_crops=True, dummy_mask=False):
+    def process_segmentation_photo_mask_pair(self, step_idx, pil_photo, pil_mask, photo_cval, mask_cval, material_sample=None, crop_shape=None, resize_shape=None, validate_crops=True, dummy_mask=False):
         # type: (int, PILImage, PILImage, np.ndarray, np.ndarray, MaterialSample, tuple, tuple, bool) -> (PILImage, PILImage)
 
         """
@@ -1244,7 +1249,7 @@ class SegmentationDataGenerator(DataGenerator):
             :param material_sample: the material sample
             :param crop_shape: shape of the crop or None
             :param resize_shape: shape of the target resize or None
-            :param retry_crops: retries crops if the whole crop is 0 (BG)
+            :param validate_crops: retries crops if the whole crop is 0 (BG)
             :param dummy_mask: is the mask a dummy mask i.e. all black (allows skipping augmentation for masks)
         # Returns
             :return: a tuple of (photo, mask) as PIL images
@@ -1355,8 +1360,8 @@ class SegmentationDataGenerator(DataGenerator):
 
                 pil_mask_crop = image_utils.pil_crop_image(pil_mask, x1=y1x1[1], y1=y1x1[0], x2=y2x2[1], y2=y2x2[0])
 
-                # If we retry (=validate) crops - check that the crop is non-black/has the material color
-                if retry_crops and not dummy_mask:
+                # If we validate crops - check that the crop is non-black/has the material color
+                if validate_crops and not dummy_mask:
                     if material_sample is not None:
                         valid_crop_found = self._mask_crop_is_valid(pil_mask_crop, requested_material_r_color=material_sample.material_r_color)
                     else:
@@ -1365,7 +1370,7 @@ class SegmentationDataGenerator(DataGenerator):
                     valid_crop_found = True
 
                 # If a valid crop was found or this is the last attempt or we should not retry crops
-                stop_iteration = valid_crop_found or attempt-1 <= 0 or not retry_crops
+                stop_iteration = valid_crop_found or attempt-1 <= 0 or not validate_crops
 
                 if stop_iteration:
                     # If valid crop was not found at all after all the retry attempts
