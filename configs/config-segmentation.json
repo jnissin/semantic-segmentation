@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_data_set_information_file": "data/512/data-set-information.json",
-    "path_to_labeled_photos": "data/512/labeled/photos.tar.gz",
-    "path_to_labeled_masks": "data/512/labeled/masks.tar.gz",
-    "path_to_unlabeled_photos": "data/512/unlabeled.tar.gz",
+    "path_to_data_set_information_file": "data/final/data-set-information.json",
+    "path_to_labeled_photos": "data/final/labeled/segments/photos",
+    "path_to_labeled_masks": "data/final/labeled/segments/masks",
+    "path_to_unlabeled_photos": "data/final/unlabeled",
 
     "log_folder_path": "model-data/{model_folder}/logs/",
     "log_file_path": "{log_folder_path}/log.txt",
@@ -28,54 +28,80 @@
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
-    "crop_shape": [384, 384],
-    "resize_shape": [[384, null], null, [768, null]],
+    "crop_shape": [336, 336],
+    "resize_shape": [[1408, null], null, [512, null]],
     "div2_constraint": 4,
     "num_crop_reattempts": 5,
+    "resized_image_cache_path": "/tmp/semantic-segmentation/resized/",
 
-    "num_labeled_per_batch": 10,
-    "num_unlabeled_per_batch": 10,
+    "num_labeled_per_batch": 5,
+    "num_unlabeled_per_batch": 5,
     "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": null,
-    "validation_resize_shape": [512, 512],
+    "validation_resize_shape": [1024, 1024],
 
     "num_color_channels": 3,
     "random_seed": 14874,
 
     "optimizer": {
       "name": "adam",
-      "learning_rate": 5e-3,
+      "learning_rate": 5e-4,
       "momentum": 0.9,
-      "decay": 2e-4
+      "decay": 0.0
     },
 
     "mean_teacher_params": {
       "teacher_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
       "ema_smoothing_coefficient_function": "lambda x: 0.99 if x < 40000 else 0.999",
-      "consistency_cost_coefficient_function": "lambda x: 1.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )"
+      "consistency_cost_coefficient_function": "lambda x: 1.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "transfer_weights": true,
+      "transfer_weights_options": {
+        "transfer_model_name": "enet-naive-upsampling-encoder-only",
+        "transfer_model_input_shape": [336, 336, 3],
+        "transfer_model_num_classes": 24,
+        "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-encoder-only/supervised-mt/checkpoints/teacher/teacher_weights.37-0.68.hdf5",
+        "from_layer_index": 0,
+        "to_layer_index": -3,
+        "freeze_from_layer_index": null,
+        "freeze_to_layer_index": null,
+        "scale_lr_from_layer_index": null,
+        "scale_lr_to_layer_index": null,
+        "scale_lr_factor": null
+      }
     },
 
     "superpixel_params": {
-      "unlabeled_cost_coefficient_function": "lambda x: 0.0 if x < 10000 else 5.0 * min(np.exp(-5.0 * (1.0 - ((float(x-10000)/40000.0)**2))), 1.0)",
-      "label_generation_function_name": "felzenszwalb"
+      "unlabeled_cost_coefficient_function": "lambda x: 0.0 if x < 10000 else 1.5 * min(np.exp(-5.0 * (1.0 - ((float(x-10000)/30000.0)**2))), 1.0)",
+      "label_generation_function_name": "felzenszwalb",
+      "superpixel_mask_cache_path": "/data/final/unlabeled_fzw_masks/"
     },
 
     "use_data_augmentation": true,
     "use_material_samples": true,
     "use_selective_attention": false,
     "use_adaptive_sampling": false,
+    "material_sample_iteration_mode": "UNIFORM_MEAN",
 
     "data_augmentation_params": {
-      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/12000.0)**2)), 1.0) ), 1.0 )",
-      "rotation_range": 40.0,
-      "zoom_range": 0.25,
+      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "rotation_range": 90.0,
+      "zoom_range": 0.15,
       "width_shift_range": 0.05,
       "height_shift_range": 0.05,
       "channel_shift_range": 0.05,
       "horizontal_flip": true,
       "vertical_flip": false,
-      "gaussian_noise_stddev_function": "lambda x: 0.05 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/12000.0)**2)), 1.0) ), 1.0 )",
-      "gamma_adjust_range": 0.5
+      "gaussian_noise_stddev_function": "lambda x: 0.03 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "gamma_adjust_range": 0.5,
+      "mean_teacher_noise_params": {
+        "gaussian_noise_stddev": 0.10,
+        "translate_range": null,
+        "rotation_range": null,
+        "horizontal_flip_probability": null,
+        "vertical_flip_probability": null,
+        "channel_shift_range": 0.10,
+        "gamma_adjust_range": 0.10
+      }
     },
 
     "reduce_lr_on_plateau": {
@@ -96,13 +122,13 @@
       "mode": "auto"
     },
 
-    "transfer_weights": false,
+    "transfer_weights": true,
 
     "transfer_weights_options": {
       "transfer_model_name": "enet-naive-upsampling-encoder-only",
-      "transfer_model_input_shape": [362, 362, 3],
+      "transfer_model_input_shape": [336, 336, 3],
       "transfer_model_num_classes": 24,
-      "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-encoder-only/supervised-mt/checkpoints/teacher/teacher_weights.31-0.16.hdf5",
+      "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-encoder-only/supervised-mt/checkpoints/weights.37-0.70.hdf5",
       "from_layer_index": 0,
       "to_layer_index": -3,
       "freeze_from_layer_index": null,
@@ -116,15 +142,14 @@
       "lr_schedule": "lambda x: 5e-3 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
       "b2_schedule": "lambda x: 0.99 if x < 40000 else 0.999",
       "last_scheduled_step": 40000,
-      "verbose": true
+      "verbose": false
     },
 
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": true,
+    "continue_from_last_checkpoint": false,
     "use_class_weights": true,
     "ignore_classes": [0],
-    "override_class_weights": [0.0, 1.0, 0.95233443019187014, 1.0084894598124294, 1.0876336820859942, 0.93513416972375907, 1.3562841644539163, 0.88087027961984254, 0.72744505982135144, 1.1964130410283282, 0.98093916451035346, 1.199377305308204, 1.0086550427731433, 1.0997899973865224, 0.66508626724156616, 1.0516009875177081, 0.86601989283840231, 0.91591412305333431, 1.1624688349949956, 1.3514328500987325, 0.98490163629706184, 0.96256977621705386, 0.90765780461628853, 1.0521964621543587],
-    "_enet_bbox_override_class_weights": [0.0, 2.1215443921406503, 2.0434101501187212, 2.1354230608724842, 2.2642844585771895, 2.0151257168300942, 2.6951626632184746, 1.9255701379439607, 1.6694686474110134, 2.4399220507866293, 2.0903426536404721, 2.4446852835443917, 2.1356936471944441, 2.2839953284411498, 1.563996479598619, 2.2057325023413741, 1.9009734053678011, 1.9834622878258954, 2.3852921532375384, 2.6874657308724039, 2.0968337297477362, 2.0602185731141467, 1.9698417391304757, 2.2067016866776314],
+    "class_weight_type": "median_frequency_balancing",
     "_override_class_weights": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-    "save_values_on_early_exit": true
+    "save_values_on_early_exit": false
 }

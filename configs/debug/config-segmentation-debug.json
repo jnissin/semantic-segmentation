@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
-    "path_to_data_set_information_file": "data/debug/1024/data-set-information-new.json",
-    "path_to_labeled_photos": "data/debug/1024/labeled/photos",
-    "path_to_labeled_masks": "data/debug/1024/labeled/masks",
-    "path_to_unlabeled_photos": "data/debug/1024/unlabeled",
+    "path_to_data_set_information_file": "data/final/data-set-information.json",
+    "path_to_labeled_photos": "data/final/labeled/segments/photos",
+    "path_to_labeled_masks": "data/final/labeled/segments/masks",
+    "path_to_unlabeled_photos": "data/final/unlabeled",
 
     "log_folder_path": "model-data/{model_folder}/logs/",
     "log_file_path": "{log_folder_path}/log.txt",
@@ -47,7 +47,7 @@
       "name": "adam",
       "learning_rate": 5e-4,
       "momentum": 0.9,
-      "decay": 2e-4
+      "decay": 0.0
     },
 
     "mean_teacher_params": {
@@ -71,15 +71,16 @@
     },
 
     "superpixel_params": {
-      "unlabeled_cost_coefficient_function": "lambda x: 0.0 if x < 10000 else 5.0 * min(np.exp(-5.0 * (1.0 - ((float(x-10000)/40000.0)**2))), 1.0)",
+      "unlabeled_cost_coefficient_function": "lambda x: 0.0 if x < 10000 else 1.5 * min(np.exp(-5.0 * (1.0 - ((float(x-10000)/30000.0)**2))), 1.0)",
       "label_generation_function_name": "felzenszwalb",
-      "superpixel_mask_cache_path": "/tmp/semantic-segmentation/superpixel-mask-cache/"
+      "superpixel_mask_cache_path": "/data/final/unlabeled_fzw_masks/"
     },
 
     "use_data_augmentation": true,
     "use_material_samples": true,
     "use_selective_attention": false,
     "use_adaptive_sampling": false,
+    "material_sample_iteration_mode": "UNIFORM_MEAN",
 
     "data_augmentation_params": {
       "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
@@ -149,8 +150,6 @@
     "use_class_weights": true,
     "ignore_classes": [0],
     "class_weight_type": "median_frequency_balancing",
-    "override_class_weights": [0.0, 1.0, 0.95233443019187014, 1.0084894598124294, 1.0876336820859942, 0.93513416972375907, 1.3562841644539163, 0.88087027961984254, 0.72744505982135144, 1.1964130410283282, 0.98093916451035346, 1.199377305308204, 1.0086550427731433, 1.0997899973865224, 0.66508626724156616, 1.0516009875177081, 0.86601989283840231, 0.91591412305333431, 1.1624688349949956, 1.3514328500987325, 0.98490163629706184, 0.96256977621705386, 0.90765780461628853, 1.0521964621543587],
-    "_enet_bbox_override_class_weights": [0.0, 2.1215443921406503, 2.0434101501187212, 2.1354230608724842, 2.2642844585771895, 2.0151257168300942, 2.6951626632184746, 1.9255701379439607, 1.6694686474110134, 2.4399220507866293, 2.0903426536404721, 2.4446852835443917, 2.1356936471944441, 2.2839953284411498, 1.563996479598619, 2.2057325023413741, 1.9009734053678011, 1.9834622878258954, 2.3852921532375384, 2.6874657308724039, 2.0968337297477362, 2.0602185731141467, 1.9698417391304757, 2.2067016866776314],
     "_override_class_weights": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
     "save_values_on_early_exit": false
 }

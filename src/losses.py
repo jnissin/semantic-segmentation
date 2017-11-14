@@ -134,21 +134,18 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_
     y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled)
 
     # Calculate the gradients for the softmax output using a convolution with a Sobel mask
-    sobel_x = K.tf.stop_gradient(K.tf.constant([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], dtype=K.tf.float32))
-    sobel_x_filter = K.tf.stop_gradient(K.tf.reshape(sobel_x, [3, 3, 1, 1]))
-    sobel_y_filter = K.tf.stop_gradient(K.tf.transpose(sobel_x_filter, [1, 0, 2, 3]))
+    Gx_kernel = K.tf.tile(K.tf.constant([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], shape=[3, 3, 1, 1], dtype=K.tf.float32), [1, 1, num_classes, 1])
+    Gy_kernel = K.tf.transpose(Gx_kernel, [1, 0, 2, 3])
 
-    Gx = K.tf.nn.conv2d(y_pred_unlabeled_softmax, sobel_x_filter, strides=[1, 1, 1, 1], padding='SAME')
-    Gy = K.tf.nn.conv2d(y_pred_unlabeled_softmax, sobel_y_filter, strides=[1, 1, 1, 1], padding='SAME')
+    Gx = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, Gx_kernel, strides=[1, 1, 1, 1], padding='SAME')
+    Gy = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, Gy_kernel, strides=[1, 1, 1, 1], padding='SAME')
 
     # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), B_SIZExHxW
     # Note: clip by epsilon to avoid NaN values due to: (small grad value)^2
     Gx = K.tf.clip_by_value(Gx, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
     Gy = K.tf.clip_by_value(Gy, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
 
-    Gx2 = K.tf.square(Gx)
-    Gy2 = K.tf.square(Gy)
-    G_mag = K.tf.sqrt(K.tf.add(Gx2, Gy2))
+    G_mag = K.tf.sqrt(K.tf.add(K.tf.pow(Gx, 2), K.tf.pow(Gy, 2)))
     G_mag = K.tf.reduce_mean(G_mag, axis=-1)
 
     # Ensure the y_true_unlabeled are binary masks with borders denoted by 0s and everything else as 1s
@@ -453,11 +450,12 @@ def segmentation_mean_teacher_lambda_loss(args):
     """
     consistency_cost = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient)
 
-    if settings.DEBUG:
-        consistency_cost = K.tf.Print(consistency_cost, [consistency_cost, classification_costs], message="costs: ", summarize=24)
-
     # Total cost
     total_costs = K.tf.add(classification_costs, consistency_cost)
+
+    if settings.DEBUG:
+        total_costs = K.tf.Print(total_costs, [consistency_cost, classification_costs, total_costs], message="costs: ", summarize=24)
+
     return total_costs
 
 
@@ -516,11 +514,12 @@ def segmentation_superpixel_lambda_loss(args):
     """
     unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
 
-    if settings.DEBUG:
-        unlabeled_costs = K.tf.Print(unlabeled_costs, [unlabeled_costs, classification_costs], message="costs: ")
-
     # Total cost
     total_costs = K.tf.add(classification_costs, unlabeled_costs)
+
+    if settings.DEBUG:
+        total_costs = K.tf.Print(total_costs, [unlabeled_costs, classification_costs, total_costs], message="costs: ")
+
     return total_costs
 
 
@@ -599,11 +598,12 @@ def segmentation_mean_teacher_superpixel_lambda_loss(args):
     """
     unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
 
-    if settings.DEBUG:
-        unlabeled_costs = K.tf.Print(unlabeled_costs, [consistency_costs, unlabeled_costs, classification_costs], message="costs: ", summarize=24)
-
     # Total cost
     total_costs = K.tf.add(K.tf.add(classification_costs, consistency_costs), unlabeled_costs)
+
+    if settings.DEBUG:
+        total_costs = K.tf.Print(total_costs, [consistency_costs, unlabeled_costs, classification_costs, total_costs], message="costs: ", summarize=24)
+
     return total_costs
 
 

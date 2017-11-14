@@ -27,7 +27,15 @@ class BatchDataFormat(Enum):
 
 class SuperpixelSegmentationFunctionType(Enum):
     NONE = 0
-    FELZENSWALB = 1
+    FELZENSZWALB = 1
     SLIC = 2
     WATERSHED = 3
     QUICKSHIFT = 4
+
+
+class MaterialSampleIterationMode(Enum):
+    NONE = -1           # None
+    UNIFORM_MAX = 0     # Sample each material class uniformly. Set the number of steps per epoch according to max class num samples.
+    UNIFORM_MIN = 1     # Sample each material class uniformly. Set the number of steps per epoch according to min class num samples.
+    UNIFORM_MEAN = 2    # Sample each class uniformly. Set the number of steps per epoch according to mean samples per class.
+    UNIQUE = 3          # Iterate through all the unique samples once within epoch - means no balancing

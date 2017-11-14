@@ -1451,7 +1451,7 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
     return segments
 
 
-def np_get_felzenswalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False, borders_only=False):
+def np_get_felzenszwalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False, borders_only=False):
     # type: (np.ndarray, float, float, int, bool) -> np.ndarray
 
     from skimage.segmentation import felzenszwalb, find_boundaries

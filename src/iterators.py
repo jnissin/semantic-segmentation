@@ -11,10 +11,8 @@ from multiprocessing import Array
 from keras_extensions.utils.data_utils import Sequence
 
 from abc import ABCMeta, abstractmethod
-from enum import Enum
-
 from logger import Logger
-from enums import BatchDataFormat
+from enums import BatchDataFormat, MaterialSampleIterationMode
 
 
 _DATA_SET_ITERATOR_UUID = 0
@@ -201,6 +199,8 @@ class DataSetIterator(Sequence):
     """
 
     __metaclass__ = ABCMeta
+
+    _NUM_QUEUED_EPOCHS = 4
 
     def __init__(self,
                  data_generator,
@@ -508,14 +508,16 @@ class BasicDataSetIterator(DataSetIterator):
                                                             batch_size=labeled_batch_size,
                                                             shuffle=shuffle,
                                                             seed=seed,
-                                                            initial_epoch=self.initial_epoch)
+                                                            initial_epoch=self.initial_epoch,
+                                                            num_queued_epochs=BasicDataSetIterator._NUM_QUEUED_EPOCHS)
 
         if self.using_unlabeled_data:
             self._unlabeled_batch_index_buffer = BatchIndexBuffer(n=n_unlabeled,
                                                                   batch_size=unlabeled_batch_size,
                                                                   shuffle=shuffle,
                                                                   seed=seed,
-                                                                  initial_epoch=self.unlabeled_epoch_index)
+                                                                  initial_epoch=self.unlabeled_epoch_index,
+                                                                  num_queued_epochs=BasicDataSetIterator._NUM_QUEUED_EPOCHS)
         else:
             self._unlabeled_batch_index_buffer = None
 
@@ -619,19 +621,11 @@ class BasicDataSetIterator(DataSetIterator):
         pass
 
 
-class MaterialSampleIterationMode(Enum):
-    UNIFORM_MAX = 0     # Sample each material class uniformly. Set the number of steps per epoch according to max class num samples.
-    UNIFORM_MIN = 1     # Sample each material class uniformly. Set the number of steps per epoch according to min class num samples.
-    UNIFORM_MEAN = 2    # Sample each class uniformly. Set the number of steps per epoch according to mean samples per class.
-    UNIQUE = 3          # Iterate through all the unique samples once within epoch - means no balancing
-
-
 class MaterialSampleDataSetIterator(DataSetIterator):
     """
     A class for iterating through MaterialSample data set as the labeled data set.
     """
 
-    _NUM_QUEUED_EPOCHS = 2
     _SHARED_MATERIAL_CATEGORY_PIXELS_SEEN = {}
     _SHARED_MATERIAL_CATEGORY_NEXT_SAMPLE_INDICES = {}
 

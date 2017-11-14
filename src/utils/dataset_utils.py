@@ -39,10 +39,21 @@ class BoundingBox(object):
         if x_min >= x_max:
             raise ValueError('Invalid X values: x_min >= x_max: {} >= {}'.format(x_min, x_max))
 
-        self._y_min = y_min
-        self._x_min = x_min
-        self._y_max = y_max
-        self._x_max = x_max
+        if coordinate_type is CoordinateType.NORMALIZED:
+            if (not (0.0 <= y_min <= 1.0)) or (not (0.0 <= x_min <= 1.0)):
+                raise ValueError('Invalid coordinate values for coordinate type: {}, y_min: {}, x_min: {}'.format(coordinate_type, y_min, x_min))
+
+        if coordinate_type is CoordinateType.NORMALIZED:
+            self._y_min = float(y_min)
+            self._x_min = float(x_min)
+            self._y_max = float(y_max)
+            self._x_max = float(x_max)
+        else:
+            self._y_min = int(y_min)
+            self._x_min = int(x_min)
+            self._y_max = int(y_max)
+            self._x_max = int(x_max)
+
         self._coordinate_type = coordinate_type
 
     @property
@@ -87,6 +98,8 @@ class BoundingBox(object):
         return self._coordinate_type
 
     def transform(self, transform, min_transformed_bbox_size=4):
+        # type: (ImageTransform, int) -> BoundingBox
+
         """
         Transforms the bounding box using the parameter ImageTransform. Returns a new
         bounding box describing the transformed bounding box or None if the bounding box
@@ -94,12 +107,10 @@ class BoundingBox(object):
 
         # Arguments
             :param transform: an ImageTransform used to transform this bounding box
-            :param min_transformed_bbox_size: minimum size of the transformed bounding box
+            :param min_transformed_bbox_size: minimum size of the transformed bounding box in pixels
         # Returns
             :return: a new transformed bounding box
         """
-
-        # type: ImageTransform -> BoundingBox
 
         # Bounding box as np ndarray: tlc, trc, brc, blc
         np_bbox = np.array((self.top_left, self.top_right, self.bottom_right, self.bottom_left), dtype=np.float32)
@@ -127,12 +138,15 @@ class BoundingBox(object):
         tf_x_max = np.clip(np.max(np_transformed_bbox[:, 1]), 0, x_limit)
 
         # If the area is less than the minimum transformed bbox size return None
-        tf_size = (tf_y_max - tf_y_min) * (tf_x_max - tf_x_min)
+        if self.coordinate_type is CoordinateType.NORMALIZED:
+            tf_size = int(((tf_y_max - tf_y_min) * transform.image_height) * ((tf_x_max - tf_x_min) * transform.image_width))
+        else:
+            tf_size = int((tf_y_max - tf_y_min) * (tf_x_max - tf_x_min))
 
         if tf_size <= min_transformed_bbox_size:
             return None
 
-        return BoundingBox(tf_y_min, tf_x_min, tf_y_max, tf_x_max, self.coordinate_type)
+        return BoundingBox(y_min=tf_y_min, x_min=tf_x_min, y_max=tf_y_max, x_max=tf_x_max, coordinate_type=self.coordinate_type)
 
 
 class MaterialSample(object):
@@ -208,13 +222,46 @@ class MaterialSample(object):
 
     def get_bbox_abs(self):
         # type: () -> BoundingBox
-        return BoundingBox(y_min=self.yx_min[0], x_min=self.yx_min[1], y_max=self.yx_max[0], x_max=self.yx_max[1], coordinate_type=CoordinateType.ABSOLUTE)
+
+        y_min = self.yx_min[0]
+        y_max = self.yx_max[0]
+        x_min = self.yx_min[1]
+        x_max = self.yx_max[1]
+
+        # If the material sample is a single pixel stripe - inflate
+        if y_min == y_max:
+            y_min = max(0, y_min-1)
+            y_max = min(self.image_height, y_max+1)
+
+        if x_min == x_max:
+            x_min = max(0, x_min-1)
+            x_max = min(self.image_width, x_max+1)
+
+        return BoundingBox(y_min=y_min, x_min=x_min, y_max=y_max, x_max=x_max, coordinate_type=CoordinateType.ABSOLUTE)
 
     def get_bbox_rel(self):
         # type: () -> BoundingBox
-        rel_yx_min = self.bbox_top_left_corner_rel
-        rel_yx_max = self.bbox_bottom_right_corner_rel
-        return BoundingBox(y_min=rel_yx_min[0], x_min=rel_yx_min[1], y_max=rel_yx_max[0], x_max=rel_yx_max[1], coordinate_type=CoordinateType.NORMALIZED)
+
+        y_min = self.yx_min[0]
+        y_max = self.yx_max[0]
+        x_min = self.yx_min[1]
+        x_max = self.yx_max[1]
+
+        # If the material sample is a single pixel stripe - inflate
+        if y_min == y_max:
+            y_min = max(0, y_min-1)
+            y_max = min(self.image_height, y_max+1)
+
+        if x_min == x_max:
+            x_min = max(0, x_min-1)
+            x_max = min(self.image_width, x_max+1)
+
+        y_min = float(y_min)/self.image_height
+        y_max = float(y_max)/self.image_height
+        x_min = float(x_min)/self.image_width
+        x_max = float(x_max)/self.image_width
+
+        return BoundingBox(y_min=y_min, x_min=x_min, y_max=y_max, x_max=x_max, coordinate_type=CoordinateType.NORMALIZED)
 
 
 class MINCSample(object):
@@ -423,8 +470,8 @@ class SegmentationDataSetInformation(object):
             self.per_channel_mean = [float(x) for x in per_channel_mean]            # Make JSON encoding compatible
             self.per_channel_stddev = [float(x) for x in per_channel_stddev]        # Make JSON encoding compatible
 
-    def get_class_weights(self, class_weight_type, ignore_classes, use_material_samples):
-        # type: (ClassWeightType, list, bool) -> list
+    def get_class_weights(self, class_weight_type, ignore_classes, use_material_samples, using_material_sample_instance_balancing=False, crop_shape=None):
+        # type: (ClassWeightType, list, bool, bool, tuple) -> list
 
         ignore_classes = ignore_classes if ignore_classes is not None else []
 
@@ -435,7 +482,9 @@ class SegmentationDataSetInformation(object):
             return class_weights
 
         if use_material_samples:
-            class_probabilities = self._calculate_material_samples_class_probabilities(ignore_classes=ignore_classes)
+            class_probabilities = self._calculate_material_samples_class_probabilities(ignore_classes=ignore_classes,
+                                                                                       using_material_sample_instance_balancing=using_material_sample_instance_balancing,
+                                                                                       crop_shape=crop_shape)
         else:
             class_probabilities = self._calculate_class_probabilities(ignore_classes=ignore_classes)
 
@@ -492,21 +541,66 @@ class SegmentationDataSetInformation(object):
         class_probabilities = class_pixels / total_pixels
         return list(class_probabilities)
 
-    def _calculate_material_samples_class_probabilities(self, ignore_classes):
-        # type: (list) -> list
+    def _calculate_material_samples_class_probabilities(self, ignore_classes, using_material_sample_instance_balancing, crop_shape):
+        # type: (list, bool, tuple) -> list
 
         if self.training_set.material_samples is None:
             raise ValueError('Cannot calculate material sample class probabilities, training set does not contain material samples')
 
-        total_pixels = self.training_set.material_samples_total_pixels
-        class_pixels = np.array(self.training_set.material_samples_class_pixel_frequencies, dtype=np.float64)
+        if using_material_sample_instance_balancing:
+            if crop_shape is None:
+                raise ValueError('If using material sample instance balancing crop shape must be provided')
 
-        for class_id in ignore_classes:
-            total_pixels -= class_pixels[class_id]
-            class_pixels[class_id] = 0
+            num_material_classes = len(self.training_set.material_samples)
+            class_probabilities = np.zeros(num_material_classes, dtype=np.float32)
+            crop_area = crop_shape[0] * crop_shape[1]
 
-        class_probabilities = class_pixels / total_pixels
-        return list(class_probabilities)
+            for material_class_id in range(0, num_material_classes):
+                if material_class_id in ignore_classes:
+                    continue
+
+                p_material_class = 0.0
+
+                for material_sample in self.training_set.material_samples[material_class_id]:
+                    # Calculate bbox height and width in pixels
+                    bbox_height = max(material_sample.yx_max[0] - material_sample.yx_min[0], 1)
+                    bbox_width = max(material_sample.yx_max[1] - material_sample.yx_min[1], 1)
+                    bbox_area = bbox_height * bbox_width
+
+                    # Calculate proportion of material sample pixels of the bbox area
+                    p_material_pixels = min(float(material_sample.num_material_pixels) / float(bbox_area), 1.0)
+
+                    # Calculate limit bbox dimensions to crop dimensions
+                    bbox_height = min(crop_shape[0], bbox_height)
+                    bbox_width = min(crop_shape[1], bbox_width)
+                    bbox_area = bbox_height * bbox_width
+
+                    # Calculate proportion of bbox pixels of the crop pixels
+                    p_bbox_pixels_in_crop = min(float(bbox_area) / float(crop_area), 1.0)
+
+                    # Calculate proportion of material pixels of the crop pixels
+                    p = p_material_pixels * p_bbox_pixels_in_crop
+                    p_material_class += p
+
+                p_material_class = p_material_class / len(self.training_set.material_samples[material_class_id])
+                class_probabilities[material_class_id] = p_material_class
+
+            # Normalize class probabilities to sum to 1
+            class_probabilities = np.array(class_probabilities, dtype=np.float32)
+            class_probabilities /= np.sum(class_probabilities)
+            class_probabilities = list(class_probabilities)
+
+            return list(class_probabilities)
+        else:
+            total_pixels = self.training_set.material_samples_total_pixels
+            class_pixels = np.array(self.training_set.material_samples_class_pixel_frequencies, dtype=np.float64)
+
+            for class_id in ignore_classes:
+                total_pixels -= class_pixels[class_id]
+                class_pixels[class_id] = 0
+
+            class_probabilities = class_pixels / total_pixels
+            return list(class_probabilities)
 
     def _print(self, s, verbose):
         if verbose:

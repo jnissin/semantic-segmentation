@@ -65,8 +65,8 @@ def generate_mask_for_unlabeled_image(f_type, img_path, output_path, verbose=Fal
         return
 
     # Segment
-    if f_type == SuperpixelSegmentationFunctionType.FELZENSWALB:
-        mask = image_utils.np_get_felzenswalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=borders_only)
+    if f_type == SuperpixelSegmentationFunctionType.FELZENSZWALB:
+        mask = image_utils.np_get_felzenszwalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=borders_only)
     elif f_type == SuperpixelSegmentationFunctionType.SLIC:
         mask = image_utils.np_get_slic_segmentation(np_img, n_segments=400, sigma=1, compactness=10.0, max_iter=20, normalize_img=False, borders_only=borders_only)
     elif f_type == SuperpixelSegmentationFunctionType.QUICKSHIFT:
@@ -121,7 +121,7 @@ def main():
     args = vars(ap.parse_args())
 
     function_name_to_type = {'slic': SuperpixelSegmentationFunctionType.SLIC,
-                             'felzenswalb': SuperpixelSegmentationFunctionType.FELZENSWALB,
+                             'felzenswalb': SuperpixelSegmentationFunctionType.FELZENSZWALB,
                              'quickshift': SuperpixelSegmentationFunctionType.QUICKSHIFT,
                              'watershed': SuperpixelSegmentationFunctionType.WATERSHED}
 

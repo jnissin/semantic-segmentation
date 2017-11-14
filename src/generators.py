@@ -17,9 +17,9 @@ from utils import image_utils
 from utils.image_utils import ImageInterpolation, ImageTransform, img_to_array
 from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSample, BoundingBox
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
-from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator, MaterialSampleIterationMode
+from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator
 from logger import Logger
-from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ImageType
+from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ImageType, MaterialSampleIterationMode
 
 from joblib import Parallel, delayed
 
@@ -245,13 +245,14 @@ class SegmentationDataGeneratorParameters(DataGeneratorParameters):
                  material_class_information,
                  mask_cval=None,
                  use_material_samples=False,
+                 material_sample_iteration_mode=MaterialSampleIterationMode.NONE,
                  use_selective_attention=False,
                  use_adaptive_sampling=False,
                  num_crop_reattempts=0,
                  superpixel_segmentation_function=None,
                  superpixel_mask_cache_path=None,
                  **kwargs):
-        # type: (list[MaterialClassInformation], np.ndarray, bool, bool, bool, int, SuperpixelSegmentationFunctionType, str) -> None
+        # type: (list[MaterialClassInformation], np.ndarray, bool, MaterialSampleIterationMode, bool, bool, int, SuperpixelSegmentationFunctionType, str) -> None
 
         """
         Builds a wrapper for SegmentationDataGenerator parameters
@@ -260,6 +261,7 @@ class SegmentationDataGeneratorParameters(DataGeneratorParameters):
             :param material_class_information: material class information list
             :param mask_cval: fill color value for masks [0,255], otherwise zeros matching mask encoding are used
             :param use_material_samples: should material samples be used
+            :param material_sample_iteration_mode: iteration mode for material samples
             :param use_selective_attention: should we use selective attention (mark everything else as bg besides the material sample material)
             :param use_adaptive_sampling: should we use adaptive sampling (adapt sampling probability according to pixels seen per category)
             :param superpixel_segmentation_function: which function to use to generate superpixel segmentation for unlabeled samples
@@ -272,6 +274,7 @@ class SegmentationDataGeneratorParameters(DataGeneratorParameters):
         self.material_class_information = material_class_information
         self.mask_cval = mask_cval
         self.use_material_samples = use_material_samples
+        self.material_sample_iteration_mode = material_sample_iteration_mode
         self.use_selective_attention = use_selective_attention
         self.use_adaptive_sampling = use_adaptive_sampling
         self.num_crop_reattempts = num_crop_reattempts
@@ -918,6 +921,7 @@ class SegmentationDataGenerator(DataGenerator):
         self.num_classes = len(self.material_class_information)
         self.superpixel_segmentation_function = params.superpixel_segmentation_function
         self.superpixel_mask_cache_path = params.superpixel_mask_cache_path
+        self.material_sample_iteration_mode = params.material_sample_iteration_mode
 
         super(SegmentationDataGenerator, self).__init__(params)
 
@@ -957,7 +961,7 @@ class SegmentationDataGenerator(DataGenerator):
 
         self.class_weights = class_weights
 
-        self.logger.log('Use material samples: {}'.format(self.use_material_samples))
+        self.logger.log('Use material samples: {}, material sample iteration mode: {}'.format(self.use_material_samples, self.material_sample_iteration_mode))
         self.logger.log('Use selective attention: {}'.format(self.use_selective_attention))
         self.logger.log('Use adaptive sampling: {}'.format(self.use_adaptive_sampling))
 
@@ -1048,7 +1052,7 @@ class SegmentationDataGenerator(DataGenerator):
                 shuffle=self.shuffle_data_after_epoch,
                 seed=self.random_seed,
                 initial_epoch=self.initial_epoch,
-                iteration_mode=MaterialSampleIterationMode.UNIFORM_MEAN,
+                iteration_mode=self.material_sample_iteration_mode,
                 balance_pixel_samples=self.use_adaptive_sampling)
         else:
             return BasicDataSetIterator(
@@ -1320,15 +1324,16 @@ class SegmentationDataGenerator(DataGenerator):
                 # If the material was lost during the random transform - revert to unaugmented values or
                 # If we cannot build a new valid axis-aligned bounding box - revert to unaugmented values
                 if material_lost_during_transform or bbox is None:
+                    self.logger.debug_log('Reverting to original bbox and image data, material lost: {}, cannot rebuild axis-aligned bbox: {}'
+                                          .format(material_lost_during_transform, bbox is None))
+
                     bbox = material_sample.get_bbox_rel()
                     pil_photo = pil_photo_orig
                     pil_mask = pil_mask_orig
-                    self.logger.debug_log('Reverting to original bbox and image data, material lost: {}, cannot rebuild axis-aligned bbox: {}'
-                                          .format(material_lost_during_transform, bbox is None))
                 else:
                     # Destroy the backup images
                     del pil_photo_orig
-                    del pil_photo_orig
+                    del pil_mask_orig
 
         # If a crop size is given: take a random crop of both the image and the mask
         if crop_shape is not None:
@@ -1410,11 +1415,17 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Transform bbox to absolute coordinates from relative
         bbox_ymin = int(round(bbox.y_min * img_height))
-        bbox_ymax = min(int(round(bbox.y_max * img_height)) + 1, img_height)  # +1 because the bbox ymax is inclusive
+        bbox_ymax = min(int(round(bbox.y_max * img_height)) + 1, img_height)    # +1 because the bbox ymax is inclusive
         bbox_xmin = int(np.round(bbox.x_min * img_width))
-        bbox_xmax = min(int(np.round(bbox.x_max * img_width)) + 1, img_width)    # +1 because the bbox xmax is inclusive
+        bbox_xmax = min(int(np.round(bbox.x_max * img_width)) + 1, img_width)   # +1 because the bbox xmax is inclusive
         bbox_height = bbox_ymax - bbox_ymin
         bbox_width = bbox_xmax - bbox_xmin
+
+        # Slack parameters allow the crop to go outside the bbox boundaries
+        # by a given amount in case bbox > crop
+        slack_coefficient = 0.1                                                 # Amount of slack if bbox dim > crop dim (%) of crop width/height
+        slack_height = int(crop_height * slack_coefficient)
+        slack_width = int(crop_width * slack_coefficient)
 
         # Apparently the material sample data can have single pixel height/width bounding boxes
         # expand the bounding box a bit to avoid errors
@@ -1437,24 +1448,21 @@ class SegmentationDataGenerator(DataGenerator):
         height_diff = abs(crop_height - bbox_height)
         width_diff = abs(crop_width - bbox_width)
 
-        # If the crop can fit the whole material sample within it
-        if bbox_height <= crop_height and bbox_width <= crop_width:
+        if bbox_height <= crop_height:
             crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff + 1, bbox_ymin + 1))
-            crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff + 1, bbox_xmin + 1))
-        # If the bounding box is bigger than the crop in both width and height
-        elif bbox_height > crop_height and bbox_width > crop_width:
-            crop_ymin = bbox_ymin + np.random.randint(0, height_diff + 1)
-            crop_xmin = bbox_xmin + np.random.randint(0, width_diff + 1)
-        # If the crop width is smaller than the bbox width
-        elif bbox_width > crop_width:
-            crop_ymin = bbox_ymin - np.random.randint(0, min(height_diff + 1, bbox_ymin + 1))
-            crop_xmin = bbox_xmin + np.random.randint(0, width_diff + 1)
-        # If the crop height is smaller than the bbox height
-        elif bbox_height > crop_height:
-            crop_ymin = bbox_ymin + np.random.randint(0, height_diff + 1)
+        else:
+            # If the crop is less tall than the bbox -> allow slack to show borders
+            top_slack = max(-bbox_ymin, -slack_height)
+            bottom_slack = slack_height
+            crop_ymin = bbox_ymin + np.random.randint(top_slack, height_diff + 1 + bottom_slack)
+
+        if bbox_width <= crop_width:
             crop_xmin = bbox_xmin - np.random.randint(0, min(width_diff + 1, bbox_xmin + 1))
         else:
-            raise ValueError('Unable to determine crop y_min and x_min')
+            # If the crop is less wide than the bbox -> allow slack to show borders
+            left_slack = max(-bbox_xmin, -slack_width)
+            right_slack = slack_width
+            crop_xmin = bbox_xmin + np.random.randint(left_slack, width_diff + 1 + right_slack)
 
         crop_ymax = crop_ymin + crop_height
         crop_xmax = crop_xmin + crop_width
@@ -1507,8 +1515,6 @@ class SegmentationDataGenerator(DataGenerator):
             self.logger.debug_log('Material sample lost during transform: material_r_color: {}, original_bbox: {}, transformed_bbox: {}, found: {}'
                                   .format(material_sample.material_r_color, bbox.corners, tf_bbox.corners, image_utils.pil_image_get_unique_band_values(bbox_crop, 0)))
             return None
-        else:
-            print 'Material found in transformed bbox'
 
         return tf_bbox
 
@@ -1679,7 +1685,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # If this is an ImageFile it has a file name and it might be cached
         if self.superpixel_mask_cache_path is not None and isinstance(pil_img, PILImageFile):
-            cached_mask_filename = "{}.png".format(os.path.splitext(pil_img.filename))
+            filename_no_ext = os.path.splitext(os.path.basename(pil_img.filename))[0]
+            cached_mask_filename = '{}.png'.format(filename_no_ext)
             cached_mask_file_path = os.path.join(self.superpixel_mask_cache_path, cached_mask_filename)
 
             # Check if we can find the mask from the superpixel the mask cache
@@ -1698,8 +1705,8 @@ class SegmentationDataGenerator(DataGenerator):
         np_img *= 2.0
 
         # Generate the mask and cache it if we have a cache path
-        if self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.FELZENSWALB:
-            np_mask = image_utils.np_get_felzenswalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=True)
+        if self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.FELZENSZWALB:
+            np_mask = image_utils.np_get_felzenszwalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=True)
         elif self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.SLIC:
             np_mask = image_utils.np_get_slic_segmentation(np_img, n_segments=400, sigma=1, compactness=10.0, max_iter=20, normalize_img=False, borders_only=True)
         elif self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.QUICKSHIFT:

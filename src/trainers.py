@@ -31,7 +31,7 @@ from callbacks.optimizer_checkpoint import OptimizerCheckpoint
 from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
 from generators import DataGenerator, SegmentationDataGenerator, MINCDataSet, ClassificationDataGenerator
 from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters
-from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ClassWeightType
+from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ClassWeightType, MaterialSampleIterationMode
 
 from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
@@ -1548,6 +1548,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self._superpixel_params = None
         self._superpixel_label_generation_function_type = SuperpixelSegmentationFunctionType.NONE
         self._superpixel_unlabeled_cost_coefficient_function = None
+        self._material_sample_iteration_mode = None
 
         super(SegmentationTrainer, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
 
@@ -1672,7 +1673,9 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
                 class_weights = self.data_set_information.get_class_weights(class_weight_type=self.class_weight_type,
                                                                             ignore_classes=self.ignore_classes,
-                                                                            use_material_samples=self.using_material_samples)
+                                                                            use_material_samples=self.using_material_samples,
+                                                                            using_material_sample_instance_balancing=self.using_material_sample_instance_balancing,
+                                                                            crop_shape=self.crop_shape)
                 self.logger.log('Using class weight type {}, ignore_classes: {}, weights: {}'.format(self.class_weight_type, self.ignore_classes, class_weights))
                 self._class_weights = np.array(class_weights, dtype=np.float32)
             else:
@@ -1698,6 +1701,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 per_channel_stddev=self.per_channel_stddev,
                 use_data_augmentation=self.use_data_augmentation,
                 use_material_samples=self.using_material_samples,
+                material_sample_iteration_mode=self.material_sample_iteration_mode,
                 use_selective_attention=self.using_selective_attention,
                 use_adaptive_sampling=self.using_adaptive_sampling,
                 data_augmentation_params=self.data_augmentation_parameters,
@@ -1758,6 +1762,41 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     @property
     def using_material_samples(self):
         return bool(self._get_config_value('use_material_samples'))
+
+    @property
+    def material_sample_iteration_mode(self):
+        # type: () -> MaterialSampleIterationMode
+
+        if self._material_sample_iteration_mode is None:
+            if self.using_material_samples:
+                c_value = self._get_config_value('material_sample_iteration_mode')
+
+                if c_value is None:
+                    self._material_sample_iteration_mode = MaterialSampleIterationMode.NONE
+                else:
+                    c_value = c_value.upper()
+
+                    if c_value == 'UNIFORM_MEAN':
+                        self._material_sample_iteration_mode = MaterialSampleIterationMode.UNIFORM_MEAN
+                    elif c_value == 'UNIFORM_MIN':
+                        self._material_sample_iteration_mode = MaterialSampleIterationMode.UNIFORM_MIN
+                    elif c_value == 'UNIFORM_MAX':
+                        self._material_sample_iteration_mode = MaterialSampleIterationMode.UNIFORM_MAX
+                    elif c_value == 'UNIQUE':
+                        self._material_sample_iteration_mode = MaterialSampleIterationMode.UNIQUE
+                    else:
+                        raise ValueError('Unknown material sample iteration mode: {}'.format(c_value))
+            else:
+                self._material_sample_iteration_mode = MaterialSampleIterationMode.NONE
+
+        return self._material_sample_iteration_mode
+
+    @property
+    def using_material_sample_instance_balancing(self):
+        # type: () -> bool
+        return self.using_material_samples and \
+               self.material_sample_iteration_mode is not MaterialSampleIterationMode.UNIQUE and \
+               self.material_sample_iteration_mode is not MaterialSampleIterationMode.NONE
 
     @property
     def using_selective_attention(self):
@@ -1992,13 +2031,14 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         """
         x, y = super(SegmentationTrainer, self).modify_batch_data(step_index=step_index, x=x, y=y, validation=validation)
 
+        # First dimension in all of the input data should be the batch size
         img_batch = x[0]
-        mask_batch = x[1]
+        batch_size = img_batch.shape[0]
 
         # Append first mean teacher data and then superpixel data if using both methods
         # mean teacher data is handled by the MeanTeacherTrainerBase - base class
         if self.using_superpixel_method:
-            x = x + self._get_superpixel_extra_batch_data(img_batch, step_index=step_index, validation=validation)
+            x = x + self._get_superpixel_extra_batch_data(batch_size=batch_size, step_index=step_index, validation=validation)
 
         return x, y
 
@@ -2040,12 +2080,9 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
                 metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]
 
-    def _get_superpixel_extra_batch_data(self, img_batch, step_index, validation):
+    def _get_superpixel_extra_batch_data(self, batch_size, step_index, validation):
         if not self.using_superpixel_method:
             return []
-
-        # First dimension in all of the input data should be the batch size
-        batch_size = img_batch.shape[0]
 
         if validation:
             np_unlabeled_cost_coefficients = np.zeros(shape=[batch_size])
@@ -2059,8 +2096,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         # type: (str) -> SuperpixelSegmentationFunctionType
         function_name = label_generation_function_name.lower()
 
-        if function_name == 'felzenswalb':
-            return SuperpixelSegmentationFunctionType.FELZENSWALB
+        if function_name == 'felzenszwalb':
+            return SuperpixelSegmentationFunctionType.FELZENSZWALB
         elif function_name == 'slic':
             return SuperpixelSegmentationFunctionType.SLIC
         elif function_name == 'watershed':

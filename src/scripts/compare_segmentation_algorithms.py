@@ -30,7 +30,7 @@ def main():
     print 'Image size: {}'.format(img.size)
 
     fz_time = time.time()
-    segments_fz = image_utils.np_get_felzenswalb_segmentation(np_img, scale=700, sigma=0.6, min_size=250)
+    segments_fz = image_utils.np_get_felzenszwalb_segmentation(np_img, scale=700, sigma=0.6, min_size=250)
     fz_time = time.time() - fz_time
 
     slic_time = time.time()
