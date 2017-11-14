@@ -759,7 +759,7 @@ def pil_image_band_contains_value(img, band, val):
 
 def pil_image_band_only_contains_value(img, band, val):
     # type: (pil_image.Image, int, int) -> bool
-    unique_band_values = pil_image_get_unique_band_values(img, band=0)
+    unique_band_values = pil_image_get_unique_band_values(img, band=band)
     return len(unique_band_values) == 1 and val in unique_band_values
 
 
