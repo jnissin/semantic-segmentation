@@ -129,7 +129,7 @@ class BoundingBox(object):
             raise ValueError('Invalid coordinate type: {}'.format(self.coordinate_type))
 
         y_limit = 1.0 if self.coordinate_type is CoordinateType.NORMALIZED else transform.image_height
-        x_limit = 1.0 if self.coordinate_type is CoordinateType.ABSOLUTE else transform.image_width
+        x_limit = 1.0 if self.coordinate_type is CoordinateType.NORMALIZED else transform.image_width
 
         # Clamp the values of the corners into valid ranges [[0, img_height], [0, img_width]]
         tf_y_min = np.clip(np.min(np_transformed_bbox[:, 0]), 0, y_limit)

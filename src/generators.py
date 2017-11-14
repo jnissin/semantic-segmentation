@@ -1376,14 +1376,16 @@ class SegmentationDataGenerator(DataGenerator):
                     # If the mask contains pixels of the desired material
                     valid_crop_found = image_utils.pil_image_band_contains_value(pil_mask_crop, band=0, val=material_sample.material_r_color)
 
-                    if not valid_crop_found:
-                        self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}, crop: {}, bbox: {}, img_size: {}'
-                                         .format(crop_shape, material_sample.material_id, material_sample.material_r_color, (y1x1, y2x2), bbox.corners, (pil_mask.size[1], pil_mask.size[0])))
-
                 # If a valid crop was found or this is the last attempt or we should not retry crops
                 stop_iteration = valid_crop_found or attempt-1 <= 0 or not retry_crops
 
                 if stop_iteration:
+
+                    # If valid crop was not found at all after all the retry attempts
+                    if not valid_crop_found:
+                        self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}, crop: {}, bbox: {}, img_size: {}'
+                                         .format(crop_shape, material_sample.material_id, material_sample.material_r_color, (y1x1, y2x2), bbox.corners, (pil_mask.size[1], pil_mask.size[0])))
+
                     pil_mask_crop.load()
                     pil_mask = pil_mask_crop
                     pil_photo = image_utils.pil_crop_image(pil_photo, x1=y1x1[1], y1=y1x1[0], x2=y2x2[1], y2=y2x2[0], load=True)
