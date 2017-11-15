@@ -130,7 +130,7 @@ def img_to_array(img, data_format=None, dtype=None):
     return x
 
 
-def load_img(path, grayscale=False, target_size=None):
+def load_img(path, grayscale=False, target_size=None, num_read_attemps=1):
     """Loads an image into PIL format.
 
     # Arguments
@@ -138,7 +138,7 @@ def load_img(path, grayscale=False, target_size=None):
         grayscale: Boolean, whether to load the image as grayscale.
         target_size: Either `None` (default to original size)
             or tuple of ints `(img_height, img_width)`.
-
+        num_read_attempts: number of re-attempts if the PIL image opening fails
     # Returns
         A PIL Image instance.
 
@@ -146,9 +146,20 @@ def load_img(path, grayscale=False, target_size=None):
         ImportError: if PIL is not available.
     """
     if PImage is None:
-        raise ImportError('Could not import PIL.Image. '
-                          'The use of `array_to_img` requires PIL.')
-    img = PImage.open(path)
+        raise ImportError('Could not import PIL.Image. The use of `array_to_img` requires PIL.')
+
+    img = None
+
+    # Re-attempt image reading - sometimes PIL can fail to read images for no apparent reason
+    for i in range(0, num_read_attemps):
+        try:
+            img = PImage.open(path)
+            break
+        except IOError as e:
+            # If this is the last attempt re-raise the exception
+            if i+1 == num_read_attemps:
+                raise e
+
     if grayscale:
         if img.mode != 'L':
             img = img.convert('L')

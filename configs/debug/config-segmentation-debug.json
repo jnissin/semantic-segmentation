@@ -83,7 +83,8 @@
     "material_sample_iteration_mode": "UNIFORM_MEAN",
 
     "data_augmentation_params": {
-      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "_augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "augmentation_probability_function": "lambda x: 0.8",
       "rotation_range": 90.0,
       "zoom_range": 0.15,
       "width_shift_range": 0.05,

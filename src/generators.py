@@ -548,43 +548,46 @@ class DataGenerator(object):
 
         # If using caching
         if self.resized_image_cache_path is not None and isinstance(img, PILImageFile):
-            try:
-                # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
-                cached_img_name = os.path.splitext(os.path.basename(img.filename))
-                file_ext = cached_img_name[1]
-                cached_img_name = '{}_{}_{}_{}_{}{}'.format(cached_img_name[0],
-                                                            target_shape[0],
-                                                            target_shape[1],
-                                                            interp.value,
-                                                            img_type.value,
-                                                            file_ext)
-                cached_img_path = os.path.join(self.resized_image_cache_path, cached_img_name)
+            # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
+            cached_img_name = os.path.splitext(os.path.basename(img.filename))
+            file_ext = cached_img_name[1]
+            cached_img_name = '{}_{}_{}_{}_{}{}'.format(cached_img_name[0],
+                                                        target_shape[0],
+                                                        target_shape[1],
+                                                        interp.value,
+                                                        img_type.value,
+                                                        file_ext)
+            cached_img_path = os.path.join(self.resized_image_cache_path, cached_img_name)
 
-                # If the cached file exists load it
-                if os.path.exists(cached_img_path):
-                    resized_img = image_utils.load_img(cached_img_path)
+            # If the cached file exists load and return it
+            if os.path.exists(cached_img_path):
+                try:
+                    resized_img = image_utils.load_img(cached_img_path, num_read_attemps=2)
                     return resized_img
-                # If there is no cached file - resize using PIL and cache
+                # Log the exception and default to the non cached resize
+                except Exception as e:
+                    self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
+
+            # If there was no cached file - resize using PIL and cache
+            # Use the same save format as the original file if it is given
+            save_format = img.format
+
+            if save_format is None:
+                # Try determining format from file ending
+                if file_ext.lower() == '.jpg' or file_ext.lower() == '.jpeg':
+                    save_format = 'JPEG'
+                elif file_ext.lower() == '.png':
+                    save_format = 'PNG'
                 else:
-                    # Use the same save format as the original file if it is given
-                    save_format = img.format
+                    # If we couldn't determine format from extension use the img type to guess
+                    save_format = 'PNG' if img_type.MASK else 'JPEG'
 
-                    if save_format is None:
-                        # Try determining format from file ending
-                        if file_ext.lower() == '.jpg' or file_ext.lower() == '.jpeg':
-                            save_format = 'JPEG'
-                        elif file_ext.lower() == '.png':
-                            save_format = 'PNG'
-                        else:
-                            # If we couldn't determine format from extension use the img type to guess
-                            save_format = 'PNG' if img_type.MASK else 'JPEG'
-
-                    resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
-                    resized_img.save(cached_img_path, format=save_format)
-                    return resized_img
-            # Log the exception and default to the non cached resize
+            try:
+                resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
+                resized_img.save(cached_img_path, format=save_format)
+                return resized_img
             except Exception as e:
-                self.logger.warn('Caught exception during resized image caching: {}'.format(e.message))
+                self.logger.warn('Caught exception during resized image caching (write): {}'.format(e.message))
 
         # If everything else fails - just resize to target shape without caching
         return image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
@@ -1334,7 +1337,9 @@ class SegmentationDataGenerator(DataGenerator):
                         if material_sample is not None and bbox is not None:
                             mask_unique_material_colors = image_utils.pil_image_get_unique_band_values(pil_mask, band=0)
                             crop_unique_material_colors = image_utils.pil_image_get_unique_band_values(pil_mask_crop, band=0)
-                            self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}. Crop: {}, bbox: {}, img_size: {}. Mask image unique material colors: {}. Mask crop unique material colors: {}'
+
+                            self.logger.warn('Material not found within crop area of shape: {} for material id: {} and material red color: {}. '
+                                             'Crop: {}, bbox: {}, img_size: {}. Mask image unique material colors: {}. Mask crop unique material colors: {}'
                                              .format(crop_shape, material_sample.material_id, material_sample.material_r_color,
                                                      (y1x1, y2x2), (bbox.top_left, bbox.bottom_right), (pil_mask.size[1], pil_mask.size[0]),
                                                      mask_unique_material_colors, crop_unique_material_colors))
@@ -1482,7 +1487,7 @@ class SegmentationDataGenerator(DataGenerator):
         if tf_bbox is None:
             return None
 
-        # Check that the crop contains the desired red value - if not discard the bbox
+        # Check that the bbox contains the desired material sample color value - if not discard the bbox
         y_min = int(round(tf_bbox.y_min * pil_mask.height))
         x_min = int(round(tf_bbox.x_min * pil_mask.width))
         y_max = int(round(tf_bbox.y_max * pil_mask.height))
@@ -1670,8 +1675,11 @@ class SegmentationDataGenerator(DataGenerator):
 
             # Check if we can find the mask from the superpixel the mask cache
             if os.path.exists(cached_mask_file_path):
-                mask = image_utils.load_img(cached_mask_file_path, grayscale=True)
-                return mask
+                try:
+                    mask = image_utils.load_img(cached_mask_file_path, grayscale=True, num_read_attemps=2)
+                    return mask
+                except Exception as e:
+                    self.logger.warn('Caught exception during superpixel caching (read): {}'.format(e.message))
 
         # Convert from the PIL image to numpy array
         np_img = image_utils.img_to_array(pil_img)
@@ -1702,7 +1710,10 @@ class SegmentationDataGenerator(DataGenerator):
 
         # If using caching save the mask
         if self.superpixel_mask_cache_path is not None and cached_mask_file_path is not None:
-            mask.save(cached_mask_file_path)
+            try:
+                mask.save(cached_mask_file_path, format='PNG')
+            except Exception as e:
+                self.logger.warn('Caught exception during superpixel caching (write): {}'.format(e.message))
 
         return mask
 
@@ -1714,8 +1725,8 @@ class SegmentationDataGenerator(DataGenerator):
             b_max_teacher = np.max(X_teacher) if X_teacher is not None else 0.0
 
             for i in range(0, len(X)):
-                img = ((X[i] - b_min) / (b_max - b_min)) * 255.0
-                mask = Y[i][:, :, np.newaxis]
+                img = ((X[i] - b_min) / (b_max - b_min)) * 255.0    # Scale photos to [0, 255]
+                mask = Y[i][:, :, np.newaxis] * 10                  # Multiply mask values by 10 to make them visible
                 self.logger.debug_log_image(img, '{}_{}_{}_photo.jpg'.format(self.name, step_idx, i), scale=False)
                 self.logger.debug_log_image(mask, file_name='{}_{}_{}_mask.png'.format(self.name, step_idx, i), format='PNG', scale=False)
 
@@ -2127,7 +2138,6 @@ class ClassificationDataGenerator(DataGenerator):
             if (not (0.0 < crop_center_y_new < 1.0)) or (not (0.0 < crop_center_x_new < 1.0)):
                 # Destroy the augmented version and revert back to the copy of the original
                 del img
-
                 img = img_orig
             else:
                 crop_center_y = crop_center_y_new
