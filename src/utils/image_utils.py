@@ -780,10 +780,37 @@ def pil_image_get_unique_band_values(img, band):
 
 def pil_image_mask_by_band_value(img, band, val, cval=0):
     # type: (PImage.Image, int, int) -> PImage.Image
-    np_img = img_to_array(img)
-    mask = np_img[:, :, band] != val
-    np_img[mask] = cval
-    img = array_to_img(np_img)
+    """
+    Colors everything else with cval except the pixels that have the value val in their
+    color band band.
+
+    # Arguments
+        :param img: image
+        :param band: band
+        :param val: color value [0, 255]
+        :param cval: fill value (default 0)
+    # Returns
+        :return: An image with only the specific pixels colored by other than cval
+    """
+
+    num_bands = len(img.getbands())
+
+    if band >= num_bands:
+        raise ValueError('Cannot get band with index {} from image with {} bands'.format(band, num_bands))
+
+    # Create a look up table where only one value maps to itself and everything else to cval
+    other_band_lut = [cval] * 256
+    target_band_lut = [cval] * 256
+    target_band_lut[val] = val
+    lut = []
+
+    for i in range(num_bands):
+        if i == band:
+            lut += target_band_lut
+        else:
+            lut += other_band_lut
+
+    img = img.point(lut)
     return img
 
 
