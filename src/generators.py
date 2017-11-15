@@ -551,12 +551,13 @@ class DataGenerator(object):
             try:
                 # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
                 cached_img_name = os.path.splitext(os.path.basename(img.filename))
+                file_ext = cached_img_name[1]
                 cached_img_name = '{}_{}_{}_{}_{}{}'.format(cached_img_name[0],
                                                             target_shape[0],
                                                             target_shape[1],
                                                             interp.value,
                                                             img_type.value,
-                                                            cached_img_name[1])
+                                                            file_ext)
                 cached_img_path = os.path.join(self.resized_image_cache_path, cached_img_name)
 
                 # If the cached file exists load it
@@ -565,8 +566,21 @@ class DataGenerator(object):
                     return resized_img
                 # If there is no cached file - resize using PIL and cache
                 else:
+                    # Use the same save format as the original file if it is given
+                    save_format = img.format
+
+                    if save_format is None:
+                        # Try determining format from file ending
+                        if file_ext.lower() == '.jpg' or file_ext.lower() == '.jpeg':
+                            save_format = 'JPEG'
+                        elif file_ext.lower() == '.png':
+                            save_format = 'PNG'
+                        else:
+                            # If we couldn't determine format from extension use the img type to guess
+                            save_format = 'PNG' if img_type.MASK else 'JPEG'
+
                     resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
-                    resized_img.save(cached_img_path)
+                    resized_img.save(cached_img_path, format=save_format)
                     return resized_img
             # Log the exception and default to the non cached resize
             except Exception as e:

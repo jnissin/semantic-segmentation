@@ -5,7 +5,7 @@ import os
 import re
 
 from enum import Enum
-from PIL import Image as pil_image
+from PIL import Image as PImage
 
 import numpy as np
 from numpy.linalg import inv
@@ -58,7 +58,7 @@ def array_to_img(x, data_format=None, scale=True):
         ImportError: if PIL is not available.
         ValueError: if invalid `x` or `data_format` is passed.
     """
-    if pil_image is None:
+    if PImage is None:
         raise ImportError('Could not import PIL.Image. '
                           'The use of `array_to_img` requires PIL.')
     x = np.asarray(x, dtype=settings.DEFAULT_NUMPY_FLOAT_DTYPE)
@@ -84,10 +84,10 @@ def array_to_img(x, data_format=None, scale=True):
         x *= 255
     if x.shape[2] == 3:
         # RGB
-        return pil_image.fromarray(x.astype('uint8'), 'RGB')
+        return PImage.fromarray(x.astype('uint8'), 'RGB')
     elif x.shape[2] == 1:
         # grayscale
-        return pil_image.fromarray(x[:, :, 0].astype('uint8'), 'L')
+        return PImage.fromarray(x[:, :, 0].astype('uint8'), 'L')
     else:
         raise ValueError('Unsupported channel number: ', x.shape[2])
 
@@ -145,10 +145,10 @@ def load_img(path, grayscale=False, target_size=None):
     # Raises
         ImportError: if PIL is not available.
     """
-    if pil_image is None:
+    if PImage is None:
         raise ImportError('Could not import PIL.Image. '
                           'The use of `array_to_img` requires PIL.')
-    img = pil_image.open(path)
+    img = PImage.open(path)
     if grayscale:
         if img.mode != 'L':
             img = img.convert('L')
@@ -173,10 +173,10 @@ def list_pictures(directory, ext='jpg|jpeg|bmp|png'):
 ###################################################
 
 class ImageInterpolationType(Enum):
-    NEAREST = pil_image.NEAREST
-    BILINEAR = pil_image.BILINEAR
-    BICUBIC = pil_image.BICUBIC
-    LANCZOS = pil_image.LANCZOS
+    NEAREST = PImage.NEAREST
+    BILINEAR = PImage.BILINEAR
+    BICUBIC = PImage.BICUBIC
+    LANCZOS = PImage.LANCZOS
 
 
 class ImageValidationErrorType(Enum):
@@ -384,14 +384,14 @@ def pil_apply_random_image_transform(images,
     if horizontal_flip:
         if np.random.random() < 0.5:
             for i in range(0, len(images)):
-                images[i] = pil_apply_flip(images[i], method=pil_image.FLIP_LEFT_RIGHT)
+                images[i] = pil_apply_flip(images[i], method=PImage.FLIP_LEFT_RIGHT)
             img_transform.horizontal_flip = True
 
     # Apply at random a vertical flip to the image
     if vertical_flip:
         if np.random.random() < 0.5:
             for i in range(0, len(images)):
-                images[i] = pil_apply_flip(images[i], method=pil_image.FLIP_TOP_BOTTOM)
+                images[i] = pil_apply_flip(images[i], method=PImage.FLIP_TOP_BOTTOM)
             img_transform.vertical_flip = True
 
     # Rotation
@@ -499,14 +499,14 @@ def pil_transform_image(img, transform, resample, cval=None):
     if non_black_cval:
         img.putalpha(255)
 
-    img = img.transform(size=img.size, method=pil_image.AFFINE, data=matrix, resample=resample)
+    img = img.transform(size=img.size, method=PImage.AFFINE, data=matrix, resample=resample)
 
     # Replace out-of-bounds values with the cval - if cval is None default is black
     if non_black_cval:
         cval = np.round(cval).astype(dtype=np.int32)
         cval = tuple(cval)
 
-        background = pil_image.new(mode, img.size, cval)
+        background = PImage.new(mode, img.size, cval)
         background.paste(img, mask=img.split()[3])
         img = background
 
@@ -720,7 +720,7 @@ def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cva
     else:
         cval = 0
 
-    padded_img = pil_image.new(mode=mode, size=(width, height), color=cval)
+    padded_img = PImage.new(mode=mode, size=(width, height), color=cval)
     padded_img.paste(img, box=(h_pad_before, v_pad_before))
 
     return padded_img
