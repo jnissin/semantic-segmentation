@@ -764,17 +764,35 @@ def pil_draw_square(img, center_x, center_y, size, color):
 
 def pil_image_band_contains_value(img, band, val):
     # type: (PImage.Image, int, int) -> bool
+
+    num_bands = len(img.getbands())
+
+    if band >= num_bands:
+        raise ValueError('Cannot get band with index {} from image with {} bands'.format(band, num_bands))
+
     return val in img.getdata(band=band)
 
 
 def pil_image_band_only_contains_value(img, band, val):
     # type: (PImage.Image, int, int) -> bool
+
+    num_bands = len(img.getbands())
+
+    if band >= num_bands:
+        raise ValueError('Cannot get band with index {} from image with {} bands'.format(band, num_bands))
+
     unique_band_values = pil_image_get_unique_band_values(img, band=band)
     return len(unique_band_values) == 1 and val in unique_band_values
 
 
 def pil_image_get_unique_band_values(img, band):
     # type: (PImage.Image, int) -> list
+
+    num_bands = len(img.getbands())
+
+    if band >= num_bands:
+        raise ValueError('Cannot get band with index {} from image with {} bands'.format(band, num_bands))
+
     return list(set(img.getdata(band=band)))
 
 
