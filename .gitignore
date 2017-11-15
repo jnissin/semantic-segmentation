@@ -7,3 +7,4 @@ logs/*
 checkpoints/*
 photos/*
 temp/*
+slurm-logs/*
