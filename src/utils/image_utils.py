@@ -150,6 +150,7 @@ def load_img(path, grayscale=False, target_size=None, num_read_attemps=1):
         raise ImportError('Could not import PIL.Image. The use of `array_to_img` requires PIL.')
 
     img = None
+    num_read_attemps = max(num_read_attemps, 1)
 
     # Re-attempt image reading - sometimes PIL can fail to read images for no apparent reason
     for i in range(0, num_read_attemps):
@@ -161,7 +162,7 @@ def load_img(path, grayscale=False, target_size=None, num_read_attemps=1):
             if i+1 == num_read_attemps:
                 raise e
             else:
-                time.sleep(0.05)
+                time.sleep(0.01)
 
     if grayscale:
         if img.mode != 'L':
@@ -327,7 +328,7 @@ def pil_apply_random_image_transform(images,
                                      channel_shift_ranges=None,
                                      horizontal_flip=False,
                                      vertical_flip=False):
-    # type: (list[pil_image.Image], list[np.ndarray], int, list[ImageInterpolationType], np.ndarray, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[float], bool, bool) -> (list[pil_image.Image], ImageTransform)
+    # type: (list[PImage.Image], list[np.ndarray], int, list[ImageInterpolationType], np.ndarray, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[float], bool, bool) -> (list[PImage.Image], ImageTransform)
 
     """
     Randomly augments, in the same way, a list of PIL images.
@@ -500,7 +501,7 @@ def pil_create_transform(offset, translate, theta, scale):
 
 
 def pil_transform_image(img, transform, resample, cval=None):
-    # type: (pil_image.Image, SimilarityTransform, int, tuple) -> pil_image.Image
+    # type: (PImage.Image, SimilarityTransform, int, tuple) -> PImage.Image
 
     # Get the affine transformation matrix
     matrix = inv(transform.params).ravel()
@@ -528,7 +529,7 @@ def pil_transform_image(img, transform, resample, cval=None):
 
 
 def pil_adjust_gamma(img, gamma):
-    # type: (pil_image.Image, float) -> pil_image.Image
+    # type: (PImage.Image, float) -> PImage.Image
 
     invert_gamma = 1.0/gamma
     lut = [pow(x/255.0, invert_gamma) * 255 for x in range(256)]
@@ -538,7 +539,7 @@ def pil_adjust_gamma(img, gamma):
 
 
 def pil_intensity_shift(img, intensity):
-    # type: (pil_image.Image, int) -> pil_image.Image
+    # type: (PImage.Image, int) -> PImage.Image
 
     lut = [x + intensity for x in range(256)]
     lut = lut * len(img.getbands())
@@ -547,14 +548,14 @@ def pil_intensity_shift(img, intensity):
 
 
 def pil_apply_flip(img, method):
-    # type: (pil_image.Image, int) -> pil_image.Image
+    # type: (PImage.Image, int) -> PImage.Image
 
     img = img.transpose(method=method)
     return img
 
 
 def pil_crop_image(img, x1, y1, x2, y2, load=True):
-    # type: (pil_image.Image, int, int, int, int, bool) -> pil_image.Image
+    # type: (PImage.Image, int, int, int, int, bool) -> PImage.Image
 
     """
     Crops a PIL Image object.
@@ -592,7 +593,7 @@ def pil_crop_image(img, x1, y1, x2, y2, load=True):
 
 
 def pil_crop_image_with_fill(img, x1, y1, x2, y2, cval):
-    # type: (pil_image.Image, int, int, int, int, tuple) -> pil_image.Image
+    # type: (PImage.Image, int, int, int, int, tuple) -> PImage.Image
 
     """
     Crops a PIL Image object and fills the over reaching values with cval. Allows negative
@@ -639,7 +640,7 @@ def pil_crop_image_with_fill(img, x1, y1, x2, y2, cval):
 
 
 def pil_resize_image_with_padding(img, shape, cval, interp=ImageInterpolationType.BILINEAR):
-    # type: (pil_image.Image, tuple[int, int], tuple, ImageInterpolationType) -> pil_image.Image
+    # type: (PImage.Image, tuple[int, int], tuple, ImageInterpolationType) -> PImage.Image
 
     """
     Scales the image to the desired shape filling the overflowing area with the provided constant
@@ -673,13 +674,13 @@ def pil_resize_image_with_padding(img, shape, cval, interp=ImageInterpolationTyp
 
 
 def pil_scale_image(img, sfactor, interp=ImageInterpolationType.BILINEAR):
-    # type: (pil_image.Image, float, ImageInterpolationType) -> pil_image.Image
+    # type: (PImage.Image, float, ImageInterpolationType) -> PImage.Image
     img = img.resize(size=(int(round(sfactor * img.width)), int(round(sfactor * img.height))), resample=interp.value)
     return img
 
 
 def pil_pad_image_to_shape(img, shape, cval):
-    # type: (pil_image.Image, tuple(int, int), tuple) -> pil_image.Image
+    # type: (PImage.Image, tuple(int, int), tuple) -> PImage.Image
 
     """
     Pads the image evenly on every side until it matches the dimensions given in
@@ -706,7 +707,7 @@ def pil_pad_image_to_shape(img, shape, cval):
 
 
 def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cval=None):
-    # type: (pil_image.Image, int, int, int, int, tuple) -> pil_image.Image
+    # type: (PImage.Image, int, int, int, int, tuple) -> PImage.Image
 
     """
     Pads the given PIL Image to a given shape and fills the padding with cval
@@ -741,7 +742,7 @@ def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cva
 
 
 def pil_draw_square(img, center_x, center_y, size, color):
-    # type: (pil_image.Image, int, int, int, tuple) -> pil_image.Image
+    # type: (PImage.Image, int, int, int, tuple) -> PImage.Image
 
     if isinstance(center_x, float) and 0 <= center_x <= 1.0:
         center_x = int(round(center_x * img.width))
@@ -762,28 +763,43 @@ def pil_draw_square(img, center_x, center_y, size, color):
 
 
 def pil_image_band_contains_value(img, band, val):
-    # type: (pil_image.Image, int, int) -> bool
+    # type: (PImage.Image, int, int) -> bool
     return val in img.getdata(band=band)
 
 
 def pil_image_band_only_contains_value(img, band, val):
-    # type: (pil_image.Image, int, int) -> bool
+    # type: (PImage.Image, int, int) -> bool
     unique_band_values = pil_image_get_unique_band_values(img, band=band)
     return len(unique_band_values) == 1 and val in unique_band_values
 
 
 def pil_image_get_unique_band_values(img, band):
-    # type: (pil_image.Image, int) -> list
+    # type: (PImage.Image, int) -> list
     return list(set(img.getdata(band=band)))
 
 
 def pil_image_mask_by_band_value(img, band, val, cval=0):
-    # type: (pil_image.Image, int, int) -> pil_image.Image
+    # type: (PImage.Image, int, int) -> PImage.Image
     np_img = img_to_array(img)
     mask = np_img[:, :, band] != val
     np_img[mask] = cval
     img = array_to_img(np_img)
     return img
+
+
+def pil_get_bbox_for_band_value(img, band, val):
+    # type: (PImage.Image, int, int) -> tuple[int, int, int, int]
+
+    num_bands = len(img.getbands())
+
+    if band >= num_bands:
+        raise ValueError('Cannot get band with index {} from image with {} bands'.format(band, num_bands))
+
+    if band == 0 and num_bands == 1:
+        return img.point(lambda x: 1 if x == val else 0).getbbox()
+
+    return img.split()[band].point(lambda x: 1 if x == val else 0).getbbox()
+
 
 
 ##############################################

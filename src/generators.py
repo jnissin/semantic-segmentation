@@ -19,7 +19,7 @@ from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSa
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
 from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator
 from logger import Logger
-from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ImageType, MaterialSampleIterationMode
+from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ImageType, MaterialSampleIterationMode, CoordinateType
 
 from joblib import Parallel, delayed
 
@@ -1398,10 +1398,19 @@ class SegmentationDataGenerator(DataGenerator):
         """
 
         # Transform bbox to absolute coordinates from relative
-        bbox_ymin = int(round(bbox.y_min * img_height))
-        bbox_ymax = min(int(round(bbox.y_max * img_height)) + 1, img_height)    # +1 because the bbox ymax is inclusive
-        bbox_xmin = int(np.round(bbox.x_min * img_width))
-        bbox_xmax = min(int(np.round(bbox.x_max * img_width)) + 1, img_width)   # +1 because the bbox xmax is inclusive
+        if bbox.coordinate_type is CoordinateType.NORMALIZED:
+            bbox_ymin = int(round(bbox.y_min * img_height))
+            bbox_ymax = min(int(round(bbox.y_max * img_height)) + 1, img_height)    # +1 because the bbox ymax is inclusive
+            bbox_xmin = int(np.round(bbox.x_min * img_width))
+            bbox_xmax = min(int(np.round(bbox.x_max * img_width)) + 1, img_width)   # +1 because the bbox xmax is inclusive
+        elif bbox.coordinate_type is CoordinateType.ABSOLUTE:
+            bbox_ymin = int(bbox.y_min)
+            bbox_ymax = min(int(bbox.y_max) + 1, img_height)
+            bbox_xmin = int(bbox.x_min)
+            bbox_xmax = min(int(bbox.x_max) + 1, img_width)
+        else:
+            raise ValueError('Unknown bbox coordinate type: {}'.format(bbox.coordinate_type))
+
         bbox_height = bbox_ymax - bbox_ymin
         bbox_width = bbox_xmax - bbox_xmin
 
@@ -1487,19 +1496,38 @@ class SegmentationDataGenerator(DataGenerator):
         if tf_bbox is None:
             return None
 
-        # Check that the bbox contains the desired material sample color value - if not discard the bbox
-        y_min = int(round(tf_bbox.y_min * pil_mask.height))
-        x_min = int(round(tf_bbox.x_min * pil_mask.width))
-        y_max = int(round(tf_bbox.y_max * pil_mask.height))
-        x_max = int(round(tf_bbox.x_max * pil_mask.width))
+        if tf_bbox.coordinate_type is CoordinateType.NORMALIZED:
+            y_min = int(round(tf_bbox.y_min * pil_mask.height))
+            x_min = int(round(tf_bbox.x_min * pil_mask.width))
+            y_max = int(round(tf_bbox.y_max * pil_mask.height))
+            x_max = int(round(tf_bbox.x_max * pil_mask.width))
+        elif tf_bbox.coordinate_type is CoordinateType.ABSOLUTE:
+            y_min = tf_bbox.y_min
+            x_min = tf_bbox.x_min
+            y_max = tf_bbox.y_max
+            x_max = tf_bbox.x_max
+        else:
+            raise ValueError('Unknown bbox coordinate type: {}'.format(bbox.coordinate_type))
 
+        tf_bbox_width = x_max - x_min
+        tf_bbox_height = y_max - y_min
+
+        # Calculate a refined bbox within the transformed bbox and validate that the bbox contains the desired material color value
         bbox_crop = pil_mask.crop(box=(x_min, y_min, x_max, y_max))
+        material_bbox = image_utils.pil_get_bbox_for_band_value(bbox_crop, 0, material_sample.material_r_color)
 
-        if not image_utils.pil_image_band_contains_value(bbox_crop, band=0, val=material_sample.material_r_color):
+        if material_bbox is None:
             self.logger.debug_log('Material sample lost during transform: material_r_color: {}, original_bbox: {}, transformed_bbox: {}, found: {}'
                                   .format(material_sample.material_r_color, bbox.corners, tf_bbox.corners, image_utils.pil_image_get_unique_band_values(bbox_crop, 0)))
             return None
 
+        # Modify the coordinates and create the final bbox (note: material bbox coordinates are coordinates within the other bbox)
+        x_min = x_min + material_bbox[0]
+        y_min = y_min + material_bbox[1]
+        x_max = x_max - (tf_bbox_width - material_bbox[2])
+        y_max = y_max - (tf_bbox_height - material_bbox[3])
+
+        tf_bbox = BoundingBox(x_min=x_min, y_min=y_min, x_max=x_max, y_max=y_max, coordinate_type=CoordinateType.ABSOLUTE)
         return tf_bbox
 
     def get_data_batch(self, step_idx, labeled_batch, unlabeled_batch):
