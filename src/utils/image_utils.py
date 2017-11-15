@@ -172,13 +172,11 @@ def list_pictures(directory, ext='jpg|jpeg|bmp|png'):
 # UTILITY CLASSES
 ###################################################
 
-class ImageInterpolation(Enum):
-    NEAREST = 0
-    BILINEAR = 1
-    BIQUADRATIC = 2
-    BICUBIC = 3
-    BIQUARTIC = 4
-    BIQUINTIC = 5
+class ImageInterpolationType(Enum):
+    NEAREST = pil_image.NEAREST
+    BILINEAR = pil_image.BILINEAR
+    BICUBIC = pil_image.BICUBIC
+    LANCZOS = pil_image.LANCZOS
 
 
 class ImageValidationErrorType(Enum):
@@ -315,7 +313,7 @@ def pil_apply_random_image_transform(images,
                                      channel_shift_ranges=None,
                                      horizontal_flip=False,
                                      vertical_flip=False):
-    # type: (list[pil_image.Image], list[np.ndarray], int, list[ImageInterpolation], np.ndarray, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[float], bool, bool) -> (list[pil_image.Image], ImageTransform)
+    # type: (list[pil_image.Image], list[np.ndarray], int, list[ImageInterpolationType], np.ndarray, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[float], bool, bool) -> (list[pil_image.Image], ImageTransform)
 
     """
     Randomly augments, in the same way, a list of PIL images.
@@ -447,7 +445,7 @@ def pil_apply_random_image_transform(images,
     if tf_final is not None:
         for i in range(0, len(images)):
             # Note: preserve range is important for example for mask images
-            resample = ImageInterpolation.NEAREST.value if interpolations is None or i > len(interpolations) else interpolations[i].value
+            resample = ImageInterpolationType.NEAREST.value if interpolations is None or i > len(interpolations) else interpolations[i].value
 
             images[i] = pil_transform_image(img=images[i],
                                             transform=tf_final,
@@ -626,8 +624,8 @@ def pil_crop_image_with_fill(img, x1, y1, x2, y2, cval):
     return cropped_img
 
 
-def pil_resize_image_with_padding(img, shape, cval, interp='bilinear'):
-    # type: (pil_image.Image, tuple[int, int], tuple, str) -> pil_image.Image
+def pil_resize_image_with_padding(img, shape, cval, interp=ImageInterpolationType.BILINEAR):
+    # type: (pil_image.Image, tuple[int, int], tuple, ImageInterpolationType) -> pil_image.Image
 
     """
     Scales the image to the desired shape filling the overflowing area with the provided constant
@@ -637,7 +635,7 @@ def pil_resize_image_with_padding(img, shape, cval, interp='bilinear'):
         :param img: A PIL Image
         :param shape: desired shape
         :param cval: the value to use for filling the pixels that possibly go over due to aspect ratio mismatch
-        :param interp: interpolation type ‘nearest’, ‘lanczos’, ‘bilinear’, ‘bicubic’ or ‘cubic’
+        :param interp: interpolation type
     # Returns
         :return: The resized image as a numpy array
     """
@@ -660,12 +658,9 @@ def pil_resize_image_with_padding(img, shape, cval, interp='bilinear'):
     return img_resized
 
 
-def pil_scale_image(img, sfactor, interp='bilinear'):
-    # type: (pil_image.Image, float) -> pil_image.Image
-
-    func = {'nearest': 0, 'lanczos': 1, 'bilinear': 2, 'bicubic': 3, 'cubic': 3}
-    img = img.resize(size=(int(round(sfactor * img.width)), int(round(sfactor * img.height))), resample=func[interp])
-
+def pil_scale_image(img, sfactor, interp=ImageInterpolationType.BILINEAR):
+    # type: (pil_image.Image, float, ImageInterpolationType) -> pil_image.Image
+    img = img.resize(size=(int(round(sfactor * img.width)), int(round(sfactor * img.height))), resample=interp.value)
     return img
 
 
@@ -852,7 +847,7 @@ def np_apply_random_transform(images,
                               channel_shift_ranges=None,
                               horizontal_flip=False,
                               vertical_flip=False):
-    # type: (list[np.ndarray], list[np.ndarray], str, list[ImageInterpolation], np.ndarray, str, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[np.ndarray], bool, bool) -> (list[np.ndarray], ImageTransform)
+    # type: (list[np.ndarray], list[np.ndarray], str, list[ImageInterpolationType], np.ndarray, str, np.ndarray, np.ndarray, list[np.ndarray], float, float, list[np.ndarray], bool, bool) -> (list[np.ndarray], ImageTransform)
 
     """
     Randomly augments, in the same way, a list of numpy images.
@@ -1006,7 +1001,7 @@ def np_apply_random_transform(images,
 
         for i in range(0, len(images)):
             # Note: preserve range is important for example for mask images
-            order = ImageInterpolation.NEAREST.value if interpolations is None or i > len(interpolations) else interpolations[i].value
+            order = ImageInterpolationType.NEAREST.value if interpolations is None or i > len(interpolations) else interpolations[i].value
 
             images[i] = warp(image=images[i],
                              inverse_map=tf_final.inverse,

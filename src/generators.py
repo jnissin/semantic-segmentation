@@ -14,7 +14,7 @@ from PIL.ImageFile import ImageFile as PILImageFile
 
 from utils import dataset_utils
 from utils import image_utils
-from utils.image_utils import ImageInterpolation, ImageTransform, img_to_array
+from utils.image_utils import ImageInterpolationType, ImageTransform, img_to_array
 from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSample, BoundingBox
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
 from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator
@@ -509,7 +509,7 @@ class DataGenerator(object):
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
     def _pil_resize_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE):
-        # type: (PILImage, tuple, np.ndarray, str, ImageType) -> PILImage
+        # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage
 
         # If the resize shape is None just return the original image
         if resize_shape is None:
@@ -554,7 +554,7 @@ class DataGenerator(object):
                 cached_img_name = '{}_{}_{}_{}_{}{}'.format(cached_img_name[0],
                                                             target_shape[0],
                                                             target_shape[1],
-                                                            interp,
+                                                            interp.value,
                                                             img_type.value,
                                                             cached_img_name[1])
                 cached_img_path = os.path.join(self.resized_image_cache_path, cached_img_name)
@@ -575,22 +575,8 @@ class DataGenerator(object):
         # If everything else fails - just resize to target shape without caching
         return image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
 
-    def _fit_image_to_div2_constraint(self, np_image, cval, interp):
-        # type: (np.ndarray, np.ndarray, str) -> np.ndarray
-
-        # Make sure the image dimensions satisfy the div2_constraint i.e. are n times divisible
-        # by 2 to work with the network. If the dimensions are not ok pad the images.
-        img_height_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[0])
-        img_width_div2 = dataset_utils.count_trailing_zeroes(np_image.shape[1])
-
-        if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
-            target_shape = dataset_utils.get_required_image_dimensions(np_image.shape, self.div2_constraint)
-            np_image = image_utils.np_resize_image_with_padding(np_image, shape=target_shape, cval=cval, interp=interp)
-
-        return np_image
-
     def _pil_fit_image_to_div2_constraint(self, img, cval, interp):
-        # type: (PILImage, np.ndarray, str) -> PILImage
+        # type: (PILImage, np.ndarray, ImageInterpolationType) -> PILImage
 
         # Make sure the image dimensions satisfy the div2_constraint i.e. are n times divisible
         # by 2 to work with the network. If the dimensions are not ok pad the images.
@@ -703,50 +689,6 @@ class DataGenerator(object):
         """
 
         return self.use_data_augmentation and np.random.random() <= self.data_augmentation_params.augmentation_probability_function(step_idx)
-
-    def _apply_data_augmentation_to_images(self, images, cvals, interpolations, transform_origin=None, override_channel_shift_ranges=None, override_gamma_adjust_ranges=None):
-        # type: (list, list, list, np.ndarray, list, list) -> (list, ImageTransform)
-
-        """
-        Applies (same) data augmentation as per stored DataAugmentationParameters to a list of images.
-
-        # Arguments
-            :param images: images to augment (same augmentation on all)
-            :param cvals: constant fill values for the images
-            :param interpolations: interpolations for the images
-            :param transform_origin: the origin for the transformations, if None the center of the images is used
-            :param override_channel_shift_ranges: optional channel shift range override (e.g. for mask images), otherwise DataAugmentationParam used for all
-            :param override_gamma_adjust_ranges: optional gamma adjust range override (e.g. for mask images), otherwise DataAugmentationParam used for all
-        # Returns
-            :return: the list of augmented images and ImageTransform as a tuple (images, transform)
-        """
-
-        if not self.use_data_augmentation:
-            self.logger.warn('Apply data augmentation called but use_data_augmentation is false')
-
-        num_images = len(images)
-        channel_shift_ranges = [self.data_augmentation_params.channel_shift_range] * num_images if override_channel_shift_ranges is None else override_channel_shift_ranges
-        gamma_adjust_ranges = [self.data_augmentation_params.gamma_adjust_range] * num_images if override_gamma_adjust_ranges is None else override_gamma_adjust_ranges
-
-        stime = time.time()
-        transform = image_utils.np_apply_random_transform(images=images,
-                                                          cvals=cvals,
-                                                          fill_mode=self.data_augmentation_params.fill_mode,
-                                                          interpolations=interpolations,
-                                                          transform_origin=transform_origin,
-                                                          img_data_format=self.img_data_format,
-                                                          rotation_range=self.data_augmentation_params.rotation_range,
-                                                          zoom_range=self.data_augmentation_params.zoom_range,
-                                                          width_shift_range=self.data_augmentation_params.width_shift_range,
-                                                          height_shift_range=self.data_augmentation_params.height_shift_range,
-                                                          channel_shift_ranges=channel_shift_ranges,
-                                                          horizontal_flip=self.data_augmentation_params.horizontal_flip,
-                                                          vertical_flip=self.data_augmentation_params.vertical_flip,
-                                                          gamma_adjust_ranges=gamma_adjust_ranges)
-
-        self.logger.debug_log('Data augmentation took: {} sec'.format(time.time() - stime))
-
-        return transform
 
     def _pil_apply_data_augmentation_to_images(self, images, cvals, random_seed, interpolations, transform_origin=None, override_channel_shift_ranges=None, override_gamma_adjust_ranges=None):
         # type: (list[PILImage], list, int, list, np.ndarray, list, list) -> (list[PILImage], ImageTransform)
@@ -871,7 +813,7 @@ class DataGenerator(object):
         scale = 1.0
 
         transform = image_utils.pil_create_transform(offset=offset, translate=(translate_x, translate_y), theta=theta, scale=scale)
-        teacher_img = image_utils.pil_transform_image(teacher_img, transform=transform, resample=image_utils.ImageInterpolation.BICUBIC.value, cval=self.photo_cval)
+        teacher_img = image_utils.pil_transform_image(teacher_img, transform=transform, resample=image_utils.ImageInterpolationType.BICUBIC.value, cval=self.photo_cval)
 
         return teacher_img
 
@@ -1263,8 +1205,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            pil_photo = self._pil_resize_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp='bicubic', img_type=ImageType.PHOTO)
-            pil_mask = self._pil_resize_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp='nearest', img_type=ImageType.MASK)
+            pil_photo = self._pil_resize_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
+            pil_mask = self._pil_resize_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK)
 
         # Drop any unnecessary channels from the mask image we only use the red or L (luma for grayscale)
         if len(pil_mask.getbands()) > 1:
@@ -1303,7 +1245,7 @@ class SegmentationDataGenerator(DataGenerator):
                 images, transform = self._pil_apply_data_augmentation_to_images(images=[pil_photo, pil_mask],
                                                                                 cvals=[photo_cval, mask_cval],
                                                                                 random_seed=self.random_seed + step_idx,
-                                                                                interpolations=[ImageInterpolation.BICUBIC, ImageInterpolation.NEAREST],
+                                                                                interpolations=[ImageInterpolationType.BICUBIC, ImageInterpolationType.NEAREST],
                                                                                 override_channel_shift_ranges=[self.data_augmentation_params.channel_shift_range, None],
                                                                                 override_gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range, None])
                 # Unpack the images
@@ -1312,7 +1254,7 @@ class SegmentationDataGenerator(DataGenerator):
                 images, transform = self._pil_apply_data_augmentation_to_images(images=[pil_photo],
                                                                                 cvals=[photo_cval],
                                                                                 random_seed=self.random_seed + step_idx,
-                                                                                interpolations=[ImageInterpolation.BICUBIC],
+                                                                                interpolations=[ImageInterpolationType.BICUBIC],
                                                                                 override_channel_shift_ranges=[self.data_augmentation_params.channel_shift_range],
                                                                                 override_gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
                 # Unpack the image
@@ -1388,8 +1330,8 @@ class SegmentationDataGenerator(DataGenerator):
                     break
 
         # Make sure both photo and mask satisfy the div2 constraint
-        pil_photo = self._pil_fit_image_to_div2_constraint(img=pil_photo, cval=photo_cval, interp='bicubic')
-        pil_mask = self._pil_fit_image_to_div2_constraint(img=pil_mask, cval=mask_cval, interp='nearest')
+        pil_photo = self._pil_fit_image_to_div2_constraint(img=pil_photo, cval=photo_cval, interp=ImageInterpolationType.BICUBIC)
+        pil_mask = self._pil_fit_image_to_div2_constraint(img=pil_mask, cval=mask_cval, interp=ImageInterpolationType.NEAREST)
 
         return pil_photo, pil_mask
 
@@ -2098,19 +2040,19 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic', img_type=ImageType.PHOTO)
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
             images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                     cvals=[self.photo_cval],
                                                                     random_seed=self.random_seed+step_index,
-                                                                    interpolations=[ImageInterpolation.BICUBIC])
+                                                                    interpolations=[ImageInterpolationType.BICUBIC])
 
             img, = images
 
         # Make sure the image dimensions satisfy the div2_constraint
-        img = self._fit_image_to_div2_constraint(np_image=img, cval=self.photo_cval, interp='bicubic')
+        img = self._pil_fit_image_to_div2_constraint(img, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC)
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -2138,7 +2080,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic', img_type=ImageType.PHOTO)
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
 
         img_height = img.height
         img_width = img.width
@@ -2156,7 +2098,7 @@ class ClassificationDataGenerator(DataGenerator):
             images, transform = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                             cvals=[self.photo_cval],
                                                                             random_seed=self.random_seed+step_index,
-                                                                            interpolations=[ImageInterpolation.BICUBIC],
+                                                                            interpolations=[ImageInterpolationType.BICUBIC],
                                                                             transform_origin=np.array([crop_center_y, crop_center_x]))
 
             img, = images
@@ -2214,7 +2156,7 @@ class ClassificationDataGenerator(DataGenerator):
                 (crop_size_x, crop_size_y)))
 
         img = image_utils.pil_crop_image_with_fill(img, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
-        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp='bicubic')
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC)
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -2252,7 +2194,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp='bicubic', img_type=ImageType.PHOTO)
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -2267,7 +2209,7 @@ class ClassificationDataGenerator(DataGenerator):
             images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                     cvals=[self.photo_cval],
                                                                     random_seed=self.random_seed+step_index,
-                                                                    interpolations=[ImageInterpolation.BICUBIC])
+                                                                    interpolations=[ImageInterpolationType.BICUBIC])
             img, = images
 
         # If a crop size is given: take a random crop of the image
@@ -2275,7 +2217,7 @@ class ClassificationDataGenerator(DataGenerator):
             y1x1, y2x2 = self._get_random_crop_area(img_width=img.width, img_height=img.height, crop_width=crop_shape[1], crop_height=crop_shape[0])
             img = image_utils.pil_crop_image(img, x1=y1x1[1], y1=y1x1[0], x2=y2x2[1], y2=y2x2[0])
 
-        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp='bicubic')
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC)
 
         # Create a dummy label vector (one-hot) all zeros
         y = self.dummy_label_vector

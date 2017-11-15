@@ -466,7 +466,7 @@ def main():
             print 'Scaling predictions back to original image shape: {} with scale factor: {}'.format(prediction_image.original_shape, sfactor)
             scaled_prediction = ndimage.zoom(predictions[i],
                                              zoom=(sfactor, sfactor, 1.0),
-                                             order=image_utils.ImageInterpolation.BICUBIC.value,
+                                             order=image_utils.ImageInterpolationType.BICUBIC.value,
                                              mode='constant',
                                              cval=-1.0).astype(predictions[i].dtype)
 
