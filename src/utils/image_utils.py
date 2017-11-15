@@ -3,6 +3,7 @@
 import copy
 import os
 import re
+import time
 
 from enum import Enum
 from PIL import Image as PImage
@@ -159,6 +160,8 @@ def load_img(path, grayscale=False, target_size=None, num_read_attemps=1):
             # If this is the last attempt re-raise the exception
             if i+1 == num_read_attemps:
                 raise e
+            else:
+                time.sleep(0.05)
 
     if grayscale:
         if img.mode != 'L':
