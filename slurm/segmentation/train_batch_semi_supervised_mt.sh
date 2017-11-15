@@ -14,4 +14,4 @@ module load teflon
 source activate ss-new
 module load CUDA/9.0.176 cuDNN/7-CUDA-9.0.176
 
-srun python -m src.train --model enet-naive-upsampling --mfolder enet-naive-upsampling/semi-supervised-mt --trainer segmentation_semi_supervised_mean_teacher --config ./configs/config-segmentation.json --wdir /scratch/work/jhnissin/semantic-segmentation/ --maxjobs 6
+srun python -m src.train --model enet-naive-upsampling --mfolder enet-naive-upsampling/semi-supervised-mt --trainer segmentation_semi_supervised_mean_teacher --config ./configs/segmentation/config-segmentation-semi-supervised-mt.json --wdir /scratch/work/jhnissin/semantic-segmentation/ --maxjobs 6
