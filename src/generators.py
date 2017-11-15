@@ -1117,7 +1117,7 @@ class SegmentationDataGenerator(DataGenerator):
         # Resize the photo to match the mask size if necessary, since
         # the original photos are sometimes huge
         if pil_photo.size != pil_mask.size:
-            pil_photo = pil_photo.resize(pil_mask.size, PImage.BICUBIC)
+            pil_photo = self._pil_resize_image(pil_photo, resize_shape=(pil_mask.height, pil_mask.width), cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
 
         if pil_photo.size != pil_mask.size:
             raise ValueError('Non-matching photo and mask dimensions after resize: {} != {}'.format(pil_photo.size, pil_mask.size))
