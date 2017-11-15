@@ -508,7 +508,7 @@ def pil_transform_image(img, transform, resample, cval=None):
 
     # Store original image mode and check if cval is non-black
     mode = img.mode
-    non_black_cval = cval is not None and (isinstance(cval, int) and cval == 0) and sum(cval) != 0
+    non_black_cval = cval is not None and ((isinstance(cval, int) and cval != 0) or (sum(cval) != 0))
 
     # Add alpha channel (all pixels full alpha) to detect out-of-bounds values (will have alpha 0)
     if non_black_cval:
@@ -730,8 +730,13 @@ def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cva
 
     # Make sure the cval is in the correct format if None default to black
     if cval is not None:
-        cval = np.round(cval).astype(dtype=np.int32)
-        cval = tuple(cval)
+        if isinstance(cval, float):
+            cval = int(round(cval))
+        elif isinstance(cval, int):
+            cval = cval
+        else:
+            cval = np.round(cval).astype(dtype=np.int32)
+            cval = tuple(cval)
     else:
         cval = 0
 
