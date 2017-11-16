@@ -23,7 +23,6 @@ except ImportError:
 
 from src.logger import Logger
 from src.utils.multiprocessing_utils import MultiprocessingManager
-from keras import backend as K
 
 
 class Sequence(object):
@@ -100,20 +99,22 @@ def _update_sequence(uuid, seq):
 def _process_init(uuid):
     # type: (int) -> None
 
-    # Clear any keras sessions from data generation child processes - they are unnecessary
     pid = os.getpid()
-    Logger.instance().log('Hello from process: {} for uuid: {}, daemon: {}'.format(pid, uuid, multiprocessing.current_process().daemon))
+    is_daemon = multiprocessing.current_process().daemon
+    Logger.instance().log('Hello from process: {} for uuid: {}, daemon: {}'.format(pid, uuid, is_daemon))
 
-    try:
-        Logger.instance().log('Clearing Tensorflow session from child process: {}'.format(pid))
-        K.clear_session()
-        memory_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        Logger.instance().log('Running garbage collection from child process: {}, with memory usage: {}'.format(pid, memory_used))
-        collected = gc.collect()
-        memory_used_after_gc = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        Logger.instance().log('Collected {} objects from child process: {}, memory usage diff: {}'.format(collected, pid, memory_used-memory_used_after_gc))
-    except Exception as e:
-        Logger.instance().warn('Caught exception while clearing Tensorflow session from child process {}: {}'.format(pid, e.message))
+    # Clear any keras sessions from data generation child processes - they are unnecessary
+    # try:
+    #     from keras import backend as K
+    #     Logger.instance().log('Clearing Tensorflow session from child process: {}'.format(pid))
+    #     K.clear_session()
+    #     memory_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    #     Logger.instance().log('Running garbage collection from child process: {}, with memory usage: {}'.format(pid, memory_used))
+    #     collected = gc.collect()
+    #     memory_used_after_gc = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    #     Logger.instance().log('Collected {} objects from child process: {}, memory usage diff: {}'.format(collected, pid, memory_used-memory_used_after_gc))
+    # except Exception as e:
+    #     Logger.instance().warn('Caught exception while clearing Tensorflow session from child process {}: {}'.format(pid, e.message))
 
 
 

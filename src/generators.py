@@ -562,7 +562,7 @@ class DataGenerator(object):
             # If the cached file exists load and return it
             if os.path.exists(cached_img_path):
                 try:
-                    resized_img = image_utils.load_img(cached_img_path, num_read_attemps=2)
+                    resized_img = image_utils.load_img(cached_img_path, num_read_attemps=2, load_to_memory=True)
 
                     # Remove the old image resource
                     img.close()
@@ -1718,7 +1718,7 @@ class SegmentationDataGenerator(DataGenerator):
             # Check if we can find the mask from the superpixel the mask cache
             if os.path.exists(cached_mask_file_path):
                 try:
-                    mask = image_utils.load_img(cached_mask_file_path, grayscale=True, num_read_attemps=2)
+                    mask = image_utils.load_img(cached_mask_file_path, grayscale=True, num_read_attemps=2, load_to_memory=True)
                     return mask
                 except Exception as e:
                     self.logger.warn('Caught exception during superpixel caching (read): {}'.format(e.message))

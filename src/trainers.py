@@ -241,14 +241,17 @@ class TrainerBase:
         model_metrics = self._get_model_metrics()
 
         if settings.USE_MULTIPROCESSING:
-            self.logger.log('Pre creating enqueuer to avoid copying Tensorflow computational graph during fork')
+            self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
             self.model.pre_create_enqueuer(generator=self.training_data_iterator,
                                            epochs=self.num_epochs,
                                            initial_epoch=self.initial_epoch,
                                            use_multiprocessing=settings.USE_MULTIPROCESSING,
                                            shuffle=True,
                                            workers=self.num_training_data_generation_workers,
-                                           max_queue_size=self.training_data_max_queue_size)
+                                           max_queue_size=self.training_data_max_queue_size,
+                                           validation_generator=self.validation_data_iterator,
+                                           validation_workers=self.num_validation_data_generation_workers,
+                                           validation_max_queue_size=self.validation_data_max_queue_size)
 
         # Compile the model
         self.model.compile(optimizer=model_optimizer,

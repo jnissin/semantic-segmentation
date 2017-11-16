@@ -43,12 +43,18 @@ class ExtendedModel(Model):
         self.fit_generator_stopped = False
         self.process_clean_up_called = False
         self.logger = Logger.instance()
-        self.enqueuer = None
-        self.enqueuer_pre_created = False
+        self.training_enqueuer = None
+        self._training_enqueuer_pre_created = False
+        self.validation_enqueuer = None
+        self._validation_enqueuer_pre_created = False
 
     @property
     def training_enqueuer_pre_created(self):
-        return self.enqueuer_pre_created and self.enqueuer is not None
+        return self._training_enqueuer_pre_created and self.training_enqueuer is not None
+
+    @property
+    def validation_enqueuer_pre_created(self):
+        return self._validation_enqueuer_pre_created and self.validation_enqueuer is not None
 
     def stop_training_loop(self):
         self.fit_generator_stopped = True
@@ -60,8 +66,8 @@ class ExtendedModel(Model):
                 self.process_clean_up_called = True
                 self.fit_generator_stopped = True
 
-                if self.enqueuer is not None:
-                    self.enqueuer.stop(timeout=5)
+                if self.training_enqueuer is not None:
+                    self.training_enqueuer.stop(timeout=5)
 
                 # Note: Callback model stop_training flag is set in fit_generator
                 if hasattr(self, 'callback_model') and self.callback_model:
@@ -73,30 +79,78 @@ class ExtendedModel(Model):
         except (AttributeError, ValueError):
             pass
 
-    def pre_create_enqueuer(self, generator, use_multiprocessing, shuffle, epochs, initial_epoch, workers, max_queue_size):
-        self.enqueuer = None
+    def pre_create_enqueuer(self,
+                            generator,
+                            use_multiprocessing,
+                            shuffle,
+                            epochs,
+                            initial_epoch,
+                            workers,
+                            max_queue_size,
+                            validation_generator=None,
+                            validation_workers=1,
+                            validation_max_queue_size=10):
+        # type: (Sequence, bool, bool, int, int, int, int, Sequence, int) -> None
+
         wait_time = 0.01  # in seconds
-        is_sequence = isinstance(generator, Sequence)
+
+        # Pre-create training enqueuer
+        if self.training_enqueuer is not None:
+            self.training_enqueuer.stop()
+            self.training_enqueuer = None
+
+        self._training_enqueuer_pre_created = False
+        training_generator_is_sequence = isinstance(generator, Sequence)
 
         try:
-            if is_sequence:
-                self.enqueuer = OrderedEnqueuer(generator,
-                                                use_multiprocessing=use_multiprocessing,
-                                                shuffle=shuffle,
-                                                initial_epoch=initial_epoch,
-                                                max_epoch=epochs)
+            if training_generator_is_sequence:
+                self.training_enqueuer = OrderedEnqueuer(generator,
+                                                         use_multiprocessing=use_multiprocessing,
+                                                         shuffle=shuffle,
+                                                         initial_epoch=initial_epoch,
+                                                         max_epoch=epochs)
             else:
-                self.enqueuer = GeneratorEnqueuer(generator,
-                                                  use_multiprocessing=use_multiprocessing,
-                                                  wait_time=wait_time)
-            self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+                self.training_enqueuer = GeneratorEnqueuer(generator,
+                                                           use_multiprocessing=use_multiprocessing,
+                                                           wait_time=wait_time)
+
+            self.training_enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            self._training_enqueuer_pre_created = True
         except Exception as e:
-            if self.enqueuer is not None:
-                self.enqueuer.stop()
+            if self.training_enqueuer is not None:
+                self.training_enqueuer.stop()
 
             raise e
 
-        self.enqueuer_pre_created = True
+        # Pre-create validation enqueuer
+        if validation_generator is not None:
+
+            if self.validation_enqueuer is not None:
+                self.validation_enqueuer.stop()
+                self.validation_enqueuer = None
+
+            self._validation_enqueuer_pre_created = False
+            validation_generator_is_sequence = isinstance(validation_generator, Sequence)
+
+            try:
+                if validation_generator_is_sequence:
+                    self.validation_enqueuer = OrderedEnqueuer(validation_generator,
+                                                               use_multiprocessing=use_multiprocessing,
+                                                               shuffle=False,
+                                                               initial_epoch=0,
+                                                               max_epoch=None)
+                else:
+                    self.validation_enqueuer = GeneratorEnqueuer(validation_generator,
+                                                                 use_multiprocessing=use_multiprocessing,
+                                                                 wait_time=wait_time)
+
+                self.validation_enqueuer.start(workers=validation_workers, max_queue_size=validation_max_queue_size)
+                self._validation_enqueuer_pre_created = True
+            except Exception as e:
+                if self.validation_enqueuer is not None:
+                    self.validation_enqueuer.stop()
+
+                raise e
 
     def predict_on_batch(self, x, use_training_phase_layers=False):
         """Returns predictions for a single batch of samples.
@@ -292,6 +346,8 @@ class ExtendedModel(Model):
         if not self.training_enqueuer_pre_created and generator is None:
             raise ValueError('Invalid generator passed - must either pass a valid generator or pre create the enqueuer')
 
+        enqueuer = None
+
         try:
             if not self.training_enqueuer_pre_created:
                 is_sequence = isinstance(generator, Sequence)
@@ -303,21 +359,23 @@ class ExtendedModel(Model):
                                     ' Please consider using the`keras.utils.Sequence'
                                     ' class.'))
 
-                self.enqueuer = None
+                enqueuer = None
 
                 if is_sequence:
-                    self.enqueuer = OrderedEnqueuer(generator,
-                                                    use_multiprocessing=use_multiprocessing,
-                                                    shuffle=shuffle,
-                                                    initial_epoch=initial_epoch,
-                                                    max_epoch=epochs)
+                    enqueuer = OrderedEnqueuer(generator,
+                                                             use_multiprocessing=use_multiprocessing,
+                                                             shuffle=shuffle,
+                                                             initial_epoch=initial_epoch,
+                                                             max_epoch=epochs)
                 else:
-                    self.enqueuer = GeneratorEnqueuer(generator,
-                                                      use_multiprocessing=use_multiprocessing,
-                                                      wait_time=wait_time)
-                self.enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+                    enqueuer = GeneratorEnqueuer(generator,
+                                                               use_multiprocessing=use_multiprocessing,
+                                                               wait_time=wait_time)
+                enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            else:
+                enqueuer = self.training_enqueuer
 
-            output_generator = self.enqueuer.get()
+            output_generator = enqueuer.get()
 
             callback_model.stop_training = False
             while epoch < epochs:
@@ -438,8 +496,8 @@ class ExtendedModel(Model):
                     break
 
         finally:
-            if self.enqueuer is not None:
-                self.enqueuer.stop()
+            if enqueuer is not None:
+                enqueuer.stop()
 
         # Extended functionality: notify trainer
         if trainer is not None:
@@ -496,25 +554,35 @@ class ExtendedModel(Model):
         wait_time = 0.01
         all_outs = []
         batch_sizes = []
-        is_sequence = isinstance(generator, Sequence)
-        if not is_sequence and use_multiprocessing and workers > 1:
-            warnings.warn(
-                UserWarning('Using a generator with `use_multiprocessing=True`'
-                            ' and multiple workers may duplicate your data.'
-                            ' Please consider using the`keras.utils.Sequence'
-                            ' class.'))
+
+        if not self.training_enqueuer_pre_created and generator is None:
+            raise ValueError('Invalid generator passed - must either pass a valid generator or pre create the enqueuer')
+
         enqueuer = None
 
         try:
-            if is_sequence:
-                enqueuer = OrderedEnqueuer(generator,
-                                           use_multiprocessing=use_multiprocessing,
-                                           max_epoch=1)
+            if not self.validation_enqueuer_pre_created or not validation:
+                is_sequence = isinstance(generator, Sequence)
+                if not is_sequence and use_multiprocessing and workers > 1:
+                    warnings.warn(
+                        UserWarning('Using a generator with `use_multiprocessing=True`'
+                                    ' and multiple workers may duplicate your data.'
+                                    ' Please consider using the`keras.utils.Sequence'
+                                    ' class.'))
+                enqueuer = None
+
+                if is_sequence:
+                    enqueuer = OrderedEnqueuer(generator,
+                                               use_multiprocessing=use_multiprocessing,
+                                               max_epoch=1)
+                else:
+                    enqueuer = GeneratorEnqueuer(generator,
+                                                 use_multiprocessing=use_multiprocessing,
+                                                 wait_time=wait_time)
+                enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             else:
-                enqueuer = GeneratorEnqueuer(generator,
-                                             use_multiprocessing=use_multiprocessing,
-                                             wait_time=wait_time)
-            enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+                enqueuer = self.validation_enqueuer
+
             output_generator = enqueuer.get()
 
             while steps_done < steps:

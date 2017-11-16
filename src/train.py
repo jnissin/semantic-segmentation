@@ -125,7 +125,6 @@ def main():
     else:
         raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
 
-    print 'Starting training'
     history = _TRAINER.train()
 
 

@@ -131,7 +131,7 @@ def img_to_array(img, data_format=None, dtype=None):
     return x
 
 
-def load_img(path, grayscale=False, target_size=None, num_read_attemps=1):
+def load_img(path, grayscale=False, target_size=None, num_read_attemps=1, load_to_memory=False):
     """Loads an image into PIL format.
 
     # Arguments
@@ -140,6 +140,7 @@ def load_img(path, grayscale=False, target_size=None, num_read_attemps=1):
         target_size: Either `None` (default to original size)
             or tuple of ints `(img_height, img_width)`.
         num_read_attempts: number of re-attempts if the PIL image opening fails
+        load_to_memory: load image immediately into memory (closing the file pointer)
     # Returns
         A PIL Image instance.
 
@@ -163,6 +164,9 @@ def load_img(path, grayscale=False, target_size=None, num_read_attemps=1):
                 raise e
             else:
                 time.sleep(0.01)
+
+    if load_to_memory:
+        img.load()
 
     if grayscale:
         if img.mode != 'L':
