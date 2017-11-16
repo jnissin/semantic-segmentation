@@ -42,7 +42,7 @@ class WeightTransferInformation(object):
         self.lr_scalers = lr_scalers
 
     @property
-    def num_lr_scaling_layers(self):
+    def num_lr_scaling_trainable_weights(self):
         return len(self.lr_scalers)
 
 

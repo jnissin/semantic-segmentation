@@ -961,12 +961,12 @@ class TrainerBase:
             scale_lr_factor=scale_lr_factor)
 
         self.logger.log('Weight transfer completed with transferred layers: {}, last transferred layer name: {}, frozen layers: {}, last frozen layer name: {}, '
-                        'lr scaling layers: {}, lr scaling factor: {}'
+                        'lr scaling trainable weights: {}, lr scaling factor: {}'
                         .format(info.num_transferred_layers,
                                 info.last_transferred_layer_name,
                                 info.num_frozen_layers,
                                 info.last_frozen_layer_name,
-                                info.num_lr_scaling_layers,
+                                info.num_lr_scaling_trainable_weights,
                                 scale_lr_factor))
 
         return info.lr_scalers

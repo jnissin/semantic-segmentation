@@ -102,6 +102,7 @@ def _process_init(uuid):
 
     # Clear any keras sessions from data generation child processes - they are unnecessary
     pid = os.getpid()
+    Logger.instance().log('Hello from process: {} for uuid: {}, daemon: {}'.format(pid, uuid, multiprocessing.current_process().daemon))
 
     try:
         Logger.instance().log('Clearing Tensorflow session from child process: {}'.format(pid))
@@ -114,7 +115,6 @@ def _process_init(uuid):
     except Exception as e:
         Logger.instance().warn('Caught exception while clearing Tensorflow session from child process {}: {}'.format(pid, e.message))
 
-    Logger.instance().debug_log('Hello from process: {} for uuid: {} - clearing keras session'.format(pid, uuid))
 
 
 class SequenceEnqueuer(object):
