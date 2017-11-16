@@ -563,6 +563,11 @@ class DataGenerator(object):
             if os.path.exists(cached_img_path):
                 try:
                     resized_img = image_utils.load_img(cached_img_path, num_read_attemps=2)
+
+                    # Remove the old image resource
+                    img.close()
+                    del img
+
                     return resized_img
                 # Log the exception and default to the non cached resize
                 except Exception as e:
@@ -1292,11 +1297,20 @@ class SegmentationDataGenerator(DataGenerator):
                                           .format(material_lost_during_transform, bbox is None))
 
                     bbox = material_sample.get_bbox_rel()
+
+                    # Destroy the augmented versions and revert back to unaugmented versions
+                    pil_photo.close()
+                    del pil_photo
+                    pil_mask.close()
+                    del pil_mask
+
                     pil_photo = pil_photo_orig
                     pil_mask = pil_mask_orig
                 else:
                     # Destroy the backup images
+                    pil_photo_orig.close()
                     del pil_photo_orig
+                    pil_mask_orig.close()
                     del pil_mask_orig
 
         # If a crop size is given: take a random crop of both the image and the mask
@@ -2165,13 +2179,16 @@ class ClassificationDataGenerator(DataGenerator):
             # If the center has gone out of bounds abandon the augmentation - otherwise, update the crop center values
             if (not (0.0 < crop_center_y_new < 1.0)) or (not (0.0 < crop_center_x_new < 1.0)):
                 # Destroy the augmented version and revert back to the copy of the original
+                img.close()
                 del img
+
                 img = img_orig
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
 
                 # Destroy the backup image
+                img_orig.close()
                 del img_orig
 
         # Crop the image with the specified crop center. Regions going out of bounds are padded with a
