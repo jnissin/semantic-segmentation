@@ -936,22 +936,9 @@ class TrainerBase:
         if transfer_weights_options is None:
             raise ValueError('Could not find transfer weights options with key: transfer_weights_options')
 
-        transfer_model_name = transfer_weights_options['transfer_model_name']
-        transfer_model_input_shape = tuple(transfer_weights_options['transfer_model_input_shape'])
-        transfer_model_num_classes = transfer_weights_options['transfer_model_num_classes']
         transfer_model_weights_file_path = transfer_weights_options['transfer_model_weights_file_path']
 
-        self.logger.log('Creating transfer model: {} with input shape: {}, num classes: {}'
-                        .format(transfer_model_name, transfer_model_input_shape, transfer_model_num_classes))
-        transfer_model_wrapper = models.get_model(transfer_model_name,
-                                                  transfer_model_input_shape,
-                                                  transfer_model_num_classes)
-        transfer_model = transfer_model_wrapper.model
-        transfer_model.summary()
-
-        self.logger.log('Loading transfer weights to transfer model from file: {}'.format(transfer_model_weights_file_path))
-        transfer_model.load_weights(transfer_model_weights_file_path)
-
+        self.logger.log('Transferring weights from file: {}'.format(transfer_model_weights_file_path))
         from_layer_index = int(transfer_weights_options['from_layer_index'])
         to_layer_index = int(transfer_weights_options['to_layer_index'])
         freeze_from_layer_index = transfer_weights_options.get('freeze_from_layer_index')
@@ -963,8 +950,8 @@ class TrainerBase:
         self.logger.log('Transferring weights from layer range: [{}:{}], freezing transferred layer range: [{}:{}], lr scaling layer range: [{}:{}]'
                         .format(from_layer_index, to_layer_index, freeze_from_layer_index, freeze_to_layer_index, scale_lr_from_layer_index, scale_lr_to_layer_index))
 
-        info = to_model_wrapper.transfer_weights(
-            from_model=transfer_model,
+        info = to_model_wrapper.transfer_weights_from_file(
+            filepath=transfer_model_weights_file_path,
             from_layer_index=from_layer_index,
             to_layer_index=to_layer_index,
             freeze_from_layer_index=freeze_from_layer_index,
@@ -1984,7 +1971,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         # the generator input will not be meaning
         history = self.model.fit_generator(
             generator=self.training_data_iterator if not self.model.training_enqueuer_pre_created else None,
-            steps_per_epoch=self.training_steps_per_epoch,
+            steps_per_epoch=30,#self.training_steps_per_epoch,
             epochs=self.num_epochs,
             initial_epoch=self.initial_epoch,
             validation_data=self.validation_data_iterator,

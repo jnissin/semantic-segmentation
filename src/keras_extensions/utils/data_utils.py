@@ -8,6 +8,7 @@ import threading
 import time
 import os
 import gc
+import resource
 
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
@@ -98,16 +99,18 @@ def _update_sequence(uuid, seq):
 
 def _process_init(uuid):
     # type: (int) -> None
-    # Clear any keras sessions from data generation child processes - they are unnecessary
 
+    # Clear any keras sessions from data generation child processes - they are unnecessary
     pid = os.getpid()
 
     try:
         Logger.instance().log('Clearing Tensorflow session from child process: {}'.format(pid))
         K.clear_session()
-        Logger.instance().log('Running garbage collection from child process: {}'.format(pid))
+        memory_used = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        Logger.instance().log('Running garbage collection from child process: {}, with memory usage: {}'.format(pid, memory_used))
         collected = gc.collect()
-        Logger.instance().log('Collected {} objects from child process: {}'.format(collected, pid))
+        memory_used_after_gc = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        Logger.instance().log('Collected {} objects from child process: {}, memory usage diff: {}'.format(collected, pid, memory_used-memory_used_after_gc))
     except Exception as e:
         Logger.instance().warn('Caught exception while clearing Tensorflow session from child process {}: {}'.format(pid, e.message))
 
