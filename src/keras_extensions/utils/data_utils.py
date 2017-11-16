@@ -99,7 +99,13 @@ def _update_sequence(uuid, seq):
 def _process_init(uuid):
     # type: (int) -> None
     # Clear any keras sessions from data generation child processes - they are unnecessary
-    K.clear_session()
+
+    try:
+        Logger.instance().log('Clearing Tensorflow session from process: {}'.format(os.getpid()))
+        K.clear_session()
+    except Exception as e:
+        Logger.instance().warn('Caught exception while clearing Tensorflow session: {}'.format(e.message))
+
     Logger.instance().debug_log('Hello from process: {} for uuid: {} - clearing keras session'.format(os.getpid(), uuid))
 
 
