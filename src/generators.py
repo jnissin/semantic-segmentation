@@ -336,9 +336,10 @@ class DataGenerator(object):
         self.resized_image_cache_path = params.resized_image_cache_path
 
         # If caching resized images ensure the cache path exists
-        if self.resized_image_cache_path is not None and not os.path.exists(self.resized_image_cache_path):
-            self.logger.log('Creating resized image cache to: {}'.format(self.resized_image_cache_path))
-            os.makedirs(os.path.dirname(self.resized_image_cache_path))
+        if self.resized_image_cache_path is not None:
+            if not os.path.exists(self.resized_image_cache_path):
+                self.logger.log('Creating resized image cache to: {}'.format(self.resized_image_cache_path))
+                os.makedirs(os.path.dirname(self.resized_image_cache_path))
 
         # Other member variables
         self.img_data_format = settings.DEFAULT_IMAGE_DATA_FORMAT
@@ -550,8 +551,9 @@ class DataGenerator(object):
         if self.resized_image_cache_path is not None and isinstance(img, PILImageFile):
             # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
             cached_img_name = os.path.splitext(os.path.basename(img.filename))
+            filename_no_ext = cached_img_name[0]
             file_ext = cached_img_name[1]
-            cached_img_name = '{}_{}_{}_{}_{}{}'.format(cached_img_name[0],
+            cached_img_name = '{}_{}_{}_{}_{}{}'.format(filename_no_ext,
                                                         target_shape[0],
                                                         target_shape[1],
                                                         interp.value,
@@ -562,7 +564,7 @@ class DataGenerator(object):
             # If the cached file exists load and return it
             if os.path.exists(cached_img_path):
                 try:
-                    resized_img = image_utils.load_img(cached_img_path, num_read_attemps=2, load_to_memory=True)
+                    resized_img = image_utils.load_img(cached_img_path)
 
                     # Remove the old image resource
                     img.close()
@@ -589,7 +591,12 @@ class DataGenerator(object):
 
             try:
                 resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
-                resized_img.save(cached_img_path, format=save_format)
+                tmp_cached_img_path = cached_img_path + '.tmp'
+
+                if not os.path.exists(tmp_cached_img_path) or os.path.exists(cached_img_path):
+                    resized_img.save(tmp_cached_img_path, format=save_format)
+                    os.rename(tmp_cached_img_path, cached_img_path)
+
                 return resized_img
             except Exception as e:
                 self.logger.warn('Caught exception during resized image caching (write): {}'.format(e.message))
@@ -1718,7 +1725,7 @@ class SegmentationDataGenerator(DataGenerator):
             # Check if we can find the mask from the superpixel the mask cache
             if os.path.exists(cached_mask_file_path):
                 try:
-                    mask = image_utils.load_img(cached_mask_file_path, grayscale=True, num_read_attemps=2, load_to_memory=True)
+                    mask = image_utils.load_img(cached_mask_file_path, grayscale=True)
                     return mask
                 except Exception as e:
                     self.logger.warn('Caught exception during superpixel caching (read): {}'.format(e.message))

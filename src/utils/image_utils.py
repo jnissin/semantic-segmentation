@@ -151,19 +151,21 @@ def load_img(path, grayscale=False, target_size=None, num_read_attemps=1, load_t
         raise ImportError('Could not import PIL.Image. The use of `array_to_img` requires PIL.')
 
     img = None
-    num_read_attemps = max(num_read_attemps, 1)
 
     # Re-attempt image reading - sometimes PIL can fail to read images for no apparent reason
-    for i in range(0, num_read_attemps):
-        try:
-            img = PImage.open(path)
-            break
-        except IOError as e:
-            # If this is the last attempt re-raise the exception
-            if i+1 == num_read_attemps:
-                raise e
-            else:
-                time.sleep(0.01)
+    if num_read_attemps > 1:
+        for i in range(0, num_read_attemps):
+            try:
+                img = PImage.open(path)
+                break
+            except IOError as e:
+                # If this is the last attempt re-raise the exception
+                if i+1 == num_read_attemps:
+                    raise e
+                else:
+                    time.sleep(0.01)
+    else:
+        img = PImage.open(path)
 
     if load_to_memory:
         img.load()
