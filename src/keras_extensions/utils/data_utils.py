@@ -22,6 +22,7 @@ except ImportError:
 
 from src.logger import Logger
 from src.utils.multiprocessing_utils import MultiprocessingManager
+from keras import backend as K
 
 
 class Sequence(object):
@@ -97,7 +98,9 @@ def _update_sequence(uuid, seq):
 
 def _process_init(uuid):
     # type: (int) -> None
-    Logger.instance().debug_log('DEBUG {:%Y-%m-%d %H:%M:%S}: Hello from process: {} for uuid: {}'.format(datetime.datetime.now(), os.getpid(), uuid))
+    # Clear any keras sessions from data generation child processes - they are unnecessary
+    K.clear_session()
+    Logger.instance().debug_log('Hello from process: {} for uuid: {} - clearing keras session'.format(os.getpid(), uuid))
 
 
 class SequenceEnqueuer(object):
