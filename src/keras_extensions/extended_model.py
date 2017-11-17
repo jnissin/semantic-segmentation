@@ -86,11 +86,8 @@ class ExtendedModel(Model):
                             epochs,
                             initial_epoch,
                             workers,
-                            max_queue_size,
-                            validation_generator=None,
-                            validation_workers=1,
-                            validation_max_queue_size=10):
-        # type: (Sequence, bool, bool, int, int, int, int, Sequence, int) -> None
+                            max_queue_size):
+        # type: (Sequence, bool, bool, int, int, int, int) -> None
 
         wait_time = 0.01  # in seconds
 
@@ -122,35 +119,43 @@ class ExtendedModel(Model):
 
             raise e
 
-        # Pre-create validation enqueuer
-        if validation_generator is not None:
+    def pre_create_validation_enqueuer(self,
+                                       generator,
+                                       use_multiprocessing,
+                                       workers,
+                                       max_queue_size):
+        # type: (Sequence, bool, int, int) -> None
 
+        wait_time = 0.01  # in seconds
+
+        # Pre-create validation enqueuer
+        if self.validation_enqueuer is not None:
+            self.validation_enqueuer.stop()
+            self.validation_enqueuer = None
+
+        self._validation_enqueuer_pre_created = False
+        validation_generator_is_sequence = isinstance(generator, Sequence)
+
+        try:
+            if validation_generator_is_sequence:
+                self.validation_enqueuer = OrderedEnqueuer(generator,
+                                                           use_multiprocessing=use_multiprocessing,
+                                                           shuffle=False,
+                                                           initial_epoch=0,
+                                                           max_epoch=None)
+            else:
+                self.validation_enqueuer = GeneratorEnqueuer(generator,
+                                                             use_multiprocessing=use_multiprocessing,
+                                                             wait_time=wait_time)
+
+            self.validation_enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            self._validation_enqueuer_pre_created = True
+            self.validation_enqueuer.pause_run()
+        except Exception as e:
             if self.validation_enqueuer is not None:
                 self.validation_enqueuer.stop()
-                self.validation_enqueuer = None
 
-            self._validation_enqueuer_pre_created = False
-            validation_generator_is_sequence = isinstance(validation_generator, Sequence)
-
-            try:
-                if validation_generator_is_sequence:
-                    self.validation_enqueuer = OrderedEnqueuer(validation_generator,
-                                                               use_multiprocessing=use_multiprocessing,
-                                                               shuffle=False,
-                                                               initial_epoch=0,
-                                                               max_epoch=None)
-                else:
-                    self.validation_enqueuer = GeneratorEnqueuer(validation_generator,
-                                                                 use_multiprocessing=use_multiprocessing,
-                                                                 wait_time=wait_time)
-
-                self.validation_enqueuer.start(workers=validation_workers, max_queue_size=validation_max_queue_size)
-                self._validation_enqueuer_pre_created = True
-            except Exception as e:
-                if self.validation_enqueuer is not None:
-                    self.validation_enqueuer.stop()
-
-                raise e
+            raise e
 
     def predict_on_batch(self, x, use_training_phase_layers=False):
         """Returns predictions for a single batch of samples.
@@ -374,6 +379,7 @@ class ExtendedModel(Model):
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             else:
                 enqueuer = self.training_enqueuer
+                enqueuer.continue_run()
 
             output_generator = enqueuer.get()
 
@@ -461,6 +467,8 @@ class ExtendedModel(Model):
                             s_time = time.time()
 
                             # Extended functionality: pass trainer and validation flag
+                            enqueuer.pause_run()
+
                             val_outs = self.evaluate_generator(
                                 validation_data,
                                 validation_steps,
@@ -470,6 +478,7 @@ class ExtendedModel(Model):
                                 use_multiprocessing=use_multiprocessing,
                                 validation=True)
 
+                            enqueuer.continue_run()
                             self.logger.debug_log('Validation evaluation took: {}'.format(time.time() - s_time))
                         else:
                             # No need for try/except because
@@ -494,7 +503,6 @@ class ExtendedModel(Model):
                 epoch += 1
                 if callback_model.stop_training:
                     break
-
         finally:
             if enqueuer is not None:
                 enqueuer.stop()
@@ -582,6 +590,7 @@ class ExtendedModel(Model):
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             else:
                 enqueuer = self.validation_enqueuer
+                enqueuer.continue_run()
 
             output_generator = enqueuer.get()
 
@@ -623,9 +632,14 @@ class ExtendedModel(Model):
 
                 steps_done += 1
                 batch_sizes.append(batch_size)
-
+        except Exception as e:
+            if enqueuer is not None:
+                enqueuer.stop()
+            raise e
         finally:
-            if not validation and not self.validation_enqueuer_pre_created:
+            if validation and self.validation_enqueuer_pre_created:
+                self.validation_enqueuer.pause_run()
+            else:
                 if enqueuer is not None:
                     enqueuer.stop()
 

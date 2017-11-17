@@ -125,6 +125,7 @@ class TrainerBase:
         self.validation_data_generator = None
         self.model_wrapper = None
 
+        self._model_optimizer_lr_scalers = None
         self._initial_epoch = None
         self._initial_step = None
         self._class_weight_type = None
@@ -190,6 +191,10 @@ class TrainerBase:
         # Initialize model
         self.model_wrapper = self._init_model()
 
+        # Pre-create possible enqueuers and compile model
+        self._pre_create_enqueuers()
+        self._compile_model()
+
     def _init_model(self):
         # type: () -> ModelBase
 
@@ -227,31 +232,21 @@ class TrainerBase:
         if self.use_transfer_weights:
             if self.initial_epoch != 0:
                 self.logger.warn('Should not transfer weights when continuing from last checkpoint. Skipping weight transfer')
-                lr_scalers = dict()
+                self._model_optimizer_lr_scalers = dict()
             else:
                 self.logger.log('Transferring weights to model')
-                lr_scalers = self._transfer_weights(to_model_wrapper=self.model_wrapper)
+                self._model_optimizer_lr_scalers = self._transfer_weights(to_model_wrapper=self.model_wrapper)
         else:
-            lr_scalers = dict()
+            self._model_optimizer_lr_scalers = dict()
 
+        return self.model_wrapper
+
+    def _compile_model(self):
         # Get the necessary components to compile the model
-        model_optimizer = self._get_model_optimizer(lr_scalers)
+        model_optimizer = self._get_model_optimizer(self._model_optimizer_lr_scalers)
         model_loss = self._get_model_loss()
         model_loss_weights = self._get_model_loss_weights()
         model_metrics = self._get_model_metrics()
-
-        if settings.USE_MULTIPROCESSING:
-            self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
-            self.model.pre_create_enqueuer(generator=self.training_data_iterator,
-                                           epochs=self.num_epochs,
-                                           initial_epoch=self.initial_epoch,
-                                           use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                           shuffle=True,
-                                           workers=self.num_training_data_generation_workers,
-                                           max_queue_size=self.training_data_max_queue_size,
-                                           validation_generator=self.validation_data_iterator,
-                                           validation_workers=self.num_validation_data_generation_workers,
-                                           validation_max_queue_size=self.validation_data_max_queue_size)
 
         # Compile the model
         self.model.compile(optimizer=model_optimizer,
@@ -268,7 +263,25 @@ class TrainerBase:
         except Exception as e:
             self.logger.warn('Saving model plot to file failed: {}'.format(e.message))
 
-        return self.model_wrapper
+    def _pre_create_enqueuers(self):
+        if settings.USE_MULTIPROCESSING:
+
+            self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
+
+            self.model.pre_create_enqueuer(generator=self.training_data_iterator,
+                                           epochs=self.num_epochs,
+                                           initial_epoch=self.initial_epoch,
+                                           use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                           shuffle=True,
+                                           workers=self.num_training_data_generation_workers,
+                                           max_queue_size=self.training_data_max_queue_size)
+
+            self.model.pre_create_validation_enqueuer(generator=self.validation_data_iterator,
+                                                      use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                                      workers=self.num_validation_data_generation_workers,
+                                                      max_queue_size=self.validation_data_max_queue_size)
+
+
 
     @abstractmethod
     def _get_data_sets(self):
@@ -1096,12 +1109,12 @@ class MeanTeacherTrainerBase(TrainerBase):
     __metaclass__ = ABCMeta
 
     def __init__(self, trainer_type, model_name, model_folder_name, config_file_path):
-        super(MeanTeacherTrainerBase, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
 
         # Declare instance variables
         self.teacher_model_wrapper = None
         self.teacher_validation_data_generator = None
         self.teacher_validation_data_iterator = None
+        self._teacher_model_optimizer_lr_scalers = None
 
         self._mean_teacher_method_config = None
         self._ema_smoothing_coefficient_function = None
@@ -1109,11 +1122,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         self._teacher_weights_directory_path = None
         self._teacher_model_checkpoint_file_path = None
 
-        # If we are using the mean teacher method - read the configuration and initialize the instance variables
-        if self.using_mean_teacher_method:
-            self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
-            self.teacher_validation_data_iterator = self.teacher_validation_data_generator.get_data_set_iterator()
-            self.teacher_model_wrapper = self._init_teacher_model()
+        super(MeanTeacherTrainerBase, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
 
         # Trigger property initializations - raise errors if properties don't exist
         if self.using_mean_teacher_method:
@@ -1122,7 +1131,14 @@ class MeanTeacherTrainerBase(TrainerBase):
             assert(self.teacher_weights_directory_path is not None)
             assert(self.teacher_model_checkpoint_file_path is not None)
 
-    def _init_teacher_model(self):
+    def _init_teacher_data_generators(self):
+        if self.using_mean_teacher_method:
+            self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
+            self.teacher_validation_data_iterator = self.teacher_validation_data_generator.get_data_set_iterator()
+
+    def _init_model(self):
+        parent_model = super(MeanTeacherTrainerBase, self)._init_model()
+
         # If we are using the mean teacher method create the teacher model
         if self.using_mean_teacher_method:
             teacher_model_lambda_loss_type = self._get_teacher_model_lambda_loss_type()
@@ -1144,18 +1160,36 @@ class MeanTeacherTrainerBase(TrainerBase):
             if self.teacher_use_transfer_weights:
                 if self.initial_epoch != 0:
                     self.logger.warn('Should not transfer teacher weights when continuing from last checkpoint. Skipping teacher weight transfer')
-                    lr_scalers = dict()
+                    self._teacher_model_optimizer_lr_scalers = dict()
                 else:
                     self.logger.log('Transferring weights to teacher model')
-                    lr_scalers = self._transfer_weights(to_model_wrapper=self.teacher_model_wrapper, transfer_weights_options=self.teacher_transfer_weights_options)
+                    self._teacher_model_optimizer_lr_scalers = self._transfer_weights(to_model_wrapper=self.teacher_model_wrapper, transfer_weights_options=self.teacher_transfer_weights_options)
             else:
-                lr_scalers = dict()
+                self._teacher_model_optimizer_lr_scalers = dict()
 
+        return parent_model
+
+    def _pre_create_enqueuers(self):
+        super(MeanTeacherTrainerBase, self)._pre_create_enqueuers()
+
+        if self.using_mean_teacher_method:
+            if settings.USE_MULTIPROCESSING:
+
+                self.logger.log('Pre-creating teacher validation enqueuer to avoid copying Tensorflow computational graph during process creation')
+                self.teacher_model.pre_create_validation_enqueuer(generator=self.teacher_validation_data_iterator,
+                                                                  use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                                                  workers=self.num_validation_data_generation_workers,
+                                                                  max_queue_size=self.validation_data_max_queue_size)
+
+    def _compile_model(self):
+        super(MeanTeacherTrainerBase, self)._compile_model()
+
+        if self.using_mean_teacher_method:
             teacher_model_loss = self._get_teacher_model_loss()
             teacher_model_metrics = self._get_teacher_model_metrics()
 
             # Get the optimizer for the model
-            optimizer = self._get_model_optimizer(lr_scalers=lr_scalers)
+            optimizer = self._get_model_optimizer(lr_scalers=self._teacher_model_optimizer_lr_scalers)
 
             self.teacher_model.compile(optimizer=optimizer,
                                        loss=teacher_model_loss,
@@ -1169,10 +1203,6 @@ class MeanTeacherTrainerBase(TrainerBase):
                 plot_model(self.teacher_model, to_file=model_plot_file_path, show_shapes=True, show_layer_names=True)
             except Exception as e:
                 self.logger.warn('Saving teacher model plot to file failed: {}'.format(e.message))
-
-            return self.teacher_model_wrapper
-
-        return None
 
     @abstractmethod
     def _get_teacher_validation_data_generator(self):
@@ -1925,6 +1955,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self.logger.log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
         self.logger.log('Using per-channel stddev: {}'.format(training_data_generator.per_channel_stddev))
 
+        self._init_teacher_data_generators()
+
         return training_data_generator, validation_data_generator
 
     def _get_teacher_validation_data_generator(self):
@@ -2340,6 +2372,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
         self.logger.log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
         self.logger.log('Using per-channel stddev: {}'.format(training_data_generator.per_channel_stddev))
+
+        self._init_teacher_data_generators()
 
         return training_data_generator, validation_data_generator
 

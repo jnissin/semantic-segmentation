@@ -7,8 +7,6 @@ import random
 import threading
 import time
 import os
-import gc
-import resource
 
 from abc import abstractmethod
 from multiprocessing.pool import ThreadPool
@@ -117,7 +115,6 @@ def _process_init(uuid):
     #     Logger.instance().warn('Caught exception while clearing Tensorflow session from child process {}: {}'.format(pid, e.message))
 
 
-
 class SequenceEnqueuer(object):
     """Base class to enqueue inputs.
 
@@ -178,6 +175,14 @@ class SequenceEnqueuer(object):
         """
         raise NotImplementedError
 
+    @abstractmethod
+    def continue_run(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    def pause_run(self):
+        raise NotImplementedError
+
 
 class OrderedEnqueuer(SequenceEnqueuer):
     """Builds a Enqueuer from a Sequence.
@@ -206,6 +211,8 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.e_idx = initial_epoch
         self.max_epoch = max_epoch
         self._logger = None
+        self.paused = False
+        self.pause_sleep_time = 0.25
 
         # Assign a unique id
         self.uuid = MultiprocessingManager.instance().get_new_client_uuid()
@@ -233,6 +240,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         else:
             self.executor = ThreadPool(workers)
 
+        self.paused = False
         self.workers = workers
         self.queue = queue.Queue(max_queue_size)
         self.stop_signal = threading.Event()
@@ -246,26 +254,29 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self._send_sequence()  # Share the initial sequence
 
         while True:
-            # Prevent useless epochs from running
-            if self.max_epoch is not None:
-                if self.e_idx >= self.max_epoch:
-                    break
+            if self.paused:
+                time.sleep(self.pause_sleep_time)
+            else:
+                # Prevent useless epochs from running
+                if self.max_epoch is not None:
+                    if self.e_idx >= self.max_epoch:
+                        break
 
-            if self.shuffle:
-                random.shuffle(sequence)
+                if self.shuffle:
+                    random.shuffle(sequence)
 
-            for b_idx in sequence:
-                if self.stop_signal.is_set():
-                    return
+                for b_idx in sequence:
+                    if self.stop_signal.is_set():
+                        return
 
-                self.queue.put(self.executor.apply_async(get_index, (self.uuid, self.e_idx, b_idx)), block=True)
+                    self.queue.put(self.executor.apply_async(get_index, (self.uuid, self.e_idx, b_idx)), block=True)
 
-            while not self.queue.empty():
-                pass  # Wait for the last few batches to be processed
+                while not self.queue.empty():
+                    pass  # Wait for the last few batches to be processed
 
-            self.sequence.on_epoch_end()    # Call the internal on epoch end.
-            self._send_sequence()           # Update the pool
-            self.e_idx += 1                 # Increase the internal epoch index
+                self.sequence.on_epoch_end()    # Call the internal on epoch end.
+                self._send_sequence()           # Update the pool
+                self.e_idx += 1                 # Increase the internal epoch index
 
     def get(self):
         """Creates a generator to extract data from the queue.
@@ -336,6 +347,12 @@ class OrderedEnqueuer(SequenceEnqueuer):
                 self.clear_shared_dict()
                 _SHARED_DICTS[self.uuid] = None
 
+    def continue_run(self):
+        self.paused = False
+
+    def pause_run(self):
+        self.paused = True
+
     def clear_shared_dict(self):
         """
         Clears the shared dict with the uuid associated with this OrderedEnqueuer
@@ -374,6 +391,8 @@ class GeneratorEnqueuer(SequenceEnqueuer):
         self._stop_event = None
         self.queue = None
         self.random_seed = random_seed
+        self.paused = False
+        self.pause_sleep_time = 0.25
 
     def start(self, workers=1, max_queue_size=10):
         """Kicks off threads which add data from the generator into the queue.
@@ -386,15 +405,18 @@ class GeneratorEnqueuer(SequenceEnqueuer):
 
         def data_generator_task():
             while not self._stop_event.is_set():
-                try:
-                    if self._use_multiprocessing or self.queue.qsize() < max_queue_size:
-                        generator_output = next(self._generator)
-                        self.queue.put(generator_output)
-                    else:
-                        time.sleep(self.wait_time)
-                except Exception:
-                    self._stop_event.set()
-                    raise
+                if self.paused:
+                    time.sleep(self.pause_sleep_time)
+                else:
+                    try:
+                        if self._use_multiprocessing or self.queue.qsize() < max_queue_size:
+                            generator_output = next(self._generator)
+                            self.queue.put(generator_output)
+                        else:
+                            time.sleep(self.wait_time)
+                    except Exception:
+                        self._stop_event.set()
+                        raise
 
         try:
             if self._use_multiprocessing:
@@ -465,3 +487,9 @@ class GeneratorEnqueuer(SequenceEnqueuer):
                     yield inputs
             else:
                 time.sleep(self.wait_time)
+
+    def continue_run(self):
+        self.paused = False
+
+    def pause_run(self):
+        self.paused = True
