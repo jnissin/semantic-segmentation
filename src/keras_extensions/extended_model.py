@@ -363,14 +363,14 @@ class ExtendedModel(Model):
 
                 if is_sequence:
                     enqueuer = OrderedEnqueuer(generator,
-                                                             use_multiprocessing=use_multiprocessing,
-                                                             shuffle=shuffle,
-                                                             initial_epoch=initial_epoch,
-                                                             max_epoch=epochs)
+                                               use_multiprocessing=use_multiprocessing,
+                                               shuffle=shuffle,
+                                               initial_epoch=initial_epoch,
+                                               max_epoch=epochs)
                 else:
                     enqueuer = GeneratorEnqueuer(generator,
-                                                               use_multiprocessing=use_multiprocessing,
-                                                               wait_time=wait_time)
+                                                 use_multiprocessing=use_multiprocessing,
+                                                 wait_time=wait_time)
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             else:
                 enqueuer = self.training_enqueuer
@@ -606,7 +606,9 @@ class ExtendedModel(Model):
                 if trainer is not None:
                     x, y = trainer.modify_batch_data(steps_done, x, y, validation)
 
+                s_time = time.time()
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
+                self.logger.debug_log('Test on batch took: {} s'.format(time.time()-s_time))
 
                 if isinstance(x, list):
                     batch_size = len(x[0])
@@ -623,8 +625,9 @@ class ExtendedModel(Model):
                 batch_sizes.append(batch_size)
 
         finally:
-            if enqueuer is not None:
-                enqueuer.stop()
+            if not validation and not self.validation_enqueuer_pre_created:
+                if enqueuer is not None:
+                    enqueuer.stop()
 
         if not isinstance(outs, list):
             return np.average(np.asarray(all_outs),
