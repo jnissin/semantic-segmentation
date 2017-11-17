@@ -175,6 +175,8 @@ class TrainerBase:
         self.logger.log('Settings settings.DEFAULT_NUMPY_FLOAT_DTYPE to: {}'.format(K.floatx()))
         settings.DEFAULT_NUMPY_FLOAT_DTYPE = K.floatx()
 
+        self._init_caches()
+
         # Get data augmentation parameters
         self.data_augmentation_parameters = self._get_data_augmentation_parameters()
 
@@ -194,6 +196,28 @@ class TrainerBase:
         # Pre-create possible enqueuers and compile model
         self._pre_create_enqueuers()
         self._compile_model()
+
+    def _init_caches(self):
+        if self.resized_image_cache_path and self.initial_resized_image_cache_tar_file_path:
+            # Create the initial resized image cache if the directory doesn't exist - otherwise skip
+            created = general_utils.create_path_if_not_existing(self.resized_image_cache_path)
+
+            if created:
+                tar = None
+
+                try:
+                    import tarfile
+                    self.logger.log('Unpacking initial cache tar file: {} to: {}'.format(self.resized_image_cache_path, self.initial_resized_image_cache_tar_file_path))
+                    tar = tarfile.open(self.initial_resized_image_cache_tar_file_path)
+                    tar.extractall(path=self.resized_image_cache_path)
+                    self.logger.log('Successfully unpacked {} images to initial resized image cache'.format(len(tar.getnames())))
+                except Exception as e:
+                    self.logger.warn('Failed to unpack initial cache tar file from: {}, caught exception: {}'.format(self.initial_resized_image_cache_tar_file_path, e.message))
+                finally:
+                    if tar is not None:
+                        tar.close()
+            else:
+                self.logger.log('Existing resized image cache folder found - skipping initial population')
 
     def _init_model(self):
         # type: () -> ModelBase
@@ -346,6 +370,11 @@ class TrainerBase:
     def resized_image_cache_path(self):
         # type: () -> str
         return self._get_config_value('resized_image_cache_path')
+
+    @property
+    def initial_resized_image_cache_tar_file_path(self):
+        # type: () -> str
+        return self._get_config_value('initial_resized_image_cache_tar_file_path')
 
     @property
     def random_seed(self):

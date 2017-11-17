@@ -33,6 +33,7 @@
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
     "resized_image_cache_path": "/tmp/semantic-segmentation/resized/",
+    "initial_resized_image_cache_tar_file_path": null,
 
     "num_labeled_per_batch": 25,
     "num_unlabeled_per_batch": 25,
