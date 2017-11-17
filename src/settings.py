@@ -18,11 +18,14 @@ LOG_RUSAGE_INTERVAL = 2000  # How many steps between RUSAGE logs
 # Enables various debug prints and saving of batch images etc.
 DEBUG = False
 
-# Enables profiling information to be shown - runs a shorter run for profiling
+# Enables profiling information to be shown
 PROFILE = False
-PROFILE_STEPS_PER_EPOCH = 3
-PROFILE_NUM_EPOCHS = 1
 
 DEFAULT_IMAGE_DATA_FORMAT = 'channels_last'
 DEFAULT_NUMPY_FLOAT_DTYPE = 'float32'
 
+# Override training/validation length e.g. for profiling or debugging
+OVERRIDE_STEPS = False
+OVERRIDE_TRAINING_STEPS_PER_EPOCH = 3
+OVERRIDE_VALIDATION_STEPS_PER_EPOCH = 1
+OVERRIDE_NUM_EPOCHS = 1
