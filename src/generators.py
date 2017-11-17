@@ -593,7 +593,8 @@ class DataGenerator(object):
                 resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
                 tmp_cached_img_path = cached_img_path + '.tmp'
 
-                if not os.path.exists(tmp_cached_img_path) or os.path.exists(cached_img_path):
+                # If there is no tmp file and no real cached file - save the image
+                if not os.path.exists(tmp_cached_img_path) and not os.path.exists(cached_img_path):
                     resized_img.save(tmp_cached_img_path, format=save_format)
                     os.rename(tmp_cached_img_path, cached_img_path)
 

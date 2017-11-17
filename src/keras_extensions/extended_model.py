@@ -379,8 +379,8 @@ class ExtendedModel(Model):
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             else:
                 enqueuer = self.training_enqueuer
-                enqueuer.continue_run()
 
+            enqueuer.continue_run()
             output_generator = enqueuer.get()
 
             callback_model.stop_training = False
@@ -590,8 +590,8 @@ class ExtendedModel(Model):
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             else:
                 enqueuer = self.validation_enqueuer
-                enqueuer.continue_run()
 
+            enqueuer.continue_run()
             output_generator = enqueuer.get()
 
             while steps_done < steps:
