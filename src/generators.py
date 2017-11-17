@@ -509,6 +509,18 @@ class DataGenerator(object):
 
         raise NotImplementedError('This is not implemented within the abstract DataGenerator class')
 
+    def _pil_save_image_to_cache(self, img, cached_img_path, save_format):
+        # type: (PImage, str, str) -> None
+
+        tmp_cached_img_path = cached_img_path + '.tmp'
+
+        # If there is no tmp file and no real cached file - save the image
+        if not os.path.exists(tmp_cached_img_path) and not os.path.exists(cached_img_path):
+            # Save is a long process and during save the file is not always valid,
+            # use .tmp extension and remove .tmp extension when save is complete
+            img.save(tmp_cached_img_path, format=save_format)
+            os.rename(tmp_cached_img_path, cached_img_path)
+
     def _pil_resize_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE):
         # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage
 
@@ -589,18 +601,13 @@ class DataGenerator(object):
                     # If we couldn't determine format from extension use the img type to guess
                     save_format = 'PNG' if img_type.MASK else 'JPEG'
 
+            resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
+
             try:
-                resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
-                tmp_cached_img_path = cached_img_path + '.tmp'
-
-                # If there is no tmp file and no real cached file - save the image
-                if not os.path.exists(tmp_cached_img_path) and not os.path.exists(cached_img_path):
-                    resized_img.save(tmp_cached_img_path, format=save_format)
-                    os.rename(tmp_cached_img_path, cached_img_path)
-
-                return resized_img
+                self._pil_save_image_to_cache(resized_img, cached_img_path=cached_img_path, save_format=save_format)
             except Exception as e:
                 self.logger.warn('Caught exception during resized image caching (write): {}'.format(e.message))
+                return resized_img
 
         # If everything else fails - just resize to target shape without caching
         return image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
@@ -1761,7 +1768,7 @@ class SegmentationDataGenerator(DataGenerator):
         # If using caching save the mask
         if self.superpixel_mask_cache_path is not None and cached_mask_file_path is not None:
             try:
-                mask.save(cached_mask_file_path, format='PNG')
+                self._pil_save_image_to_cache(mask, cached_img_path=cached_mask_file_path, save_format='PNG')
             except Exception as e:
                 self.logger.warn('Caught exception during superpixel caching (write): {}'.format(e.message))
 
