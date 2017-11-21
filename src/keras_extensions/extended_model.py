@@ -437,8 +437,7 @@ class ExtendedModel(Model):
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
 
-                    # TODO: Switch from log to debug log
-                    self.logger.log('Train on batch took: {} s'.format(time.time() - s_time))
+                    self.logger.debug_log('Train on batch took: {} s'.format(time.time() - s_time))
 
                     if not isinstance(outs, list):
                         outs = [outs]
@@ -619,8 +618,7 @@ class ExtendedModel(Model):
 
                 s_time = time.time()
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
-                # TODO: Modify to debug log
-                self.logger.log('Test on batch took: {} s'.format(time.time()-s_time))
+                self.logger.debug_log('Test on batch took: {} s'.format(time.time()-s_time))
 
                 if isinstance(x, list):
                     batch_size = len(x[0])
