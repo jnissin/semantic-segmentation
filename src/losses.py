@@ -319,6 +319,7 @@ def _segmentation_sparse_weighted_categorical_cross_entropy(class_weights):
         num_classes = K.tf.stop_gradient(K.tf.shape(y_pred)[-1])
         weights = K.tf.stop_gradient(K.tf.zeros_like(y_true, dtype=K.tf.float32))
         i = K.tf.stop_gradient(K.tf.constant(0, dtype=K.tf.int32))
+
         cond = lambda i, _, __: K.tf.less(i, num_classes)
         _, weights, __ = K.tf.while_loop(cond=cond, body=get_per_sample_weights, loop_vars=[i, weights, y_true], back_prop=False)
 
@@ -448,7 +449,7 @@ def segmentation_mean_teacher_lambda_loss(args):
     """
     Consistency costs - for labeled and unlabeled
     """
-    consistency_cost = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient)
+    consistency_cost = K.tf.cond(cons_coefficient > 0, _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient), lambda: 0.0)
 
     # Total cost
     total_costs = K.tf.add(classification_costs, consistency_cost)
@@ -512,7 +513,7 @@ def segmentation_superpixel_lambda_loss(args):
     """
     Unlabeled classification costs (superpixel seg) - only for unlabeled
     """
-    unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
+    unlabeled_costs = K.tf.cond(unlabeled_cost_coefficient > 0.0, _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes), lambda: 0.0)
 
     # Total cost
     total_costs = K.tf.add(classification_costs, unlabeled_costs)
@@ -591,12 +592,12 @@ def segmentation_mean_teacher_superpixel_lambda_loss(args):
     """
     Consistency costs - for labeled and unlabeled
     """
-    consistency_costs = _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient)
+    consistency_costs = K.tf.cond(cons_coefficient > 0.0, _tf_mean_teacher_consistency_cost(y_pred, mt_pred, cons_coefficient), lambda: 0.0)
 
     """
     Unlabeled classification costs (superpixel seg) - only for unlabeled
     """
-    unlabeled_costs = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes)
+    unlabeled_costs = K.tf.cond(unlabeled_cost_coefficient > 0.0, _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes), lambda: 0.0)
 
     # Total cost
     total_costs = K.tf.add(K.tf.add(classification_costs, consistency_costs), unlabeled_costs)

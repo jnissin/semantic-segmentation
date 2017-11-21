@@ -167,8 +167,8 @@ class ExtendedModel(Model):
         # Returns
             Numpy array(s) of predictions.
         """
-        x = _standardize_input_data(x, self._feed_input_names,
-                                    self._feed_input_shapes)
+        x = _standardize_input_data(x, self._feed_input_names, self._feed_input_shapes)
+
         if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
             if use_training_phase_layers:
                 ins = x + [1.]
@@ -425,8 +425,7 @@ class ExtendedModel(Model):
                     if trainer is not None:
                         s_time = time.time()
                         x, y = trainer.modify_batch_data(step_index, x, y)
-                        self.logger.log('Trainer modify_batch_data took: {}s'.format(time.time() - s_time))
-                        # TODO: Switch from log to debug log
+                        self.logger.debug_log('Trainer modify_batch_data took: {}s'.format(time.time() - s_time))
 
                     # Extended functionality: stop if early stopping has been initiated
                     if self.fit_generator_stopped:
@@ -438,8 +437,8 @@ class ExtendedModel(Model):
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
 
-                    self.logger.log('Train on batch took: {} s'.format(time.time() - s_time))
                     # TODO: Switch from log to debug log
+                    self.logger.log('Train on batch took: {} s'.format(time.time() - s_time))
 
                     if not isinstance(outs, list):
                         outs = [outs]
@@ -616,12 +615,11 @@ class ExtendedModel(Model):
                 if trainer is not None:
                     s_time = time.time()
                     x, y = trainer.modify_batch_data(steps_done, x, y, validation)
-                    self.logger.log('Call to modify_batch_data took: {} s'.format(time.time()-s_time))
-                    # TODO: Modify to debug logs
+                    self.logger.debug_log('Call to modify_batch_data took: {} s'.format(time.time()-s_time))
 
                 s_time = time.time()
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
-                # TODO: Modify to debug logs
+                # TODO: Modify to debug log
                 self.logger.log('Test on batch took: {} s'.format(time.time()-s_time))
 
                 if isinstance(x, list):
