@@ -35,9 +35,9 @@
     "resized_image_cache_path": "/tmp/semantic-segmentation/resized/",
     "initial_resized_image_cache_tar_file_path": "data/final/resized.tar",
 
-    "num_labeled_per_batch": 20,
-    "num_unlabeled_per_batch": 20,
-    "validation_num_labeled_per_batch": 20,
+    "num_labeled_per_batch": 15,
+    "num_unlabeled_per_batch": 15,
+    "validation_num_labeled_per_batch": 15,
     "validation_crop_shape": null,
     "validation_resize_shape": [1024, 1024],
 
