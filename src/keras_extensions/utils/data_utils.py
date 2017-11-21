@@ -258,7 +258,12 @@ class OrderedEnqueuer(SequenceEnqueuer):
 
         while True:
             if self.paused:
-                time.sleep(self.pause_sleep_time)
+                try:
+                    if time is None:
+                        import time
+                    time.sleep(self.pause_sleep_time)
+                except NameError as e:
+                    import time
             else:
                 # Prevent useless epochs from running
                 if self.max_epoch is not None:
