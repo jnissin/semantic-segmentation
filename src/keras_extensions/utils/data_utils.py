@@ -142,13 +142,14 @@ class SequenceEnqueuer(object):
         raise NotImplementedError
 
     @abstractmethod
-    def start(self, workers=1, max_queue_size=10):
+    def start(self, workers=1, max_queue_size=10, start_paused=False):
         """Starts the handler's workers.
 
         # Arguments
             workers: number of worker threads
             max_queue_size: queue size
                 (when full, threads could block on `put()`).
+            start_paused: should the initial state be paused?
         """
         raise NotImplementedError
 
@@ -226,7 +227,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
     def is_running(self):
         return self.stop_signal is not None and not self.stop_signal.is_set()
 
-    def start(self, workers=1, max_queue_size=10):
+    def start(self, workers=1, max_queue_size=10, start_paused=False):
         """Start the handler's workers.
 
         # Arguments
@@ -234,13 +235,15 @@ class OrderedEnqueuer(SequenceEnqueuer):
             max_queue_size: queue size
                 (when full, workers could block on `put()`)
         """
+        # Initialize the pause state
+        self.paused = start_paused
+
         if self.use_multiprocessing:
             _initialize_globals(self.uuid)
             self.executor = multiprocessing.Pool(workers, _process_init, (self.uuid,))
         else:
             self.executor = ThreadPool(workers)
 
-        self.paused = False
         self.workers = workers
         self.queue = queue.Queue(max_queue_size)
         self.stop_signal = threading.Event()
@@ -394,7 +397,7 @@ class GeneratorEnqueuer(SequenceEnqueuer):
         self.paused = False
         self.pause_sleep_time = 1.0
 
-    def start(self, workers=1, max_queue_size=10):
+    def start(self, workers=1, max_queue_size=10, start_paused=False):
         """Kicks off threads which add data from the generator into the queue.
 
         # Arguments
@@ -402,6 +405,9 @@ class GeneratorEnqueuer(SequenceEnqueuer):
             max_queue_size: queue size
                 (when full, threads could block on `put()`)
         """
+
+        # Initialize the pause state
+        self.paused = start_paused
 
         def data_generator_task():
             while not self._stop_event.is_set():

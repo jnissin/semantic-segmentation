@@ -148,9 +148,8 @@ class ExtendedModel(Model):
                                                              use_multiprocessing=use_multiprocessing,
                                                              wait_time=wait_time)
 
-            self.validation_enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+            self.validation_enqueuer.start(workers=workers, max_queue_size=max_queue_size, start_paused=True)
             self._validation_enqueuer_pre_created = True
-            self.validation_enqueuer.pause_run()
         except Exception as e:
             if self.validation_enqueuer is not None:
                 self.validation_enqueuer.stop()
@@ -613,11 +612,14 @@ class ExtendedModel(Model):
                                      str(generator_output))
 
                 if trainer is not None:
+                    s_time = time.time()
                     x, y = trainer.modify_batch_data(steps_done, x, y, validation)
+                    self.logger.log('Call to modify_batch_data took: {} s'.format(time.time()-s_time))
 
+                # TODO: Modify to debug logs
                 s_time = time.time()
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
-                self.logger.debug_log('Test on batch took: {} s'.format(time.time()-s_time))
+                self.logger.log('Test on batch took: {} s'.format(time.time()-s_time))
 
                 if isinstance(x, list):
                     batch_size = len(x[0])

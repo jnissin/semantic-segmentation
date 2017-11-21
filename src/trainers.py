@@ -1555,8 +1555,8 @@ class MeanTeacherTrainerBase(TrainerBase):
 
         if validation:
             # BxHxWxC
-            mean_teacher_predictions = np.zeros(shape=teacher_data_shape)
-            np_consistency_coefficients = np.zeros(shape=[batch_size])
+            mean_teacher_predictions = np.zeros(shape=teacher_data_shape, dtype=np.float32)
+            np_consistency_coefficients = np.zeros(shape=[batch_size], dtype=np.float32)
             return [mean_teacher_predictions, np_consistency_coefficients]
         else:
             # Note: include the training phase noise and dropout layers on the prediction
