@@ -258,6 +258,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
 
         while True:
             if self.paused:
+                import time
                 time.sleep(self.pause_sleep_time)
             else:
                 # Prevent useless epochs from running
