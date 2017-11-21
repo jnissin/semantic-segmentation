@@ -262,7 +262,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
                     if time is None:
                         import time
                     time.sleep(self.pause_sleep_time)
-                except NameError as e:
+                except NameError:
                     import time
             else:
                 # Prevent useless epochs from running
@@ -417,7 +417,12 @@ class GeneratorEnqueuer(SequenceEnqueuer):
         def data_generator_task():
             while not self._stop_event.is_set():
                 if self.paused:
-                    time.sleep(self.pause_sleep_time)
+                    try:
+                        if time is None:
+                            import time
+                        time.sleep(self.pause_sleep_time)
+                    except NameError:
+                        import time
                 else:
                     try:
                         if self._use_multiprocessing or self.queue.qsize() < max_queue_size:
