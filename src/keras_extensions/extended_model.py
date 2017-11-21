@@ -617,6 +617,17 @@ class ExtendedModel(Model):
                     x, y = trainer.modify_batch_data(steps_done, x, y, validation)
                     self.logger.debug_log('Call to modify_batch_data took: {} s'.format(time.time()-s_time))
 
+                sx = ""
+                sy = ""
+
+                for e in x:
+                    sx = sx + ', ' + str(e.shape)
+
+                for e in y:
+                    sy = sy + ', ' + str(e.shape)
+
+                self.logger.log('x shapes: {}, y shapes: {}'.format(sx, sy))
+
                 s_time = time.time()
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
                 # TODO: Modify to debug log
