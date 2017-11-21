@@ -212,7 +212,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.max_epoch = max_epoch
         self._logger = None
         self.paused = False
-        self.pause_sleep_time = 0.25
+        self.pause_sleep_time = 1.00
 
         # Assign a unique id
         self.uuid = MultiprocessingManager.instance().get_new_client_uuid()
@@ -392,7 +392,7 @@ class GeneratorEnqueuer(SequenceEnqueuer):
         self.queue = None
         self.random_seed = random_seed
         self.paused = False
-        self.pause_sleep_time = 0.25
+        self.pause_sleep_time = 1.0
 
     def start(self, workers=1, max_queue_size=10):
         """Kicks off threads which add data from the generator into the queue.
