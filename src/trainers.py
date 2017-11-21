@@ -828,7 +828,7 @@ class TrainerBase:
                 with open(optimizer_configuration_file_path, 'r') as f:
                     data = f.read()
                     optimizer_configuration = json.loads(data)
-            except IOError as e:
+            except (IOError, ValueError) as e:
                 self.logger.log('Could not load optimizer configuration from file: {}, error: {}. Continuing without config.'.format(optimizer_configuration_file_path, e.message))
                 optimizer_configuration = None
 
