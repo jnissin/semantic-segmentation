@@ -2027,7 +2027,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
                         .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, self.training_steps_per_epoch, self.validation_steps_per_epoch))
 
-        self.logger.log('Num workers: {}, max queue size: {}'.format(self.num_training_data_generation_workers, self.training_data_max_queue_size))
+        self.logger.log('Training: num workers: {}, max queue size: {}'.format(self.num_training_data_generation_workers, self.training_data_max_queue_size))
+        self.logger.log('Validation: num workers: {}, max queue size: {}'.format(self.num_validation_data_generation_workers, self.validation_data_max_queue_size))
 
         # Get a list of callbacks
         callbacks = self._get_training_callbacks()
@@ -2434,7 +2435,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
         self.logger.log('Num epochs: {}, initial epoch: {}, total batch size: {}, crop shape: {}, training steps per epoch: {}, validation steps per epoch: {}'
                         .format(self.num_epochs, self.initial_epoch, self.total_batch_size, self.crop_shape, self.training_steps_per_epoch, self.validation_steps_per_epoch))
 
-        self.logger.log('Num workers: {}, max queue size: {}'.format(self.num_training_data_generation_workers, self.training_data_max_queue_size))
+        self.logger.log('Training: num workers: {}, max queue size: {}'.format(self.num_training_data_generation_workers, self.training_data_max_queue_size))
+        self.logger.log('Validation: num workers: {}, max queue size: {}'.format(self.num_validation_data_generation_workers, self.validation_data_max_queue_size))
 
         # Get a list of callbacks
         callbacks = self._get_training_callbacks()
