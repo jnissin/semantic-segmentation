@@ -291,6 +291,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
 
                     if settings.QUEUE_SIZE_REPORT_INTERVAL is not None:
                         if time.time() - self.last_queue_size_report_time > settings.QUEUE_SIZE_REPORT_INTERVAL:
+                            self.last_queue_size_report_time = time.time()
                             self.logger.log('Queue size: {}'.format(self.queue.qsize()))
 
                 while not self.queue.empty():
@@ -447,6 +448,7 @@ class GeneratorEnqueuer(SequenceEnqueuer):
 
                         if settings.QUEUE_SIZE_REPORT_INTERVAL is not None:
                             if time.time() - self.last_queue_size_report_time > settings.QUEUE_SIZE_REPORT_INTERVAL:
+                                self.last_queue_size_report_time = time.time()
                                 self.logger.log('Queue size: {}'.format(self.queue.qsize()))
 
                     except Exception:
