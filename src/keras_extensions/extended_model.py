@@ -624,9 +624,7 @@ class ExtendedModel(Model):
             eval_s_time = time.time()
 
             while steps_done < steps:
-                self.logger.log('Getting generator output')
                 generator_output = next(output_generator)
-                self.logger.log('Generator output received')
                 if not hasattr(generator_output, '__len__'):
                     raise ValueError('Output of generator should be a tuple '
                                      '(x, y, sample_weight) '

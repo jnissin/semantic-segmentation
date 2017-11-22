@@ -24,37 +24,9 @@ from src.utils.multiprocessing_utils import MultiprocessingManager
 from src import settings
 
 
-class Sequence(object):
-    @abstractmethod
-    def get_batch(self, e_idx, b_idx):
-        # type: (int, int) -> (list, list)
-
-        """Gets a specific batch from a specific epoch.
-
-        # Arguments
-            :param e_idx: epoch index
-            :param b_idx: batch index
-
-        # Returns
-            A batch
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def __len__(self):
-        """Number of batch in the Sequence.
-
-        # Returns
-            The number of batches in the Sequence.
-        """
-        raise NotImplementedError
-
-    @abstractmethod
-    def on_epoch_end(self):
-        """Method called at the end of every epoch.
-        """
-        raise NotImplementedError
-
+###############################################
+# GLOBALS
+###############################################
 
 # Global variables to be shared across processes
 _SHARED_SEQUENCES = {}
@@ -114,6 +86,43 @@ def _process_init(uuid):
     #     Logger.instance().log('Collected {} objects from child process: {}, memory usage diff: {}'.format(collected, pid, memory_used-memory_used_after_gc))
     # except Exception as e:
     #     Logger.instance().warn('Caught exception while clearing Tensorflow session from child process {}: {}'.format(pid, e.message))
+
+
+###############################################
+# SEQUENCE
+###############################################
+
+
+class Sequence(object):
+    @abstractmethod
+    def get_batch(self, e_idx, b_idx):
+        # type: (int, int) -> (list, list)
+
+        """Gets a specific batch from a specific epoch.
+
+        # Arguments
+            :param e_idx: epoch index
+            :param b_idx: batch index
+
+        # Returns
+            A batch
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def __len__(self):
+        """Number of batch in the Sequence.
+
+        # Returns
+            The number of batches in the Sequence.
+        """
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_epoch_end(self):
+        """Method called at the end of every epoch.
+        """
+        raise NotImplementedError
 
 
 class SequenceEnqueuer(object):
