@@ -293,13 +293,13 @@ class TrainerBase:
 
             self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
 
-            self.model.pre_create_enqueuer(generator=self.training_data_iterator,
-                                           epochs=self.num_epochs,
-                                           initial_epoch=self.initial_epoch,
-                                           use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                           shuffle=True,
-                                           workers=self.num_training_data_generation_workers,
-                                           max_queue_size=self.training_data_max_queue_size)
+            self.model.pre_create_training_enqueuer(generator=self.training_data_iterator,
+                                                    epochs=self.num_epochs,
+                                                    initial_epoch=self.initial_epoch,
+                                                    use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                                    shuffle=True,
+                                                    workers=self.num_training_data_generation_workers,
+                                                    max_queue_size=self.training_data_max_queue_size)
 
             self.model.pre_create_validation_enqueuer(generator=self.validation_data_iterator,
                                                       use_multiprocessing=settings.USE_MULTIPROCESSING,

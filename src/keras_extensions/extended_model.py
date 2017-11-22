@@ -79,14 +79,14 @@ class ExtendedModel(Model):
         except (AttributeError, ValueError):
             pass
 
-    def pre_create_enqueuer(self,
-                            generator,
-                            use_multiprocessing,
-                            shuffle,
-                            epochs,
-                            initial_epoch,
-                            workers,
-                            max_queue_size):
+    def pre_create_training_enqueuer(self,
+                                     generator,
+                                     use_multiprocessing,
+                                     shuffle,
+                                     epochs,
+                                     initial_epoch,
+                                     workers,
+                                     max_queue_size):
         # type: (Sequence, bool, bool, int, int, int, int) -> None
 
         wait_time = 0.01  # in seconds
@@ -587,14 +587,19 @@ class ExtendedModel(Model):
                                                  use_multiprocessing=use_multiprocessing,
                                                  wait_time=wait_time)
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+                self.logger.log('Created a new validation enqueuer')
             else:
                 enqueuer = self.validation_enqueuer
+                self.logger.log('Using pre-created validation enqueuer')
 
             enqueuer.continue_run()
             output_generator = enqueuer.get()
 
+            self.logger.log('Starting loop for: {} steps'.format(steps))
             while steps_done < steps:
+                self.logger.log('Getting generator output')
                 generator_output = next(output_generator)
+                self.logger.log('Generator output received')
                 if not hasattr(generator_output, '__len__'):
                     raise ValueError('Output of generator should be a tuple '
                                      '(x, y, sample_weight) '
@@ -617,8 +622,9 @@ class ExtendedModel(Model):
                     self.logger.debug_log('Call to modify_batch_data took: {} s'.format(time.time()-s_time))
 
                 s_time = time.time()
+                self.logger.log('Calling test on batch')
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
-                self.logger.debug_log('Test on batch took: {} s'.format(time.time()-s_time))
+                self.logger.log('Test on batch took: {} s'.format(time.time()-s_time))
 
                 if isinstance(x, list):
                     batch_size = len(x[0])
