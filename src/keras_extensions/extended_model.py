@@ -79,82 +79,100 @@ class ExtendedModel(Model):
         except (AttributeError, ValueError):
             pass
 
-    def pre_create_training_enqueuer(self,
-                                     generator,
-                                     use_multiprocessing,
-                                     shuffle,
-                                     epochs,
-                                     initial_epoch,
-                                     workers,
-                                     max_queue_size):
-        # type: (Sequence, bool, bool, int, int, int, int) -> None
+    def set_pre_created_training_enqueuer(self, enqueuer):
+        # type: (SequenceEnqueuer) -> None
 
-        wait_time = 0.01  # in seconds
-
-        # Pre-create training enqueuer
+        # Pre-create validation enqueuer
         if self.training_enqueuer is not None:
             self.training_enqueuer.stop()
             self.training_enqueuer = None
 
-        self._training_enqueuer_pre_created = False
-        training_generator_is_sequence = isinstance(generator, Sequence)
+        self.training_enqueuer = enqueuer
+        self._training_enqueuer_pre_created = enqueuer is not None
 
-        try:
-            if training_generator_is_sequence:
-                self.training_enqueuer = OrderedEnqueuer(generator,
-                                                         use_multiprocessing=use_multiprocessing,
-                                                         shuffle=shuffle,
-                                                         initial_epoch=initial_epoch,
-                                                         max_epoch=epochs)
-            else:
-                self.training_enqueuer = GeneratorEnqueuer(generator,
-                                                           use_multiprocessing=use_multiprocessing,
-                                                           wait_time=wait_time)
-
-            self.training_enqueuer.start(workers=workers, max_queue_size=max_queue_size)
-            self._training_enqueuer_pre_created = True
-        except Exception as e:
-            if self.training_enqueuer is not None:
-                self.training_enqueuer.stop()
-
-            raise e
-
-    def pre_create_validation_enqueuer(self,
-                                       generator,
-                                       use_multiprocessing,
-                                       workers,
-                                       max_queue_size):
-        # type: (Sequence, bool, int, int) -> None
-
-        wait_time = 0.01  # in seconds
+    def set_pre_created_validation_enqueuer(self, enqueuer):
+        # type: (SequenceEnqueuer) -> None
 
         # Pre-create validation enqueuer
         if self.validation_enqueuer is not None:
             self.validation_enqueuer.stop()
             self.validation_enqueuer = None
 
-        self._validation_enqueuer_pre_created = False
+        self.validation_enqueuer = enqueuer
+        self._validation_enqueuer_pre_created = enqueuer is not None
+
+    @staticmethod
+    def pre_create_training_enqueuer(generator,
+                                     use_multiprocessing,
+                                     shuffle,
+                                     epochs,
+                                     initial_epoch,
+                                     workers,
+                                     max_queue_size,
+                                     random_seed):
+        # type: (Sequence, bool, bool, int, int, int, int, int) -> SequenceEnqueuer
+        wait_time = 0.01  # in seconds
+        training_generator_is_sequence = isinstance(generator, Sequence)
+
+        training_enqueuer = None
+
+        try:
+            if training_generator_is_sequence:
+                training_enqueuer = OrderedEnqueuer(generator,
+                                                    use_multiprocessing=use_multiprocessing,
+                                                    shuffle=shuffle,
+                                                    initial_epoch=initial_epoch,
+                                                    max_epoch=epochs,
+                                                    random_seed=random_seed)
+            else:
+                training_enqueuer = GeneratorEnqueuer(generator,
+                                                      use_multiprocessing=use_multiprocessing,
+                                                      wait_time=wait_time,
+                                                      random_seed=random_seed)
+
+            training_enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+        except Exception as e:
+            if training_enqueuer is not None:
+                training_enqueuer.stop()
+
+            raise e
+
+        return training_enqueuer
+
+    @staticmethod
+    def pre_create_validation_enqueuer(generator,
+                                       use_multiprocessing,
+                                       workers,
+                                       max_queue_size,
+                                       random_seed):
+        # type: (Sequence, bool, int, int, int) -> SequenceEnqueuer
+        wait_time = 0.01  # in seconds
         validation_generator_is_sequence = isinstance(generator, Sequence)
+
+        validation_enqueuer = None
 
         try:
             if validation_generator_is_sequence:
-                self.validation_enqueuer = OrderedEnqueuer(generator,
-                                                           use_multiprocessing=use_multiprocessing,
-                                                           shuffle=False,
-                                                           initial_epoch=0,
-                                                           max_epoch=None)
+                validation_enqueuer = OrderedEnqueuer(generator,
+                                                      use_multiprocessing=use_multiprocessing,
+                                                      shuffle=False,
+                                                      initial_epoch=0,
+                                                      max_epoch=None,
+                                                      random_seed=random_seed)
             else:
-                self.validation_enqueuer = GeneratorEnqueuer(generator,
-                                                             use_multiprocessing=use_multiprocessing,
-                                                             wait_time=wait_time)
+                validation_enqueuer = GeneratorEnqueuer(generator,
+                                                        use_multiprocessing=use_multiprocessing,
+                                                        wait_time=wait_time,
+                                                        random_seed=random_seed)
 
-            self.validation_enqueuer.start(workers=workers, max_queue_size=max_queue_size, start_paused=True)
-            self._validation_enqueuer_pre_created = True
+            validation_enqueuer.start(workers=workers, max_queue_size=max_queue_size, start_paused=True)
         except Exception as e:
-            if self.validation_enqueuer is not None:
-                self.validation_enqueuer.stop()
+            if validation_enqueuer is not None:
+                validation_enqueuer.stop()
 
             raise e
+
+        return validation_enqueuer
 
     def predict_on_batch(self, x, use_training_phase_layers=False):
         """Returns predictions for a single batch of samples.
@@ -198,7 +216,8 @@ class ExtendedModel(Model):
                       use_multiprocessing=False,
                       shuffle=True,
                       initial_epoch=0,
-                      trainer=None):
+                      trainer=None,
+                      random_seed=None):
         """Fits the model on data yielded batch-by-batch by a Python generator.
 
         The generator is run in parallel to the model, for efficiency.
@@ -256,7 +275,7 @@ class ExtendedModel(Model):
             initial_epoch: epoch at which to start training
                 (useful for resuming a previous training run)
             trainer: reference to a TrainerBase inherited object
-
+            random_seed: random seed
         # Returns
             A `History` object.
 
@@ -370,11 +389,13 @@ class ExtendedModel(Model):
                                                use_multiprocessing=use_multiprocessing,
                                                shuffle=shuffle,
                                                initial_epoch=initial_epoch,
-                                               max_epoch=epochs)
+                                               max_epoch=epochs,
+                                               random_seed=random_seed)
                 else:
                     enqueuer = GeneratorEnqueuer(generator,
                                                  use_multiprocessing=use_multiprocessing,
-                                                 wait_time=wait_time)
+                                                 wait_time=wait_time,
+                                                 random_seed=random_seed)
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
             else:
                 enqueuer = self.training_enqueuer
@@ -384,6 +405,7 @@ class ExtendedModel(Model):
 
             callback_model.stop_training = False
             while epoch < epochs:
+                epoch_s_time = time.time()
                 callbacks.on_epoch_begin(epoch)
                 steps_done = 0
                 batch_index = 0
@@ -461,10 +483,10 @@ class ExtendedModel(Model):
 
                     # Epoch finished.
                     if steps_done >= steps_per_epoch and do_validation:
+
+                        self.logger.log('Epoch {} training took: {} s'.format(epoch, time.time()-epoch_s_time))
+
                         if val_gen:
-
-                            s_time = time.time()
-
                             # Extended functionality: pass trainer and validation flag
                             enqueuer.pause_run()
 
@@ -478,7 +500,6 @@ class ExtendedModel(Model):
                                 validation=True)
 
                             enqueuer.continue_run()
-                            self.logger.log('Validation evaluation took: {} s'.format(time.time() - s_time))
                         else:
                             # No need for try/except because
                             # data has already been validated.
@@ -500,6 +521,8 @@ class ExtendedModel(Model):
                     trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, epoch_logs)
 
                 epoch += 1
+                self.logger.log('Epoch {} took in total: {} s'.format(epoch-1, time.time()-epoch_s_time))
+
                 if callback_model.stop_training:
                     break
         finally:
@@ -519,7 +542,8 @@ class ExtendedModel(Model):
                            workers=1,
                            use_multiprocessing=False,
                            validation=False,
-                           trainer=None):
+                           trainer=None,
+                           random_seed=None):
         """Evaluates the model on a data generator.
 
         The generator should return the same kind of data
@@ -544,6 +568,7 @@ class ExtendedModel(Model):
                 non picklable arguments to the generator
                 as they can't be passed
                 easily to children processes.
+            random_seed: random seed
 
         # Returns
             Scalar test loss (if the model has a single output and no metrics)
@@ -581,11 +606,13 @@ class ExtendedModel(Model):
                 if is_sequence:
                     enqueuer = OrderedEnqueuer(generator,
                                                use_multiprocessing=use_multiprocessing,
-                                               max_epoch=1)
+                                               max_epoch=1,
+                                               random_seed=random_seed)
                 else:
                     enqueuer = GeneratorEnqueuer(generator,
                                                  use_multiprocessing=use_multiprocessing,
-                                                 wait_time=wait_time)
+                                                 wait_time=wait_time,
+                                                 random_seed=random_seed)
                 enqueuer.start(workers=workers, max_queue_size=max_queue_size)
                 self.logger.log('Created a new validation enqueuer')
             else:
@@ -594,8 +621,8 @@ class ExtendedModel(Model):
 
             enqueuer.continue_run()
             output_generator = enqueuer.get()
+            eval_s_time = time.time()
 
-            self.logger.log('Starting loop for: {} steps'.format(steps))
             while steps_done < steps:
                 self.logger.log('Getting generator output')
                 generator_output = next(output_generator)
@@ -622,9 +649,8 @@ class ExtendedModel(Model):
                     self.logger.debug_log('Call to modify_batch_data took: {} s'.format(time.time()-s_time))
 
                 s_time = time.time()
-                self.logger.log('Calling test on batch')
                 outs = self.test_on_batch(x, y, sample_weight=sample_weight)
-                self.logger.log('Test on batch took: {} s'.format(time.time()-s_time))
+                self.logger.debug_log('Test on batch took: {} s'.format(time.time()-s_time))
 
                 if isinstance(x, list):
                     batch_size = len(x[0])
@@ -649,6 +675,8 @@ class ExtendedModel(Model):
             else:
                 if enqueuer is not None:
                     enqueuer.stop()
+
+        self.logger.log('Evaluation took: {} s'.format(time.time()-eval_s_time))
 
         if not isinstance(outs, list):
             return np.average(np.asarray(all_outs),

@@ -21,6 +21,7 @@ except ImportError:
 
 from src.logger import Logger
 from src.utils.multiprocessing_utils import MultiprocessingManager
+from src import settings
 
 
 class Sequence(object):
@@ -184,6 +185,13 @@ class SequenceEnqueuer(object):
     def pause_run(self):
         raise NotImplementedError
 
+    def pause_sleep(self, pause_sleep_time):
+        try:
+            time.sleep(pause_sleep_time)
+        except (NameError, AttributeError, ValueError):
+            import time
+            time.sleep(pause_sleep_time)
+
 
 class OrderedEnqueuer(SequenceEnqueuer):
     """Builds a Enqueuer from a Sequence.
@@ -200,7 +208,8 @@ class OrderedEnqueuer(SequenceEnqueuer):
                  use_multiprocessing=False,
                  shuffle=False,
                  initial_epoch=0,
-                 max_epoch=None):
+                 max_epoch=None,
+                 random_seed=None):
         self.sequence = sequence
         self.use_multiprocessing = use_multiprocessing
         self.shuffle = shuffle
@@ -214,6 +223,11 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self._logger = None
         self.paused = False
         self.pause_sleep_time = 1.00
+        self.last_queue_size_report_time = 0.0
+
+        if random_seed is not None:
+            random.seed(random_seed)
+            np.random.seed(random_seed)
 
         # Assign a unique id
         self.uuid = MultiprocessingManager.instance().get_new_client_uuid()
@@ -245,6 +259,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
             self.executor = ThreadPool(workers)
 
         self.workers = workers
+        self.last_queue_size_report_time = time.time()
         self.queue = queue.Queue(max_queue_size)
         self.stop_signal = threading.Event()
         self.run_thread = threading.Thread(target=self._run)
@@ -258,12 +273,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
 
         while True:
             if self.paused:
-                try:
-                    if time is None:
-                        import time
-                    time.sleep(self.pause_sleep_time)
-                except NameError:
-                    import time
+                self.pause_sleep(self.pause_sleep_time)
             else:
                 # Prevent useless epochs from running
                 if self.max_epoch is not None:
@@ -278,7 +288,10 @@ class OrderedEnqueuer(SequenceEnqueuer):
                         return
 
                     self.queue.put(self.executor.apply_async(get_index, (self.uuid, self.e_idx, b_idx)), block=True)
-                    self.logger.log('Putting data into queue, new size {}'.format(self.queue.qsize()))
+
+                    if settings.QUEUE_SIZE_REPORT_INTERVAL is not None:
+                        if time.time() - self.last_queue_size_report_time > settings.QUEUE_SIZE_REPORT_INTERVAL:
+                            self.logger.log('Queue size: {}'.format(self.queue.qsize()))
 
                 while not self.queue.empty():
                     pass  # Wait for the last few batches to be processed
@@ -402,6 +415,11 @@ class GeneratorEnqueuer(SequenceEnqueuer):
         self.random_seed = random_seed
         self.paused = False
         self.pause_sleep_time = 1.0
+        self.last_queue_size_report_time = 0.0
+
+        if random_seed is not None:
+            random.seed(random_seed)
+            np.random.seed(random_seed)
 
     def start(self, workers=1, max_queue_size=10, start_paused=False):
         """Kicks off threads which add data from the generator into the queue.
@@ -418,12 +436,7 @@ class GeneratorEnqueuer(SequenceEnqueuer):
         def data_generator_task():
             while not self._stop_event.is_set():
                 if self.paused:
-                    try:
-                        if time is None:
-                            import time
-                        time.sleep(self.pause_sleep_time)
-                    except NameError:
-                        import time
+                    self.pause_sleep(self.pause_sleep_time)
                 else:
                     try:
                         if self._use_multiprocessing or self.queue.qsize() < max_queue_size:
@@ -431,11 +444,18 @@ class GeneratorEnqueuer(SequenceEnqueuer):
                             self.queue.put(generator_output)
                         else:
                             time.sleep(self.wait_time)
+
+                        if settings.QUEUE_SIZE_REPORT_INTERVAL is not None:
+                            if time.time() - self.last_queue_size_report_time > settings.QUEUE_SIZE_REPORT_INTERVAL:
+                                self.logger.log('Queue size: {}'.format(self.queue.qsize()))
+
                     except Exception:
                         self._stop_event.set()
                         raise
 
         try:
+            self.last_queue_size_report_time = time.time()
+
             if self._use_multiprocessing:
                 self.queue = multiprocessing.Queue(maxsize=max_queue_size)
                 self._stop_event = multiprocessing.Event()

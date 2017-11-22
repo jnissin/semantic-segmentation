@@ -124,6 +124,8 @@ class TrainerBase:
         self.training_data_generator = None
         self.validation_data_generator = None
         self.model_wrapper = None
+        self._training_data_enqueuer = None
+        self._validation_data_enqueuer = None
 
         self._model_optimizer_lr_scalers = None
         self._initial_epoch = None
@@ -191,11 +193,13 @@ class TrainerBase:
         self.training_data_iterator = self.training_data_generator.get_data_set_iterator()
         self.validation_data_iterator = self.validation_data_generator.get_data_set_iterator()
 
+        # Pre-create the enqueuers before model creation
+        self._pre_create_enqueuers()
+
         # Initialize model
         self.model_wrapper = self._init_model()
 
         # Pre-create possible enqueuers and compile model
-        self._pre_create_enqueuers()
         self._compile_model()
 
     def _init_caches(self):
@@ -219,6 +223,26 @@ class TrainerBase:
                         tar.close()
             else:
                 self.logger.log('Existing resized image cache folder found - skipping initial population')
+
+    def _pre_create_enqueuers(self):
+        self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
+
+        self._training_data_enqueuer = ExtendedModel\
+            .pre_create_training_enqueuer(generator=self.training_data_iterator,
+                                          epochs=self.num_epochs,
+                                          initial_epoch=self.initial_epoch,
+                                          use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                          shuffle=True,
+                                          workers=self.num_training_data_generation_workers,
+                                          max_queue_size=self.training_data_max_queue_size,
+                                          random_seed=self.random_seed)
+
+        self._validation_data_enqueuer = ExtendedModel\
+            .pre_create_validation_enqueuer(generator=self.validation_data_iterator,
+                                            use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                            workers=self.num_validation_data_generation_workers,
+                                            max_queue_size=self.validation_data_max_queue_size,
+                                            random_seed=self.random_seed)
 
     def _init_model(self):
         # type: () -> ModelBase
@@ -264,6 +288,10 @@ class TrainerBase:
         else:
             self._model_optimizer_lr_scalers = dict()
 
+        # Set the pre-created enqueuers
+        self.model.set_pre_created_training_enqueuer(self._training_data_enqueuer)
+        self.model.set_pre_created_validation_enqueuer(self._validation_data_enqueuer)
+
         return self.model_wrapper
 
     def _compile_model(self):
@@ -287,26 +315,6 @@ class TrainerBase:
             plot_model(self.model, to_file=model_plot_file_path, show_shapes=True, show_layer_names=True)
         except Exception as e:
             self.logger.warn('Saving model plot to file failed: {}'.format(e.message))
-
-    def _pre_create_enqueuers(self):
-        if settings.USE_MULTIPROCESSING:
-
-            self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
-
-            self.model.pre_create_training_enqueuer(generator=self.training_data_iterator,
-                                                    epochs=self.num_epochs,
-                                                    initial_epoch=self.initial_epoch,
-                                                    use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                                    shuffle=True,
-                                                    workers=self.num_training_data_generation_workers,
-                                                    max_queue_size=self.training_data_max_queue_size)
-
-            self.model.pre_create_validation_enqueuer(generator=self.validation_data_iterator,
-                                                      use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                                      workers=self.num_validation_data_generation_workers,
-                                                      max_queue_size=self.validation_data_max_queue_size)
-
-
 
     @abstractmethod
     def _get_data_sets(self):
@@ -1145,6 +1153,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         self.teacher_validation_data_generator = None
         self.teacher_validation_data_iterator = None
         self._teacher_model_optimizer_lr_scalers = None
+        self._teacher_validation_data_enqueuer = None
 
         self._mean_teacher_method_config = None
         self._ema_smoothing_coefficient_function = None
@@ -1165,6 +1174,18 @@ class MeanTeacherTrainerBase(TrainerBase):
         if self.using_mean_teacher_method:
             self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
             self.teacher_validation_data_iterator = self.teacher_validation_data_generator.get_data_set_iterator()
+
+    def _pre_create_enqueuers(self):
+        super(MeanTeacherTrainerBase, self)._pre_create_enqueuers()
+
+        if self.using_mean_teacher_method:
+            self.logger.log('Pre-creating teacher validation enqueuer to avoid copying Tensorflow computational graph during process creation')
+            self._teacher_validation_data_enqueuer = ExtendedModel\
+                .pre_create_validation_enqueuer(generator=self.teacher_validation_data_iterator,
+                                                use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                                workers=self.num_validation_data_generation_workers,
+                                                max_queue_size=self.validation_data_max_queue_size,
+                                                random_seed=self.random_seed)
 
     def _init_model(self):
         parent_model = super(MeanTeacherTrainerBase, self)._init_model()
@@ -1197,19 +1218,10 @@ class MeanTeacherTrainerBase(TrainerBase):
             else:
                 self._teacher_model_optimizer_lr_scalers = dict()
 
+            # Set the validation data enqueuer
+            self.teacher_model.set_pre_created_validation_enqueuer(self._teacher_validation_data_enqueuer)
+
         return parent_model
-
-    def _pre_create_enqueuers(self):
-        super(MeanTeacherTrainerBase, self)._pre_create_enqueuers()
-
-        if self.using_mean_teacher_method:
-            if settings.USE_MULTIPROCESSING:
-
-                self.logger.log('Pre-creating teacher validation enqueuer to avoid copying Tensorflow computational graph during process creation')
-                self.teacher_model.pre_create_validation_enqueuer(generator=self.teacher_validation_data_iterator,
-                                                                  use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                                                  workers=self.num_validation_data_generation_workers,
-                                                                  max_queue_size=self.validation_data_max_queue_size)
 
     def _compile_model(self):
         super(MeanTeacherTrainerBase, self)._compile_model()
@@ -1240,6 +1252,8 @@ class MeanTeacherTrainerBase(TrainerBase):
 
     @property
     def teacher_model(self):
+        # type: () -> ExtendedModel
+
         if self.using_mean_teacher_method and self.teacher_model_wrapper is not None:
             return self.teacher_model_wrapper.model
 
@@ -1454,7 +1468,8 @@ class MeanTeacherTrainerBase(TrainerBase):
                     workers=self.num_validation_data_generation_workers,
                     use_multiprocessing=settings.USE_MULTIPROCESSING,
                     validation=True,
-                    max_queue_size=self.validation_data_max_queue_size)
+                    max_queue_size=self.validation_data_max_queue_size,
+                    random_seed=self.random_seed)
 
                 # Parse all validation metrics to a single string
                 metrics_names = self.teacher_model.metrics_names
@@ -2003,12 +2018,12 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 unlabeled_data_set=None,
                 num_labeled_per_batch=self.validation_num_labeled_per_batch,
                 num_unlabeled_per_batch=0,
-                params=teacher_validation_data_generator_params,
-                class_weights=self.class_weights)
-        else:
-            teacher_validation_data_generator = None
+                class_weights=self.class_weights,
+                params=teacher_validation_data_generator_params)
 
-        return teacher_validation_data_generator
+            return teacher_validation_data_generator
+
+        return None
 
     def train(self):
         # type: () -> History
@@ -2049,7 +2064,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             workers=self.num_training_data_generation_workers,
             validation_workers=self.num_validation_data_generation_workers,
             max_queue_size=self.training_data_max_queue_size,
-            validation_max_queue_size=self.validation_data_max_queue_size)
+            validation_max_queue_size=self.validation_data_max_queue_size,
+            random_seed=self.random_seed)
 
         return history
 
@@ -2457,7 +2473,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             workers=self.num_training_data_generation_workers,
             validation_workers=self.num_validation_data_generation_workers,
             max_queue_size=self.training_data_max_queue_size,
-            validation_max_queue_size=self.validation_data_max_queue_size)
+            validation_max_queue_size=self.validation_data_max_queue_size,
+            random_seed=self.random_seed)
 
         return history
 
@@ -2496,14 +2513,14 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
             teacher_validation_data_generator = ClassificationDataGenerator(labeled_data_set=self.validation_set,
                                                                             unlabeled_data_set=None,
-                                                                            num_labeled_per_batch=teacher_validation_data_generator_params,
+                                                                            num_labeled_per_batch=self.validation_num_labeled_per_batch,
                                                                             num_unlabeled_per_batch=0,
                                                                             class_weights=self.class_weights,
-                                                                            params=self.validation_data_generator_params)
-        else:
-            teacher_validation_data_generator = None
+                                                                            params=teacher_validation_data_generator_params)
 
-        return teacher_validation_data_generator
+            return teacher_validation_data_generator
+
+        return None
 
     @property
     def using_mean_teacher_method(self):
