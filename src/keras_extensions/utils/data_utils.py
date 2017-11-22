@@ -278,7 +278,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
                         return
 
                     self.queue.put(self.executor.apply_async(get_index, (self.uuid, self.e_idx, b_idx)), block=True)
-                    self.logger.log('Putting data into queue, new size {}'.format(queue.qsize()))
+                    self.logger.log('Putting data into queue, new size {}'.format(self.queue.qsize()))
 
                 while not self.queue.empty():
                     pass  # Wait for the last few batches to be processed
