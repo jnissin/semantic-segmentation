@@ -535,7 +535,10 @@ class TrainerBase:
     @property
     def num_epochs(self):
         # type: () -> int
-        return int(self._get_config_value('num_epochs')) if not settings.OVERRIDE_STEPS else settings.OVERRIDE_NUM_EPOCHS
+        if settings.OVERRIDE_STEPS:
+            return settings.OVERRIDE_NUM_EPOCHS
+
+        return int(self._get_config_value('num_epochs'))
 
     @property
     def num_training_data_generation_workers(self):
@@ -605,14 +608,22 @@ class TrainerBase:
         # type: () -> int
         if self.training_data_iterator is None:
             raise ValueError('Training data iterator has not been initialized')
-        return self.training_data_iterator.num_steps_per_epoch if not settings.OVERRIDE_STEPS else settings.OVERRIDE_TRAINING_STEPS_PER_EPOCH
+
+        if settings.OVERRIDE_STEPS:
+            return settings.OVERRIDE_TRAINING_STEPS_PER_EPOCH
+
+        return self.training_data_iterator.num_steps_per_epoch
 
     @property
     def validation_steps_per_epoch(self):
         # type: () -> int
         if self.validation_data_iterator is None:
             raise ValueError('Validation data iterator has not been initialized')
-        return self.validation_data_iterator.num_steps_per_epoch if not settings.OVERRIDE_STEPS else settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH
+
+        if settings.OVERRIDE_STEPS:
+            return settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH
+
+        return self.validation_data_iterator.num_steps_per_epoch
 
     def _load_config_json(self, path):
         with open(path) as f:
@@ -1291,7 +1302,11 @@ class MeanTeacherTrainerBase(TrainerBase):
         # type: () -> int
         if self.teacher_validation_data_iterator is None:
             raise ValueError('Teacher validation data iterator has not been initialized')
-        return self.teacher_validation_data_iterator.num_steps_per_epoch if not settings.OVERRIDE_STEPS else settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH
+
+        if settings.OVERRIDE_STEPS:
+            return settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH
+
+        return self.teacher_validation_data_iterator.num_steps_per_epoch
 
     @property
     def ema_smoothing_coefficient_function(self):

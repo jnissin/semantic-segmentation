@@ -617,7 +617,6 @@ class ExtendedModel(Model):
                 self.logger.log('Created a new validation enqueuer')
             else:
                 enqueuer = self.validation_enqueuer
-                self.logger.log('Using pre-created validation enqueuer')
 
             enqueuer.continue_run()
             output_generator = enqueuer.get()
