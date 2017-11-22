@@ -160,10 +160,11 @@ class TrainerBase:
         shutil.copy(config_file_path, copy_config_file_path)
 
         # Seed the random in order to be able to reproduce the results
-        # Note: both random and np.random
-        self.logger.log('Initializing random and np.random with random seed: {}'.format(self.random_seed))
+        # Note: random, np.random and TF random
+        self.logger.log('Initializing random, np.random and TF random with random seed: {}'.format(self.random_seed))
         random.seed(self.random_seed)
         np.random.seed(self.random_seed)
+        K.tf.set_random_seed(self.random_seed)
 
         # Set image data format
         self.logger.log('Setting Keras image data format to: {}'.format(self.image_data_format))
