@@ -18,7 +18,7 @@ from utils import dataset_utils
 from utils import prediction_utils
 from utils import image_utils
 
-from models.models import get_model
+from models import get_model
 
 ##############################################
 # GLOBALS
@@ -224,6 +224,22 @@ def build_topk_segmentation_plot(flattened_masks, original_pil_image, file_name)
 
     figure = get_new_figure(target_width, target_height, 'Top {} segmentation of {}'.format(top_k, file_name))
 
+    # Map the material colors to ones that are easier to recognize for the eye
+    material_colors = image_utils.get_distinct_colors(24, seed=1234)
+
+    for i in range(0, top_k):
+        flattened_mask = flattened_masks[i][0]
+        found_materials = flattened_masks[i][1]
+        new_mask = np.array(flattened_mask, copy=True)
+
+        for j in range(0, len(found_materials)):
+            old_color = found_materials[j][0].color
+            mask = flattened_mask[:,:,0] == old_color[0]
+            new_color = np.array(material_colors[found_materials[j][0].id], dtype='float32') * 255.0
+            new_mask[mask] = new_color
+
+        flattened_masks[i] = (new_mask, found_materials)
+
     for i in range(0, top_k):
         flattened_mask = flattened_masks[i][0]
         found_materials = flattened_masks[i][1]
@@ -233,7 +249,7 @@ def build_topk_segmentation_plot(flattened_masks, original_pil_image, file_name)
         figure.add_subplot(rows, cols, i+1, title='Top {}'.format(i+1))
 
         # Create the color map for the color bar
-        colors = [np.array(m[0].color, dtype='float32') / 255.0 for m in found_materials]
+        colors = [np.array(material_colors[m[0].id], dtype='float32') for m in found_materials]
         labels = ['{0} / {1:.2f}%'.format(m[0].name, m[1]) for m in found_materials]
         cmap = mpl.colors.ListedColormap(colors, name='material_colors', N=len(colors))
 
@@ -529,8 +545,6 @@ def main():
         final_prediction = np.transpose(final_prediction, (2, 1, 0))
 
     flattened_predictions = prediction_utils.top_k_flattened_masks(final_prediction, top_k, material_class_information, True)
-    print 'Building top k segmentation plot'
-    build_topk_segmentation_plot(flattened_predictions, original_pil_image, file_name)
 
     if ground_truth_image_path:
         print 'Reading ground truth image from: {}'.format(ground_truth_image_path)
@@ -543,6 +557,9 @@ def main():
         ground_truth_mask = dataset_utils.index_encode_mask(np_mask_img=ground_truth_np_img, material_class_information=material_class_information)
         print 'Building top k segmentation accuracy plot'
         build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_name, ground_truth_mask)
+
+    print 'Building top k segmentation plot'
+    build_topk_segmentation_plot(flattened_predictions, original_pil_image, file_name)
 
     # Show all the plots
     plt.show()

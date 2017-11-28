@@ -42,11 +42,15 @@ class ExtendedModel(Model):
 
         self.fit_generator_stopped = False
         self.process_clean_up_called = False
-        self.logger = Logger.instance()
         self.training_enqueuer = None
         self._training_enqueuer_pre_created = False
         self.validation_enqueuer = None
         self._validation_enqueuer_pre_created = False
+
+        try:
+            self.logger = Logger.instance()
+        except ValueError:
+            self.logger = Logger(log_file_path=None, stdout_only=True)
 
     @property
     def training_enqueuer_pre_created(self):
