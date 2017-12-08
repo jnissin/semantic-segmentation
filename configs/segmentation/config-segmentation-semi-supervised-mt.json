@@ -147,7 +147,7 @@
     },
 
     "image_data_format": "channels_last",
-    "continue_from_last_checkpoint": false,
+    "continue_from_last_checkpoint": true,
     "use_class_weights": true,
     "ignore_classes": [0],
     "class_weight_type": "median_frequency_balancing",
