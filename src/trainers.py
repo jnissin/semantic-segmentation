@@ -199,7 +199,7 @@ class TrainerBase:
         # Initialize model
         self.model_wrapper = self._init_model()
 
-        # Pre-create possible enqueuers and compile model
+        # Compile model with the set optimizer
         self._compile_model()
 
     def _init_caches(self):
@@ -308,6 +308,16 @@ class TrainerBase:
                            metrics=model_metrics,
                            **self._get_compile_kwargs())
 
+        # Load optimizer weights
+        if self.continue_from_optimizer_checkpoint:
+            self.logger.log('Attempting to load optimizer weights')
+            success = self._load_optimizer_weights(self.model_wrapper, self.model_checkpoint_directory, include_early_stop=False)
+
+            if success:
+                self.logger.log('Model optimizer weights loaded successfully')
+            else:
+                self.logger.warn('Failed to load optimizer weights - continuing with freshly initialized optimizer weights')
+
         # Log the model structure to a file using the keras plot_model
         try:
             model_plot_file_path = os.path.join(self.log_folder_path, 'model.png')
@@ -315,6 +325,28 @@ class TrainerBase:
             plot_model(self.model, to_file=model_plot_file_path, show_shapes=True, show_layer_names=True)
         except Exception as e:
             self.logger.warn('Saving model plot to file failed: {}'.format(e.message))
+
+    def _load_optimizer_weights(self, model_wrapper, weights_directory_path, include_early_stop=False):
+        try:
+            weight_file_path = self._get_latest_weights_file_path(weights_directory_path, include_early_stop=include_early_stop)
+
+            if weight_file_path is None:
+                self.logger.log('Could not locate any suitable weight files from the given path for optimizer weight loading')
+                return False
+
+            weight_file = weight_file_path.split('/')[-1]
+
+            if weight_file:
+                self.logger.log('Loading optimizer weights from file: {}'.format(weight_file_path))
+                success = model_wrapper.load_optimizer_weights(weight_file_path)
+                return success
+            else:
+                self.logger.log('No existing optimizer weights were found')
+                return False
+
+        except Exception as e:
+            self.logger.log('Searching for existing optimizer weights finished with an error: {}'.format(e.message))
+            return False
 
     @abstractmethod
     def _get_data_sets(self):
@@ -1249,6 +1281,16 @@ class MeanTeacherTrainerBase(TrainerBase):
                                        metrics=teacher_model_metrics,
                                        **self._get_compile_kwargs())
 
+            # Load optimizer weights
+            if self.continue_from_optimizer_checkpoint:
+                self.logger.log('Attempting to load optimizer weights for teacher model')
+                success = self._load_optimizer_weights(self.teacher_model_wrapper, self.teacher_weights_directory_path, include_early_stop=False)
+
+                if success:
+                    self.logger.log('Teacher model optimizer weights loaded successfully')
+                else:
+                    self.logger.warn('Failed to load optimizer weights for teacher model - continuing with freshly initialized optimizer weights')
+
             # Log the model structure to a file using the keras plot_model
             try:
                 model_plot_file_path = os.path.join(self.log_folder_path, 'teacher_model.png')
@@ -1537,7 +1579,7 @@ class MeanTeacherTrainerBase(TrainerBase):
             general_utils.create_path_if_not_existing(file_path)
 
             self.logger.log('Saving mean teacher model weights to file: {}'.format(file_path))
-            self.teacher_model.save_weights(file_path, overwrite=True)
+            self.teacher_model.save(file_path, overwrite=True, include_optimizer=True)
 
     def handle_early_exit(self):
         super(MeanTeacherTrainerBase, self).handle_early_exit()

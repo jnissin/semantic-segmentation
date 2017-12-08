@@ -4,7 +4,7 @@ from abc import ABCMeta, abstractmethod
 
 import keras.backend as K
 
-from keras.models import Model
+from keras.models import Model, Sequential
 from keras.layers.advanced_activations import LeakyReLU
 from keras.layers import Lambda
 from keras.layers.advanced_activations import PReLU
@@ -513,6 +513,54 @@ class ModelBase(object):
                                          lr_scalers=lr_scalers)
 
         return info
+
+    def load_optimizer_weights(self, weights_file_path):
+
+        if self.model is None:
+            raise ValueError('The internal model must be built before loading optimizer weights')
+
+        if self.model.optimizer is None:
+            raise ValueError('The model must be compiled with an optimizer before loading optimizer weights')
+
+        ###########################
+        # Imports
+        ###########################
+
+        try:
+            import h5py
+        except ImportError:
+            h5py = None
+
+        if h5py is None:
+            raise ImportError('`load_optimizer_weights` requires h5py.')
+
+        ###########################
+        # Load weights
+        ###########################
+
+        with h5py.File(weights_file_path, mode='r') as f:
+            # Set optimizer weights.
+            if 'optimizer_weights' in f:
+                # Build train function (to get weight updates).
+                if isinstance(self.model, Sequential):
+                    self.model.model._make_train_function()
+                else:
+                    self.model._make_train_function()
+
+                optimizer_weights_group = f['optimizer_weights']
+                optimizer_weight_names = [n.decode('utf8') for n in
+                                          optimizer_weights_group.attrs['weight_names']]
+                optimizer_weight_values = [optimizer_weights_group[n] for n in
+                                           optimizer_weight_names]
+                try:
+                    self.model.optimizer.set_weights(optimizer_weight_values)
+                except ValueError:
+                    return False
+            else:
+                # No optimizer weights in the file
+                return False
+
+        return True
 
     @abstractmethod
     def _build_model(self, inputs):
