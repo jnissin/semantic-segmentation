@@ -112,6 +112,46 @@ def _to_tensor(x, dtype):
 # COST FUNCTIONS
 ##############################################
 
+def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, num_classes, scale_factor):
+    # Calculate the softmax of the predictions
+    epsilon = _to_tensor(_EPSILON, y_pred_unlabeled.dtype.base_dtype)
+
+    # Scale by scale factor
+    scaled_size = K.tf.stop_gradient(K.tf.cast(K.tf.cast(K.tf.shape(y_pred_unlabeled)[1:-1], dtype=K.tf.float32) * scale_factor, dtype=K.tf.int32))
+    y_pred_unlabeled = K.tf.image.resize_images(images=y_pred_unlabeled, size=scaled_size, method=K.tf.image.ResizeMethod.BILINEAR)
+    y_true_unlabeled = K.tf.expand_dims(y_true_unlabeled, axis=-1)
+    y_true_unlabeled = K.tf.image.resize_images(images=y_true_unlabeled, size=scaled_size, method=K.tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    y_true_unlabeled = K.tf.squeeze(y_true_unlabeled, axis=-1)
+
+    # Take softmax of the unlabeled predictions
+    y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled)
+
+    # Calculate the gradients for the softmax output using a convolution with a Sobel mask
+    Gx_kernel = K.tf.tile(K.tf.constant([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], shape=[3, 3, 1, 1], dtype=K.tf.float32), [1, 1, num_classes, 1])
+    Gy_kernel = K.tf.transpose(Gx_kernel, [1, 0, 2, 3])
+
+    Gx = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, Gx_kernel, strides=[1, 1, 1, 1], padding='SAME')
+    Gy = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, Gy_kernel, strides=[1, 1, 1, 1], padding='SAME')
+
+    # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), B_SIZExHxW
+    # Note: clip by epsilon to avoid NaN values due to: (small grad value)^2
+    Gx = K.tf.clip_by_value(Gx, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
+    Gy = K.tf.clip_by_value(Gy, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
+
+    G_mag = K.tf.sqrt(K.tf.add(K.tf.pow(Gx, 2), K.tf.pow(Gy, 2)))
+    G_mag = K.tf.reduce_mean(G_mag, axis=-1)
+
+    # For each image - extract each superpixel and calculate the cost
+    batch_entropy = K.tf.reduce_sum(G_mag * y_true_unlabeled)
+
+    return batch_entropy
+
+    # Take the mean over the batch images
+    # Note: take the maximum between num_unlabeled and 1 to avoid dividing by 0
+    #mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(K.tf.maximum(num_unlabeled, 1), K.tf.float32))
+
+    #return K.tf.multiply(unlabeled_cost_coefficient, mean_image_entropy)
+
 
 def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_cost_coefficient, num_unlabeled, num_classes):
     """
@@ -129,6 +169,34 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_
         :return: the mean (image-level) unlabeled superpixel loss for the batch
     """
 
+    # Ensure the y_true_unlabeled are binary masks with borders denoted by 0s and everything else as 1s
+    y_true_unlabeled = K.tf.stop_gradient(K.tf.clip_by_value(y_true_unlabeled, clip_value_min=0, clip_value_max=1))
+    y_true_unlabeled = K.tf.cast(y_true_unlabeled, dtype=K.tf.float32)
+
+    batch_entropy_1x = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
+                                                              y_pred_unlabeled=y_pred_unlabeled,
+                                                              num_classes=num_classes,
+                                                              scale_factor=1.0)
+
+    batch_entropy_05x = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
+                                                               y_pred_unlabeled=y_pred_unlabeled,
+                                                               num_classes=num_classes,
+                                                               scale_factor=0.5)
+
+    batch_entropy_025x = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
+                                                                y_pred_unlabeled=y_pred_unlabeled,
+                                                                num_classes=num_classes,
+                                                                scale_factor=0.25)
+
+    batch_entropy = K.tf.div(K.tf.add(K.tf.add(batch_entropy_1x, batch_entropy_05x), batch_entropy_025x), 3.0)
+
+    # Take the mean over the batch images
+    # Note: take the maximum between num_unlabeled and 1 to avoid dividing by 0
+    mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(K.tf.maximum(num_unlabeled, 1), K.tf.float32))
+
+    return K.tf.multiply(unlabeled_cost_coefficient, mean_image_entropy)
+
+    """
     # Calculate the softmax of the predictions
     epsilon = _to_tensor(_EPSILON, y_pred_unlabeled.dtype.base_dtype)
     y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled)
@@ -159,7 +227,7 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, unlabeled_
     mean_image_entropy = K.tf.div(batch_entropy, K.tf.cast(K.tf.maximum(num_unlabeled, 1), K.tf.float32))
 
     return K.tf.multiply(unlabeled_cost_coefficient, mean_image_entropy)
-
+    """
 
 def _tf_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     """

@@ -53,7 +53,7 @@
     "mean_teacher_params": {
       "teacher_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
       "ema_smoothing_coefficient_function": "lambda x: 0.99 if x < 40000 else 0.999",
-      "consistency_cost_coefficient_function": "lambda x: 1.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "consistency_cost_coefficient_function": "lambda x: 1.0",
       "transfer_weights": true,
       "transfer_weights_options": {
         "transfer_model_name": "enet-naive-upsampling-encoder-only",
@@ -71,7 +71,7 @@
     },
 
     "superpixel_params": {
-      "unlabeled_cost_coefficient_function": "lambda x: 0.0 if x < 10000 else 1.5 * min(np.exp(-5.0 * (1.0 - ((float(x-10000)/30000.0)**2))), 1.0)",
+      "unlabeled_cost_coefficient_function": "lambda x: 8.0",
       "label_generation_function_name": "felzenszwalb",
       "superpixel_mask_cache_path": "data/final/unlabeled_fzw_masks/"
     },
