@@ -74,9 +74,10 @@ class MaxUnpooling2D(Layer):
         Replace with unpool op when/if issue merged
         Add Theano backend
         """
-        pool, ind = inputs[0], inputs[1]
+        pool = inputs[0]
+        ind = inputs[1]
 
-        with tf.variable_scope(scope):
+        with tf.variable_scope(self.name):
             input_shape = K.tf.shape(pool, out_type='int64')
             output_shape = [input_shape[0], input_shape[1] * self.size[0], input_shape[2] * self.size[1], input_shape[3]]
 
