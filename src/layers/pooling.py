@@ -12,19 +12,19 @@ class MaxPoolingWithArgmax2D(Layer):
         self.pool_size = pool_size
         self.strides = strides
         self.padding = padding
+        self.running_on_gpu = False
 
-        if K.backend() == 'tensorflow':
-            # Check whether we are running on GPU to decide which version of pooling to use
-            from tensorflow.python.client import device_lib
-
-            local_device_protos = device_lib.list_local_devices()
-            gpus = [x.name for x in local_device_protos if x.device_type == 'GPU']
-            self.running_on_gpu = len(gpus) > 0
-
-            if not self.running_on_gpu:
-                raise NotImplementedError('MaxPoolingWithArgmax2D works only on GPU')
-        else:
+        if K.backend() is not 'tensorflow':
             raise NotImplementedError('{} backend is not supported for layer {}'.format(K.backend(), type(self).__name__))
+
+        # Check whether we are running on GPU to decide which version of pooling to use
+        from tensorflow.python.client import device_lib
+        local_device_protos = device_lib.list_local_devices()
+        gpus = [x.name for x in local_device_protos if x.device_type == 'GPU']
+        self.running_on_gpu = len(gpus) > 0
+
+        if not self.running_on_gpu:
+            raise NotImplementedError('MaxPoolingWithArgmax2D works only on GPU')
 
     def build(self, input_shape):
         # Create a trainable weight variable for this layer.
@@ -74,33 +74,33 @@ class MaxUnpooling2D(Layer):
         Replace with unpool op when/if issue merged
         Add Theano backend
         """
-        updates, mask = inputs[0], inputs[1]
+        pool, ind = inputs[0], inputs[1]
 
-        with K.tf.variable_scope(self.name):
-            mask = K.cast(mask, 'int32')
-            input_shape = K.tf.shape(updates, out_type='int32')
+        with tf.variable_scope(scope):
+            input_shape = K.tf.shape(pool, out_type='int64')
+            output_shape = [input_shape[0], input_shape[1] * self.size[0], input_shape[2] * self.size[1], input_shape[3]]
 
-            #  calculation new shape
-            if output_shape is None:
-                output_shape = (input_shape[0], input_shape[1] * self.size[0], input_shape[2] * self.size[1], input_shape[3])
-            self.output_shape1 = output_shape
+            flat_input_size = K.tf.reduce_prod(input_shape)
+            flat_output_shape = [output_shape[0], output_shape[1] * output_shape[2] * output_shape[3]]
 
-            # calculation indices for batch, height, width and feature maps
-            one_like_mask = K.ones_like(mask, dtype='int32')
-            batch_shape = K.concatenate([[input_shape[0]], [1], [1], [1]], axis=0)
-            batch_range = K.reshape(K.tf.range(output_shape[0], dtype='int32'), shape=batch_shape)
-            b = one_like_mask * batch_range
-            y = mask // (output_shape[2] * output_shape[3])
-            x = (mask // output_shape[3]) % output_shape[2]
-            feature_range = K.tf.range(output_shape[3], dtype='int32')
-            f = one_like_mask * feature_range
+            pool_ = K.tf.reshape(pool, [flat_input_size])
+            batch_range = K.tf.reshape(K.tf.range(tf.cast(output_shape[0], K.tf.int64), dtype=ind.dtype), shape=[input_shape[0], 1, 1, 1])
+            b = K.tf.ones_like(ind) * batch_range
+            b1 = K.tf.reshape(b, [flat_input_size, 1])
+            ind_ = K.tf.reshape(ind, [flat_input_size, 1])
+            ind_ = K.tf.concat([b1, ind_], 1)
 
-            # transpose indices & reshape update values to one dimension
-            updates_size = K.tf.size(updates)
-            indices = K.transpose(K.reshape(K.stack([b, y, x, f]), [4, updates_size]))
-            values = K.reshape(updates, [updates_size])
-            ret = K.tf.scatter_nd(indices, values, output_shape)
+            ret = K.tf.scatter_nd(ind_, pool_, shape=K.tf.cast(flat_output_shape, K.tf.int64))
+            ret = K.tf.reshape(ret, output_shape)
+
+            set_input_shape = pool.get_shape()
+            set_output_shape = [set_input_shape[0],
+                                set_input_shape[1] * self.size[0],
+                                set_input_shape[2] * self.size[1],
+                                set_input_shape[3]]
+            ret.set_shape(set_output_shape)
             return ret
+
 
     def compute_output_shape(self, input_shape):
         mask_shape = input_shape[1]

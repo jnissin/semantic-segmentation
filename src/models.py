@@ -1070,7 +1070,9 @@ class ENetNaiveUpsampling(ModelBase):
                            asymmetric=0,
                            dilated=0,
                            downsample=False,
-                           dropout_rate=0.1):
+                           dropout_rate=0.1,
+                           kernel_initializer='he_normal',
+                           bias_initializer='zeros'):
 
         internal = output // internal_scale
         encoder = inp
@@ -1085,6 +1087,8 @@ class ENetNaiveUpsampling(ModelBase):
         encoder = Conv2D(filters=internal,
                          kernel_size=(input_stride, input_stride),
                          strides=(input_stride, input_stride),
+                         kernel_initializer=kernel_initializer,
+                         bias_initializer=bias_initializer,
                          use_bias=False,
                          name='{}_proj_conv2d_1'.format(name_prefix))(encoder)
 
@@ -1097,22 +1101,30 @@ class ENetNaiveUpsampling(ModelBase):
         if not asymmetric and not dilated:
             encoder = Conv2D(filters=internal,
                              kernel_size=(3, 3),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              padding='same',
                              name='{}_conv2d_1'.format(name_prefix))(encoder)
         elif asymmetric:
             encoder = Conv2D(filters=internal,
                              kernel_size=(1, asymmetric),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              padding='same',
                              use_bias=False,
                              name='{}_aconv2d_1'.format(name_prefix))(encoder)
 
             encoder = Conv2D(filters=internal,
                              kernel_size=(asymmetric, 1),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              padding='same',
                              name='{}_aconv2d_2'.format(name_prefix))(encoder)
         elif dilated:
             encoder = Conv2D(filters=internal,
                              kernel_size=(3, 3),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              dilation_rate=(dilated, dilated),
                              padding='same',
                              name='{}_dconv2d'.format(name_prefix))(encoder)
@@ -1126,6 +1138,8 @@ class ENetNaiveUpsampling(ModelBase):
         # 1x1 projection upwards from internal to output feature space
         encoder = Conv2D(filters=output,
                          kernel_size=(1, 1),
+                         kernel_initializer=kernel_initializer,
+                         bias_initializer=bias_initializer,
                          use_bias=False,
                          name='{}_proj_conv2d_2'.format(name_prefix))(encoder)
 
@@ -1192,7 +1206,9 @@ class ENetNaiveUpsampling(ModelBase):
                            output,
                            name_prefix,
                            upsample=False,
-                           reverse_module=False):
+                           reverse_module=False,
+                           kernel_initializer='he_normal',
+                           bias_initializer='zeros'):
 
         internal = output / 4
 
@@ -1202,34 +1218,44 @@ class ENetNaiveUpsampling(ModelBase):
         # 1x1 projection downwards to internal feature space
         x = Conv2D(filters=internal,
                    kernel_size=(1, 1),
+                   kernel_initializer=kernel_initializer,
+                   bias_initializer=bias_initializer,
                    use_bias=False,
                    name='{}_proj_conv2d_1'.format(name_prefix))(encoder)
 
         # ENet uses momentum of 0.1, keras default is 0.99
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_1'.format(name_prefix))(x)
-        x = Activation('relu', name='{}_relu_1'.format(name_prefix))(x)
+        x = PReLU(shared_axes=[1, 2], name='{}_prelu_1'.format(name_prefix))(x)
+        # x = Activation('relu', name='{}_relu_1'.format(name_prefix))(x)
 
         # Upsampling
         if not upsample:
             x = Conv2D(filters=internal,
                        kernel_size=(3, 3),
+                       kernel_initializer=kernel_initializer,
+                       bias_initializer=bias_initializer,
                        padding='same',
                        use_bias=True,
                        name='{}_conv2d_1'.format(name_prefix))(x)
         else:
             x = Conv2DTranspose(filters=internal,
                                 kernel_size=(3, 3),
+                                kernel_initializer=kernel_initializer,
+                                bias_initializer=bias_initializer,
                                 strides=(2, 2),
                                 padding='same',
                                 name='{}_tconv2d_1'.format(name_prefix))(x)
 
         # ENet uses momentum of 0.1 keras default is 0.99
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_2'.format(name_prefix))(x)
-        x = Activation('relu', name='{}_relu_2'.format(name_prefix))(x)
+        x = PReLU(shared_axes=[1, 2], name='{}_prelu_1'.format(name_prefix))(x)
+        # x = Activation('relu', name='{}_relu_2'.format(name_prefix))(x)
 
         # 1x1 projection upwards from internal to output feature space
         x = Conv2D(filters=output,
                    kernel_size=(1, 1),
+                   kernel_initializer=kernel_initializer,
+                   bias_initializer=bias_initializer,
                    padding='same',
                    use_bias=False,
                    name='{}_proj_conv2d_2'.format((name_prefix)))(x)
@@ -1242,6 +1268,8 @@ class ENetNaiveUpsampling(ModelBase):
         if encoder.get_shape()[-1] != output or upsample:
             other = Conv2D(filters=output,
                            kernel_size=(1, 1),
+                           kernel_initializer=kernel_initializer,
+                           bias_initializer=bias_initializer,
                            padding='same',
                            use_bias=False,
                            name='{}_other_conv2d'.format(name_prefix))(other)
@@ -1260,7 +1288,8 @@ class ENetNaiveUpsampling(ModelBase):
             Merge branches
             """
             decoder = add([x, other], name='{}_add'.format(name_prefix))
-            decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
+            decoder = PReLU(shared_axes=[1, 2], name='{}_prelu_3'.format(name_prefix))(decoder)
+            # decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
 
         return decoder
 
@@ -1276,6 +1305,8 @@ class ENetNaiveUpsampling(ModelBase):
 
         enet = Conv2DTranspose(filters=nc,
                                kernel_size=(2, 2),
+                               kernel_initializer='he_normal',
+                               bias_initializer='zeros',
                                strides=(2, 2),
                                padding='same',
                                name='logits')(enet)
@@ -1341,7 +1372,9 @@ class ENetMaxUnpooling(ModelBase):
                            asymmetric=0,
                            dilated=0,
                            downsample=False,
-                           dropout_rate=0.1):
+                           dropout_rate=0.1,
+                           kernel_initializer='he_normal',
+                           bias_initializer='zeros'):
 
         internal = output // internal_scale
         encoder = inp
@@ -1355,6 +1388,8 @@ class ENetMaxUnpooling(ModelBase):
 
         encoder = Conv2D(filters=internal,
                          kernel_size=(input_stride, input_stride),
+                         kernel_initializer=kernel_initializer,
+                         bias_initializer=bias_initializer,
                          strides=(input_stride, input_stride),
                          use_bias=False,
                          name='{}_proj_conv2d_1'.format(name_prefix))(encoder)
@@ -1368,22 +1403,30 @@ class ENetMaxUnpooling(ModelBase):
         if not asymmetric and not dilated:
             encoder = Conv2D(filters=internal,
                              kernel_size=(3, 3),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              padding='same',
                              name='{}_conv2d_1'.format(name_prefix))(encoder)
         elif asymmetric:
             encoder = Conv2D(filters=internal,
                              kernel_size=(1, asymmetric),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              padding='same',
                              use_bias=False,
                              name='{}_aconv2d_1'.format(name_prefix))(encoder)
 
             encoder = Conv2D(filters=internal,
                              kernel_size=(asymmetric, 1),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              padding='same',
                              name='{}_aconv2d_2'.format(name_prefix))(encoder)
         elif dilated:
             encoder = Conv2D(filters=internal,
                              kernel_size=(3, 3),
+                             kernel_initializer=kernel_initializer,
+                             bias_initializer=bias_initializer,
                              dilation_rate=(dilated, dilated),
                              padding='same',
                              name='{}_dconv2d'.format(name_prefix))(encoder)
@@ -1397,6 +1440,8 @@ class ENetMaxUnpooling(ModelBase):
         # 1x1 projection upwards from internal to output feature space
         encoder = Conv2D(filters=output,
                          kernel_size=(1, 1),
+                         kernel_initializer=kernel_initializer,
+                         bias_initializer=bias_initializer,
                          use_bias=False,
                          name='{}_proj_conv2d_2'.format(name_prefix))(encoder)
 
@@ -1472,7 +1517,9 @@ class ENetMaxUnpooling(ModelBase):
                            output,
                            name_prefix,
                            upsample=False,
-                           reverse_module=False):
+                           reverse_module=False,
+                           kernel_initializer='he_normal',
+                           bias_initializer='zeros'):
 
         internal = output / 4
 
@@ -1482,34 +1529,44 @@ class ENetMaxUnpooling(ModelBase):
         # 1x1 projection downwards to internal feature space
         x = Conv2D(filters=internal,
                    kernel_size=(1, 1),
+                   kernel_initializer=kernel_initializer,
+                   bias_initializer=bias_initializer,
                    use_bias=False,
                    name='{}_proj_conv2d_1'.format(name_prefix))(encoder)
 
         # ENet uses momentum of 0.1, keras default is 0.99
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_1'.format(name_prefix))(x)
-        x = Activation('relu', name='{}_relu_1'.format(name_prefix))(x)
+        x = PReLU(shared_axes=[1, 2], name='{}_prelu_1'.format(name_prefix))(x)
+        # x = Activation('relu', name='{}_relu_1'.format(name_prefix))(x)
 
         # Upsampling
         if not upsample:
             x = Conv2D(filters=internal,
                        kernel_size=(3, 3),
+                       kernel_initializer=kernel_initializer,
+                       bias_initializer=bias_initializer,
                        padding='same',
                        use_bias=True,
                        name='{}_conv2d_1'.format(name_prefix))(x)
         else:
             x = Conv2DTranspose(filters=internal,
                                 kernel_size=(3, 3),
+                                kernel_initializer=kernel_initializer,
+                                bias_initializer=bias_initializer,
                                 strides=(2, 2),
                                 padding='same',
                                 name='{}_tconv2d_1'.format(name_prefix))(x)
 
         # ENet uses momentum of 0.1 keras default is 0.99
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_2'.format(name_prefix))(x)
-        x = Activation('relu', name='{}_relu_2'.format(name_prefix))(x)
+        x = PReLU(shared_axes=[1, 2], name='{}_prelu_2'.format(name_prefix))(x)
+        # x = Activation('relu', name='{}_relu_2'.format(name_prefix))(x)
 
         # 1x1 projection upwards from internal to output feature space
         x = Conv2D(filters=output,
                    kernel_size=(1, 1),
+                   kernel_initializer=kernel_initializer,
+                   bias_initializer=bias_initializer,
                    padding='same',
                    use_bias=False,
                    name='{}_proj_conv2d_2'.format((name_prefix)))(x)
@@ -1522,6 +1579,8 @@ class ENetMaxUnpooling(ModelBase):
         if encoder.get_shape()[-1] != output or upsample:
             other = Conv2D(filters=output,
                            kernel_size=(1, 1),
+                           kernel_initializer=kernel_initializer,
+                           bias_initializer=bias_initializer,
                            padding='same',
                            use_bias=False,
                            name='{}_other_conv2d'.format(name_prefix))(other)
@@ -1541,7 +1600,8 @@ class ENetMaxUnpooling(ModelBase):
             Merge branches
             """
             decoder = add([x, other], name='{}_add'.format(name_prefix))
-            decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
+            decoder = PReLU(shared_axes=[1, 2], name='{}_prelu_3'.format(name_prefix))(decoder)
+            # decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
 
         return decoder
 
@@ -1555,6 +1615,8 @@ class ENetMaxUnpooling(ModelBase):
 
         enet = Conv2DTranspose(filters=nc,
                                kernel_size=(2, 2),
+                               kernel_initializer='he_normal',
+                               bias_initializer='zeros',
                                strides=(2, 2),
                                padding='same',
                                name='logits')(enet)
@@ -1565,7 +1627,6 @@ class ENetMaxUnpooling(ModelBase):
 ##############################################
 # ENET NAIVE UPSAMPLING - ENHANCED
 ##############################################
-
 
 class ENetNaiveUpsamplingEnhanced(ModelBase):
 
@@ -1606,7 +1667,9 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
                            output,
                            name_prefix,
                            upsample=False,
-                           reverse_module=False):
+                           reverse_module=False,
+                           kernel_initializer='he_normal',
+                           bias_initializer='zeros'):
 
         internal = output / 4
 
@@ -1616,17 +1679,22 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         # 1x1 projection downwards to internal feature space
         x = Conv2D(filters=internal,
                    kernel_size=(1, 1),
+                   kernel_initializer=kernel_initializer,
+                   bias_initializer=bias_initializer,
                    use_bias=False,
                    name='{}_proj_conv2d_1'.format(name_prefix))(encoder)
 
         # ENet uses momentum of 0.1, keras default is 0.99
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_1'.format(name_prefix))(x)
-        x = Activation('relu', name='{}_relu_1'.format(name_prefix))(x)
+        x = PReLU(shared_axes=[1, 2], name='{}_prelu_1'.format(name_prefix))(x)
+        # x = Activation('relu', name='{}_relu_1'.format(name_prefix))(x)
 
         # Upsampling
         if not upsample:
             x = Conv2D(filters=internal,
                        kernel_size=(3, 3),
+                       kernel_initializer=kernel_initializer,
+                       bias_initializer=bias_initializer,
                        padding='same',
                        use_bias=True,
                        name='{}_conv2d_1'.format(name_prefix))(x)
@@ -1634,15 +1702,23 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
             # Unlike in regular ENet we will replace Conv2DTranspose with a Nearest-Neighbour
             # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
             x = UpSampling2D(size=(2, 2), name='{}_nn_rs_conv_upsample2d'.format(name_prefix))(x)
-            x = Conv2D(filters=internal, kernel_size=(3, 3), padding='same', name='{}_nn_rs_conv_conv2d'.format(name_prefix))(x)
+            x = Conv2D(filters=internal,
+                       kernel_size=(3, 3),
+                       kernel_initializer=kernel_initializer,
+                       bias_initializer=bias_initializer,
+                       padding='same',
+                       name='{}_nn_rs_conv_conv2d'.format(name_prefix))(x)
 
         # ENet uses momentum of 0.1 keras default is 0.99
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_2'.format(name_prefix))(x)
-        x = Activation('relu', name='{}_relu_2'.format(name_prefix))(x)
+        x = PReLU(shared_axes=[1, 2], name='{}_prelu_2'.format(name_prefix))(x)
+        # x = Activation('relu', name='{}_relu_2'.format(name_prefix))(x)
 
         # 1x1 projection upwards from internal to output feature space
         x = Conv2D(filters=output,
                    kernel_size=(1, 1),
+                   kernel_initializer=kernel_initializer,
+                   bias_initializer=bias_initializer,
                    padding='same',
                    use_bias=False,
                    name='{}_proj_conv2d_2'.format((name_prefix)))(x)
@@ -1655,6 +1731,8 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         if encoder.get_shape()[-1] != output or upsample:
             other = Conv2D(filters=output,
                            kernel_size=(1, 1),
+                           kernel_initializer=kernel_initializer,
+                           bias_initializer=bias_initializer,
                            padding='same',
                            use_bias=False,
                            name='{}_other_conv2d'.format(name_prefix))(other)
@@ -1673,7 +1751,8 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
             Merge branches
             """
             decoder = add([x, other], name='{}_add'.format(name_prefix))
-            decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
+            decoder = PReLU(shared_axes=[1, 2], name='{}_prelu_3'.format(name_prefix))(decoder)
+            # decoder = Activation('relu', name='{}_relu_3'.format(name_prefix))(decoder)
 
         return decoder
 
@@ -1688,6 +1767,11 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         # Unlike in regular ENet we will replace Conv2DTranspose with a Nearest-Neighbour
         # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
         enet = UpSampling2D(size=(2, 2), name='logits_upsample2d')(enet)
-        enet = Conv2D(filters=nc, kernel_size=(2, 2), padding='same', name='logits')(enet)
+        enet = Conv2D(filters=nc,
+                      kernel_size=(2, 2),
+                      kernel_initializer='he_normal',
+                      bias_initializer='zeros',
+                      padding='same',
+                      name='logits')(enet)
 
         return enet

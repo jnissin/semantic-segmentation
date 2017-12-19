@@ -286,6 +286,7 @@ def _weighted_pixelwise_crossentropy_loss(class_weights):
 
     return loss
 
+
 def _sparse_weighted_pixelwise_crossentropy_loss(y_true, y_pred, weights):
     """
     Calculates weighted pixelwise cross-entropy loss from sparse ground truth
@@ -300,6 +301,8 @@ def _sparse_weighted_pixelwise_crossentropy_loss(y_true, y_pred, weights):
     # Returns
         :return: The pixelwise cross-entropy loss
     """
+    #_y_pred = K.tf.div(y_pred, K.tf.norm(y_pred, axis=-1, ord='euclidean'))
+    #_y_pred = K.tf.multiply(_y_pred, 40.0)  # TODO: REMOVE L2
 
     # Returns cross-entropy loss for each pixel, i.e. B_SIZExHxW, multiply by weights
     xent = K.tf.nn.sparse_softmax_cross_entropy_with_logits(logits=y_pred, labels=y_true)
