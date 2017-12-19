@@ -14,7 +14,7 @@ class MaxPoolingWithArgmax2D(Layer):
         self.padding = padding
         self.running_on_gpu = False
 
-        if K.backend() is not 'tensorflow':
+        if K.backend() != 'tensorflow':
             raise NotImplementedError('{} backend is not supported for layer {}'.format(K.backend(), type(self).__name__))
 
         # Check whether we are running on GPU to decide which version of pooling to use
@@ -35,15 +35,15 @@ class MaxPoolingWithArgmax2D(Layer):
         padding = self.padding
         strides = self.strides
 
-        if K.backend() == 'tensorflow':
-            # tf.nn.max_pool_with_argmax works only on GPU
-            # See: https://stackoverflow.com/questions/39493229/how-to-use-tf-nn-max-pool-with-argmax-correctly
-            ksize = [1, pool_size[0], pool_size[1], 1]
-            padding = padding.upper()
-            strides = [1, strides[0], strides[1], 1]
-            output, argmax = K.tf.nn.max_pool_with_argmax(inputs, ksize=ksize, strides=strides, padding=padding)
-        else:
+        if K.backend() != 'tensorflow':
             raise NotImplementedError('{} backend is not supported for layer {}'.format(K.backend(), type(self).__name__))
+
+        # tf.nn.max_pool_with_argmax works only on GPU
+        # See: https://stackoverflow.com/questions/39493229/how-to-use-tf-nn-max-pool-with-argmax-correctly
+        ksize = [1, pool_size[0], pool_size[1], 1]
+        padding = padding.upper()
+        strides = [1, strides[0], strides[1], 1]
+        output, argmax = K.tf.nn.max_pool_with_argmax(inputs, ksize=ksize, strides=strides, padding=padding)
 
         argmax = K.cast(argmax, K.floatx())
         return [output, argmax]
