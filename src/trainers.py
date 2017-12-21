@@ -1801,7 +1801,12 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 self.logger.log('Using class weight type {}, ignore_classes: {}, weights: {}'.format(self.class_weight_type, self.ignore_classes, class_weights))
                 self._class_weights = np.array(class_weights, dtype=np.float32)
             else:
+                # If not using class weights - then use ones and zero ignored classes
                 self._class_weights = np.ones([self.num_classes], dtype=np.float32)
+
+                if self.ignore_classes is not None:
+                    for c in self.ignore_classes:
+                        self._class_weights[c] = 0.0
 
         return self._class_weights
 
@@ -2325,6 +2330,11 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 self._class_weights = class_weights
             else:
                 self._class_weights = np.ones(self.num_classes, dtype=np.float32)
+
+        # Make sure ignored classes are zeroed
+        if self.ignore_classes is not None:
+            for c in self.ignore_classes:
+                self._class_weights[c] = 0.0
 
         return self._class_weights
 

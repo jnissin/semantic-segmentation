@@ -28,7 +28,7 @@
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
-    "crop_shape": [336, 336],
+    "crop_shape": [480, 480],
     "resize_shape": [[1408, null], null, [512, null]],
     "div2_constraint": 4,
     "num_crop_reattempts": 5,
@@ -46,7 +46,7 @@
 
     "optimizer": {
       "name": "adam",
-      "learning_rate": 5e-4,
+      "learning_rate": 5e-3,
       "momentum": 0.9,
       "decay": 0.0
     },
@@ -77,7 +77,7 @@
       "superpixel_mask_cache_path": "data/final/unlabeled_fzw_masks/"
     },
 
-    "use_data_augmentation": true,
+    "use_data_augmentation": false,
     "use_material_samples": true,
     "use_selective_attention": false,
     "use_adaptive_sampling": false,
@@ -136,11 +136,11 @@
       "freeze_to_layer_index": null,
       "scale_lr_from_layer_index": 0,
       "scale_lr_to_layer_index": -1,
-      "scale_lr_factor": 0.05
+      "scale_lr_factor": 0.005
     },
 
     "stepwise_learning_rate_scheduler": {
-      "lr_schedule": "lambda x: 5e-4 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "lr_schedule": "lambda x: 5e-3 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
       "b2_schedule": "lambda x: 0.99 if x < 40000 else 0.999",
       "last_scheduled_step": 40000,
       "verbose": false

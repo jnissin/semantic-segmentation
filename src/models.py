@@ -1358,7 +1358,7 @@ class ENetMaxUnpooling(ModelBase):
                       kernel_size=(nb_row, nb_col),
                       padding='same',
                       strides=strides,
-                      name='input_block_conv2d')(inp)
+                      name='initial_block_conv2d')(inp)
 
         max_pool, indices = MaxPoolingWithArgmax2D(name='initial_block_pool2d')(inp)
         merged = concatenate([conv, max_pool], axis=3, name='initial_block_concat')
@@ -1766,9 +1766,22 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
 
         # Unlike in regular ENet we will replace Conv2DTranspose with a Nearest-Neighbour
         # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
-        enet = UpSampling2D(size=(2, 2), name='logits_upsample2d')(enet)
+        enet = UpSampling2D(size=(2, 2), name='final_nn_rs_conv_upsample2d')(enet)
         enet = Conv2D(filters=nc,
-                      kernel_size=(2, 2),
+                      kernel_size=(3, 3),
+                      kernel_initializer='he_normal',
+                      bias_initializer='zeros',
+                      padding='same',
+                      name='final_nn_rs_conv2d')(enet)
+
+        # L2 normalization
+        alpha = 40.0
+        enet = K.tf.div(enet, K.tf.norm(enet, axis=-1, ord='euclidean'))
+        enet = K.tf.multiply(enet, alpha)
+
+        # Final classification layer
+        enet = Conv2D(filters=nc,
+                      kernel_size=(1, 1),
                       kernel_initializer='he_normal',
                       bias_initializer='zeros',
                       padding='same',

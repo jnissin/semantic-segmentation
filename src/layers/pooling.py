@@ -75,7 +75,7 @@ class MaxUnpooling2D(Layer):
         Add Theano backend
         """
         pool = inputs[0]
-        ind = inputs[1]
+        ind = K.tf.cast(inputs[1], dtype=K.tf.int64)
 
         with K.tf.variable_scope(self.name):
             input_shape = K.tf.shape(pool, out_type='int64')
@@ -84,15 +84,15 @@ class MaxUnpooling2D(Layer):
             flat_input_size = K.tf.reduce_prod(input_shape)
             flat_output_shape = [output_shape[0], output_shape[1] * output_shape[2] * output_shape[3]]
 
-            pool_ = K.tf.reshape(pool, [flat_input_size])
-            batch_range = K.tf.reshape(K.tf.range(tf.cast(output_shape[0], K.tf.int64), dtype=ind.dtype), shape=[input_shape[0], 1, 1, 1])
+            pool_ = K.tf.reshape(pool, shape=K.tf.stack([flat_input_size]))
+            batch_range = K.tf.reshape(K.tf.range(K.tf.cast(output_shape[0], dtype=K.tf.int64), dtype=ind.dtype), shape=K.tf.stack([input_shape[0], 1, 1, 1]))
             b = K.tf.ones_like(ind) * batch_range
-            b1 = K.tf.reshape(b, [flat_input_size, 1])
-            ind_ = K.tf.reshape(ind, [flat_input_size, 1])
+            b1 = K.tf.reshape(b, shape=K.tf.stack([flat_input_size, 1]))
+            ind_ = K.tf.reshape(ind, shape=K.tf.stack([flat_input_size, 1]))
             ind_ = K.tf.concat([b1, ind_], 1)
 
             ret = K.tf.scatter_nd(ind_, pool_, shape=K.tf.cast(flat_output_shape, K.tf.int64))
-            ret = K.tf.reshape(ret, output_shape)
+            ret = K.tf.reshape(ret, shape=K.tf.stack(output_shape))
 
             set_input_shape = pool.get_shape()
             set_output_shape = [set_input_shape[0],
