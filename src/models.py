@@ -1628,6 +1628,13 @@ class ENetMaxUnpooling(ModelBase):
 # ENET NAIVE UPSAMPLING - ENHANCED
 ##############################################
 
+def l2_normalization(x):
+    alpha = 40.0
+    x = K.tf.div(x, K.tf.norm(x, axis=-1, ord='euclidean'))
+    x = K.tf.multiply(x, alpha)
+    return x
+
+
 class ENetNaiveUpsamplingEnhanced(ModelBase):
 
     def __init__(self,
@@ -1775,9 +1782,7 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
                       name='final_nn_rs_conv2d')(enet)
 
         # L2 normalization
-        alpha = 40.0
-        enet = K.tf.div(enet, K.tf.norm(enet, axis=-1, ord='euclidean'))
-        enet = K.tf.multiply(enet, alpha)
+        enet = Lambda(l2_normalization)(enet)
 
         # Final classification layer
         enet = Conv2D(filters=nc,
