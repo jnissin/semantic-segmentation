@@ -1630,7 +1630,7 @@ class ENetMaxUnpooling(ModelBase):
 
 def l2_normalization(x):
     alpha = 40.0
-    x = K.tf.div(x, K.tf.norm(x, axis=-1, ord='euclidean'))
+    x = K.tf.div(x, K.tf.norm(x, axis=-1, ord='euclidean', keep_dims=True))
     x = K.tf.multiply(x, alpha)
     return x
 
