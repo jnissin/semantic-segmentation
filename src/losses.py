@@ -307,7 +307,8 @@ def _sparse_weighted_pixelwise_crossentropy_loss(y_true, y_pred, weights):
     xent = K.tf.multiply(xent, weights)
 
     # Calculate the sum of pixel cross-entropies (HxW) for each image and take the mean of images in the batch
-    loss = K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2)))
+    #loss = K.tf.reduce_mean(K.tf.reduce_sum(xent, axis=(1, 2)))
+    loss = K.tf.reduce_mean(xent)
 
     return loss
 

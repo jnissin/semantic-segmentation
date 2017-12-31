@@ -5,7 +5,6 @@ import random
 import ctypes
 import multiprocessing
 import traceback
-import os
 
 from multiprocessing import Array
 

@@ -1779,17 +1779,17 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
                       kernel_initializer='he_normal',
                       bias_initializer='zeros',
                       padding='same',
-                      name='final_nn_rs_conv2d')(enet)
-
-        # L2 normalization
-        enet = Lambda(l2_normalization)(enet)
-
-        # Final classification layer
-        enet = Conv2D(filters=nc,
-                      kernel_size=(1, 1),
-                      kernel_initializer='he_normal',
-                      bias_initializer='zeros',
-                      padding='same',
                       name='logits')(enet)
+
+#        # L2 normalization
+#        enet = Lambda(l2_normalization)(enet)
+
+#        # Final classification layer
+#        enet = Conv2D(filters=nc,
+#                      kernel_size=(1, 1),
+#                      kernel_initializer='he_normal',
+#                      bias_initializer='zeros',
+#                      padding='same',
+#                      name='logits')(enet)
 
         return enet
