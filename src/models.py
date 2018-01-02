@@ -116,6 +116,12 @@ def get_model(model_name,
             num_classes=num_classes,
             model_lambda_loss_type=model_lambda_loss_type,
             encoder_only=False)
+    elif model_name == 'enet-naive-upsampling-enhanced-encoder-only':
+        model_wrapper = ENetNaiveUpsamplingEnhanced(
+            input_shape=input_shape,
+            num_classes=num_classes,
+            model_lambda_loss_type=model_lambda_loss_type,
+            encoder_only=True)
     else:
         raise ValueError('Unknown model name: {}'.format(model_name))
 
@@ -1660,7 +1666,6 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
             # use average pooling with a pool size of the previous layer's spatial
             # dimension
             pool_size = K.int_shape(enet)[1:3]
-
             enet = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(enet)
             enet = Flatten(name='flatten')(enet)
             enet = Dense(self.num_classes, name='logits')(enet)
@@ -1775,21 +1780,30 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
         enet = UpSampling2D(size=(2, 2), name='final_nn_rs_conv_upsample2d')(enet)
         enet = Conv2D(filters=nc,
-                      kernel_size=(5, 5),
+                      kernel_size=(3, 3),
+                      kernel_initializer='he_normal',
+                      bias_initializer='zeros',
+                      padding='same',
+                      name='final_nn_rs_conv_conv2d')(enet)
+        enet = BatchNormalization(momentum=0.1, name='final_nn_rs_conv_bnorm')(enet)
+        enet = PReLU(shared_axes=[1, 2], name='final_nn_rs_conv_prelu')(enet)
+
+        enet = Conv2D(filters=nc,
+                      kernel_size=(1, 1),
                       kernel_initializer='he_normal',
                       bias_initializer='zeros',
                       padding='same',
                       name='logits')(enet)
 
-#        # L2 normalization
-#        enet = Lambda(l2_normalization)(enet)
+        # L2 normalization
+        #enet = Lambda(l2_normalization)(enet)
 
-#        # Final classification layer
-#        enet = Conv2D(filters=nc,
-#                      kernel_size=(1, 1),
-#                      kernel_initializer='he_normal',
-#                      bias_initializer='zeros',
-#                      padding='same',
-#                      name='logits')(enet)
+        # Final classification layer
+        #enet = Conv2D(filters=nc,
+        #              kernel_size=(1, 1),
+        #              kernel_initializer='he_normal',
+        #              bias_initializer='zeros',
+        #              padding='same',
+        #              name='logits')(enet)
 
         return enet
