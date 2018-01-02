@@ -1775,7 +1775,7 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
         enet = UpSampling2D(size=(2, 2), name='final_nn_rs_conv_upsample2d')(enet)
         enet = Conv2D(filters=nc,
-                      kernel_size=(3, 3),
+                      kernel_size=(5, 5),
                       kernel_initializer='he_normal',
                       bias_initializer='zeros',
                       padding='same',
