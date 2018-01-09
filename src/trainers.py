@@ -595,11 +595,15 @@ class TrainerBase:
     @property
     def num_labeled_per_batch(self):
         # type: () -> int
+        if settings.OVERRIDE_BATCH_SIZE:
+            return settings.OVERRIDE_NUM_LABELED_PER_BATCH
         return int(self._get_config_value('num_labeled_per_batch'))
 
     @property
     def num_unlabeled_per_batch(self):
         # type: () -> int
+        if settings.OVERRIDE_BATCH_SIZE:
+            return settings.OVERRIDE_NUM_UNLABELED_PER_BATCH
         return int(self._get_config_value('num_unlabeled_per_batch'))
 
     @property
@@ -615,6 +619,8 @@ class TrainerBase:
     @property
     def validation_num_labeled_per_batch(self):
         # type: () -> int
+        if settings.OVERRIDE_BATCH_SIZE:
+            return settings.OVERRIDE_NUM_LABELED_PER_BATCH
         return int(self._get_config_value('validation_num_labeled_per_batch'))
 
     @property
@@ -1533,10 +1539,15 @@ class MeanTeacherTrainerBase(TrainerBase):
                 val_outs_str = ""
 
                 for i in range(0, len(val_outs)):
-                    val_outs_str = val_outs_str + "val_{}: {}, ".format(metrics_names[i], val_outs[i])
+                    if 'cfm' in metrics_names[i]:
+                        self.teacher_model.write_cfm_to_file(epoch=epoch_index,
+                                                             cfm_key='teacher_'+metrics_names[i],
+                                                             cfm=val_outs[i])
+                    else:
+                        val_outs_str = val_outs_str + "val_{}: {}, ".format(metrics_names[i], val_outs[i])
 
-                    if metrics_names[i] == 'loss':
-                        val_loss = val_outs[i]
+                        if metrics_names[i] == 'loss':
+                            val_loss = val_outs[i]
 
                 val_outs_str = val_outs_str[0:-2]
 
@@ -1731,6 +1742,9 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         if num_unlabeled_per_batch > 0 and self.is_supervised_only_trainer:
             self.logger.warn('Trainer type is marked as {} with unlabeled per batch {} - assuming 0 unlabeled per batch'.format(self.trainer_type, num_unlabeled_per_batch))
             return 0
+
+        if settings.OVERRIDE_BATCH_SIZE:
+            return settings.OVERRIDE_NUM_LABELED_PER_BATCH
 
         return num_unlabeled_per_batch
 
@@ -2196,9 +2210,12 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         return {'loss': 1., 'logits': 0.}
 
     def _get_model_metrics(self):
-        return {'logits': [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                           metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                           metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]}
+        return {
+            'loss':   [],
+            'logits': [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                       metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                       metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                       metrics.segmentation_confusion_matrix(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]}
 
     def _get_teacher_model_lambda_loss_type(self):
         return ModelLambdaLossType.NONE
@@ -2209,7 +2226,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     def _get_teacher_model_metrics(self):
         return [metrics.segmentation_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
                 metrics.segmentation_mean_iou(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]
+                metrics.segmentation_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                metrics.segmentation_confusion_matrix(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]
 
     def _get_superpixel_extra_batch_data(self, batch_size, step_index, validation):
         if not self.using_superpixel_method:
@@ -2408,6 +2426,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             self.logger.warn('Trainer type is marked as {} with unlabeled per batch {} - assuming 0 unlabeled per batch'.format(self.trainer_type, num_unlabeled_per_batch))
             return 0
 
+        if settings.OVERRIDE_BATCH_SIZE:
+            return settings.OVERRIDE_NUM_UNLABELED_PER_BATCH
+
         return num_unlabeled_per_batch
 
     def _get_data_sets(self):
@@ -2557,8 +2578,11 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             raise ValueError('Unsupported trainer type for ClassificationTrainer - cannot deduce lambda loss type')
 
     def _get_model_metrics(self):
-        return {'logits': [metrics.classification_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                           metrics.classification_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]}
+        return {
+            'loss':   [],
+            'logits': [metrics.classification_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                       metrics.classification_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                       metrics.classification_confusion_matrix(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]}
 
     def _get_model_loss(self):
         # type: () -> dict[str, Callable]
@@ -2605,7 +2629,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
     def _get_teacher_model_metrics(self):
         # type: () -> list[Callable]
         return [metrics.classification_accuracy(self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
-                metrics.classification_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]
+                metrics.classification_mean_per_class_accuracy(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes),
+                metrics.classification_confusion_matrix(self.num_classes, self.num_unlabeled_per_batch, ignore_classes=self.ignore_classes)]
 
     # End of: MeanTeacherBase implementations
 

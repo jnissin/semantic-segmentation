@@ -2,6 +2,7 @@
 
 import keras.backend as K
 
+_CFM_DTYPE = K.tf.int64
 
 def _get_ignore_mask(labels, ignore_classes):
     """
@@ -91,6 +92,26 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
 
     return acc
 
+
+def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=None):
+    def cfm(y_true, y_pred):
+        K.tf.assert_rank(y_true, 2)  # BxC (one-hot encoded)
+        K.tf.assert_rank(y_pred, 2)  # BxC (class probabilities)
+
+        if ignore_classes is not None and len(ignore_classes) > 0:
+            _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
+        else:
+            _ignore_classes = K.tf.constant([-1], dtype=K.tf.int32)
+
+        num_labeled = K.in_train_phase(K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32), K.tf.shape(y_true)[0])
+        labels = K.tf.cast(K.tf.argmax(y_true[0:num_labeled], axis=-1), dtype=K.tf.int32)
+        predictions = K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32)
+        mask_weights = K.tf.cast(K.tf.logical_not(_get_ignore_mask(labels, _ignore_classes)), dtype=K.tf.float32)
+
+        confusion_matrix = K.tf.confusion_matrix(labels=labels, predictions=predictions, num_classes=num_classes, weights=mask_weights, dtype=_CFM_DTYPE)
+        return confusion_matrix
+
+    return cfm
 
 ##############################################
 # SEGMENTATION METRICS
@@ -238,3 +259,27 @@ def segmentation_accuracy(num_unlabeled, ignore_classes=None):
 
     return acc
 
+
+def segmentation_confusion_matrix(num_classes, num_unlabeled, ignore_classes=None):
+    def cfm(y_true, y_pred):
+        K.tf.assert_rank(y_true, 4)  # BxHxWx1
+        K.tf.assert_rank(y_pred, 4)  # BxHxWxC
+
+        if ignore_classes is not None and len(ignore_classes) > 0:
+            _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
+        else:
+            _ignore_classes = K.tf.constant([-1], dtype=K.tf.int32)
+
+        # Assumes that in evaluation/validation there are no unlabeled
+        num_labeled = K.in_train_phase(K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32),
+                                       K.tf.shape(y_true)[0])
+
+        labels = K.tf.cast(K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1)), dtype=K.tf.int32)
+        predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32))
+        ignore_mask = _get_ignore_mask(labels, _ignore_classes)
+        weights = K.tf.cast(K.tf.logical_not(ignore_mask), dtype=K.tf.float32)
+
+        confusion_matrix = K.tf.confusion_matrix(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights, dtype=_CFM_DTYPE)
+        return confusion_matrix
+
+    return cfm

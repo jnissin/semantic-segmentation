@@ -1,6 +1,7 @@
 # coding=utf-8
 
 import time
+import os
 
 try:
     import queue
@@ -17,12 +18,16 @@ from keras.engine.training import _standardize_input_data
 from keras import backend as K
 from keras import callbacks as cbks
 from keras.legacy import interfaces
+from keras import optimizers
+from keras import losses
+from keras import metrics as metrics_module
+
+from keras.engine.training import _collect_metrics, _weighted_masked_objective
 
 from utils.data_utils import Sequence
 from utils.data_utils import OrderedEnqueuer
 
 from ..logger import Logger
-
 
 #########################################
 # UTILITIES
@@ -105,6 +110,25 @@ class ExtendedModel(Model):
         self.validation_enqueuer = enqueuer
         self._validation_enqueuer_pre_created = enqueuer is not None
 
+    def write_cfm_to_file(self, epoch, cfm_key, cfm, file_path=None):
+        # type: (int, str, np.ndarray, str) -> None
+
+        # If no file path - log to same folder as other logs
+        if file_path is None:
+            if self.logger.log_folder_path is None:
+                self.logger.warn('Cannot write CFMs to file, logger has not log_folder_path')
+                return
+
+            _file_path = os.path.join(self.logger.log_folder_path, '{}_{}.txt'.format(cfm_key, epoch))
+        else:
+            _file_path = file_path
+
+        try:
+            self.logger.log('Writing epoch {} confusion matrix {} to file: {}'.format(epoch, cfm_key, _file_path))
+            np.savetxt(_file_path, X=cfm)
+        except Exception as e:
+            self.logger.warn('Failed to write CFM metrics to file, exception: {}'.format(e.message))
+
     @staticmethod
     def pre_create_training_enqueuer(generator,
                                      use_multiprocessing,
@@ -177,6 +201,389 @@ class ExtendedModel(Model):
             raise e
 
         return validation_enqueuer
+
+    def compile(self, optimizer, loss, metrics=None, loss_weights=None,
+                sample_weight_mode=None, weighted_metrics=None,
+                target_tensors=None, **kwargs):
+        """Configures the model for training.
+
+        # Arguments
+            optimizer: String (name of optimizer) or optimizer object.
+                See [optimizers](/optimizers).
+            loss: String (name of objective function) or objective function.
+                See [losses](/losses).
+                If the model has multiple outputs, you can use a different loss
+                on each output by passing a dictionary or a list of losses.
+                The loss value that will be minimized by the model
+                will then be the sum of all individual losses.
+            metrics: List of metrics to be evaluated by the model
+                during training and testing.
+                Typically you will use `metrics=['accuracy']`.
+                To specify different metrics for different outputs of a
+                multi-output model, you could also pass a dictionary,
+                such as `metrics={'output_a': 'accuracy'}`.
+            loss_weights: Optional list or dictionary specifying scalar
+                coefficients (Python floats) to weight the loss contributions
+                of different model outputs.
+                The loss value that will be minimized by the model
+                will then be the *weighted sum* of all individual losses,
+                weighted by the `loss_weights` coefficients.
+                If a list, it is expected to have a 1:1 mapping
+                to the model's outputs. If a tensor, it is expected to map
+                output names (strings) to scalar coefficients.
+            sample_weight_mode: If you need to do timestep-wise
+                sample weighting (2D weights), set this to `"temporal"`.
+                `None` defaults to sample-wise weights (1D).
+                If the model has multiple outputs, you can use a different
+                `sample_weight_mode` on each output by passing a
+                dictionary or a list of modes.
+            weighted_metrics: List of metrics to be evaluated and weighted
+                by sample_weight or class_weight during training and testing.
+            target_tensors: By default, Keras will create placeholders for the
+                model's target, which will be fed with the target data during
+                training. If instead you would like to use your own
+                target tensors (in turn, Keras will not expect external
+                Numpy data for these targets at training time), you
+                can specify them via the `target_tensors` argument. It can be
+                a single tensor (for a single-output model), a list of tensors,
+                or a dict mapping output names to target tensors.
+            **kwargs: When using the Theano/CNTK backends, these arguments
+                are passed into K.function. When using the TensorFlow backend,
+                these arguments are passed into `tf.Session.run`.
+
+        # Raises
+            ValueError: In case of invalid arguments for
+                `optimizer`, `loss`, `metrics` or `sample_weight_mode`.
+        """
+        loss = loss or {}
+        self.optimizer = optimizers.get(optimizer)
+        self.sample_weight_mode = sample_weight_mode
+        self.loss = loss
+        self.loss_weights = loss_weights
+
+        # Prepare loss functions.
+        if isinstance(loss, dict):
+            for name in loss:
+                if name not in self.output_names:
+                    raise ValueError('Unknown entry in loss '
+                                     'dictionary: "' + name + '". '
+                                     'Only expected the following keys: ' +
+                                     str(self.output_names))
+            loss_functions = []
+            for name in self.output_names:
+                if name not in loss:
+                    warnings.warn('Output "' + name +
+                                  '" missing from loss dictionary. '
+                                  'We assume this was done on purpose, '
+                                  'and we will not be expecting '
+                                  'any data to be passed to "' + name +
+                                  '" during training.', stacklevel=2)
+                loss_functions.append(losses.get(loss.get(name)))
+        elif isinstance(loss, list):
+            if len(loss) != len(self.outputs):
+                raise ValueError('When passing a list as loss, '
+                                 'it should have one entry per model outputs. '
+                                 'The model has ' + str(len(self.outputs)) +
+                                 ' outputs, but you passed loss=' +
+                                 str(loss))
+            loss_functions = [losses.get(l) for l in loss]
+        else:
+            loss_function = losses.get(loss)
+            loss_functions = [loss_function for _ in range(len(self.outputs))]
+        self.loss_functions = loss_functions
+        weighted_losses = [_weighted_masked_objective(fn) for fn in loss_functions]
+        skip_target_indices = []
+        skip_target_weighing_indices = []
+        self._feed_outputs = []
+        self._feed_output_names = []
+        self._feed_output_shapes = []
+        self._feed_loss_fns = []
+        for i in range(len(weighted_losses)):
+            if weighted_losses[i] is None:
+                skip_target_indices.append(i)
+                skip_target_weighing_indices.append(i)
+
+        # Prepare output masks.
+        masks = self.compute_mask(self.inputs, mask=None)
+        if masks is None:
+            masks = [None for _ in self.outputs]
+        if not isinstance(masks, list):
+            masks = [masks]
+
+        # Prepare loss weights.
+        if loss_weights is None:
+            loss_weights_list = [1. for _ in range(len(self.outputs))]
+        elif isinstance(loss_weights, dict):
+            for name in loss_weights:
+                if name not in self.output_names:
+                    raise ValueError('Unknown entry in loss_weights '
+                                     'dictionary: "' + name + '". '
+                                     'Only expected the following keys: ' +
+                                     str(self.output_names))
+            loss_weights_list = []
+            for name in self.output_names:
+                loss_weights_list.append(loss_weights.get(name, 1.))
+        elif isinstance(loss_weights, list):
+            if len(loss_weights) != len(self.outputs):
+                raise ValueError('When passing a list as loss_weights, '
+                                 'it should have one entry per model outputs. '
+                                 'The model has ' + str(len(self.outputs)) +
+                                 ' outputs, but you passed loss_weights=' +
+                                 str(loss_weights))
+            loss_weights_list = loss_weights
+        else:
+            raise TypeError('Could not interpret loss_weights argument: ' +
+                            str(loss_weights) +
+                            ' - expected a list of dicts.')
+
+        # Prepare targets of model.
+        self.targets = []
+        self._feed_targets = []
+        if target_tensors is not None:
+            if isinstance(target_tensors, list):
+                if len(target_tensors) != len(self.outputs):
+                    raise ValueError(
+                        'When passing a list as `target_tensors`, '
+                        'it should have one entry per model outputs. '
+                        'The model has ' + str(len(self.outputs)) +
+                        ' outputs, but you passed target_tensors=' +
+                        str(target_tensors))
+            elif isinstance(target_tensors, dict):
+                for name in target_tensors:
+                    if name not in self.output_names:
+                        raise ValueError('Unknown entry in `target_tensors` '
+                                         'dictionary: "' + name + '". '
+                                         'Only expected the following keys: ' +
+                                         str(self.output_names))
+                _target_tensors = []
+                for name in self.output_names:
+                    _target_tensors.append(target_tensors.get(name, None))
+                target_tensors = _target_tensors
+            else:
+                raise TypeError('Expected `target_tensors` to be '
+                                'a list or dict, but got:', target_tensors)
+        for i in range(len(self.outputs)):
+            if i in skip_target_indices:
+                self.targets.append(None)
+            else:
+                shape = self.internal_output_shapes[i]
+                name = self.output_names[i]
+                if target_tensors is not None:
+                    target = target_tensors[i]
+                else:
+                    target = None
+                if target is None or K.is_placeholder(target):
+                    if target is None:
+                        target = K.placeholder(ndim=len(shape),
+                                               name=name + '_target',
+                                               sparse=K.is_sparse(self.outputs[i]),
+                                               dtype=K.dtype(self.outputs[i]))
+                    self._feed_targets.append(target)
+                    self._feed_outputs.append(self.outputs[i])
+                    self._feed_output_names.append(name)
+                    self._feed_output_shapes.append(shape)
+                    self._feed_loss_fns.append(self.loss_functions[i])
+                else:
+                    skip_target_weighing_indices.append(i)
+                self.targets.append(target)
+
+        # Prepare sample weights.
+        sample_weights = []
+        sample_weight_modes = []
+        if isinstance(sample_weight_mode, dict):
+            for name in sample_weight_mode:
+                if name not in self.output_names:
+                    raise ValueError('Unknown entry in '
+                                     'sample_weight_mode dictionary: "' +
+                                     name + '". '
+                                     'Only expected the following keys: ' +
+                                     str(self.output_names))
+            for i, name in enumerate(self.output_names):
+                if i in skip_target_weighing_indices:
+                    weight = None
+                    sample_weight_modes.append(None)
+                else:
+                    if name not in sample_weight_mode:
+                        raise ValueError('Output "' + name +
+                                         '" missing from sample_weight_modes '
+                                         'dictionary')
+                    if sample_weight_mode.get(name) == 'temporal':
+                        weight = K.placeholder(ndim=2,
+                                               name=name + '_sample_weights')
+                        sample_weight_modes.append('temporal')
+                    else:
+                        weight = K.placeholder(ndim=1,
+                                               name=name + '_sample_weights')
+                        sample_weight_modes.append(None)
+                sample_weights.append(weight)
+        elif isinstance(sample_weight_mode, list):
+            if len(sample_weight_mode) != len(self.outputs):
+                raise ValueError('When passing a list as sample_weight_mode, '
+                                 'it should have one entry per model outputs. '
+                                 'The model has ' + str(len(self.outputs)) +
+                                 ' outputs, but you passed '
+                                 'sample_weight_mode=' +
+                                 str(sample_weight_mode))
+            for i in range(len(self.output_names)):
+                if i in skip_target_weighing_indices:
+                    weight = None
+                    sample_weight_modes.append(None)
+                else:
+                    mode = sample_weight_mode[i]
+                    name = self.output_names[i]
+                    if mode == 'temporal':
+                        weight = K.placeholder(ndim=2,
+                                               name=name + '_sample_weights')
+                        sample_weight_modes.append('temporal')
+                    else:
+                        weight = K.placeholder(ndim=1,
+                                               name=name + '_sample_weights')
+                        sample_weight_modes.append(None)
+                sample_weights.append(weight)
+        else:
+            for i, name in enumerate(self.output_names):
+                if i in skip_target_weighing_indices:
+                    sample_weight_modes.append(None)
+                    sample_weights.append(None)
+                else:
+                    if sample_weight_mode == 'temporal':
+                        sample_weights.append(
+                            K.placeholder(ndim=2,
+                                          name=name + '_sample_weights'))
+                        sample_weight_modes.append('temporal')
+                    else:
+                        sample_weights.append(
+                            K.placeholder(ndim=1,
+                                          name=name + '_sample_weights'))
+                        sample_weight_modes.append(None)
+        self.sample_weight_modes = sample_weight_modes
+        self._feed_sample_weight_modes = []
+        for i in range(len(self.outputs)):
+            if i not in skip_target_weighing_indices:
+                self._feed_sample_weight_modes.append(self.sample_weight_modes[i])
+
+        # Prepare metrics.
+        self.metrics = metrics
+        self.weighted_metrics = weighted_metrics
+        self.metrics_names = ['loss']
+        self.metrics_tensors = []
+
+        # Compute total loss.
+        total_loss = None
+        with K.name_scope('loss'):
+            for i in range(len(self.outputs)):
+                if i in skip_target_indices:
+                    continue
+                y_true = self.targets[i]
+                y_pred = self.outputs[i]
+                weighted_loss = weighted_losses[i]
+                sample_weight = sample_weights[i]
+                mask = masks[i]
+                loss_weight = loss_weights_list[i]
+                with K.name_scope(self.output_names[i] + '_loss'):
+                    output_loss = weighted_loss(y_true, y_pred,
+                                                sample_weight, mask)
+                if len(self.outputs) > 1:
+                    self.metrics_tensors.append(output_loss)
+                    self.metrics_names.append(self.output_names[i] + '_loss')
+                if total_loss is None:
+                    total_loss = loss_weight * output_loss
+                else:
+                    total_loss += loss_weight * output_loss
+            if total_loss is None:
+                if not self.losses:
+                    raise ValueError('The model cannot be compiled '
+                                     'because it has no loss to optimize.')
+                else:
+                    total_loss = 0.
+
+            # Add regularization penalties
+            # and other layer-specific losses.
+            for loss_tensor in self.losses:
+                total_loss += loss_tensor
+
+        # List of same size as output_names.
+        # contains tuples (metrics for output, names of metrics).
+        nested_metrics = _collect_metrics(metrics, self.output_names)
+        nested_weighted_metrics = _collect_metrics(weighted_metrics, self.output_names)
+
+        def append_metric(layer_index, metric_name, metric_tensor):
+            """Helper function used in loop below."""
+            if len(self.output_names) > 1:
+                metric_name = self.output_names[layer_index] + '_' + metric_name
+            self.metrics_names.append(metric_name)
+            self.metrics_tensors.append(metric_tensor)
+
+        with K.name_scope('metrics'):
+            for i in range(len(self.outputs)):
+                if i in skip_target_indices:
+                    continue
+
+                y_true = self.targets[i]
+                y_pred = self.outputs[i]
+                weights = sample_weights[i]
+                output_metrics = nested_metrics[i]
+                output_weighted_metrics = nested_weighted_metrics[i]
+
+                def handle_metrics(metrics, weights=None):
+                    metric_name_prefix = 'weighted_' if weights is not None else ''
+
+                    for metric in metrics:
+                        if metric == 'accuracy' or metric == 'acc':
+                            # custom handling of accuracy
+                            # (because of class mode duality)
+                            output_shape = self.internal_output_shapes[i]
+                            if (output_shape[-1] == 1 or
+                               self.loss_functions[i] == losses.binary_crossentropy):
+                                # case: binary accuracy
+                                acc_fn = metrics_module.binary_accuracy
+                            elif self.loss_functions[i] == losses.sparse_categorical_crossentropy:
+                                # case: categorical accuracy with sparse targets
+                                acc_fn = metrics_module.sparse_categorical_accuracy
+                            else:
+                                acc_fn = metrics_module.categorical_accuracy
+
+                            weighted_metric_fn = _weighted_masked_objective(acc_fn)
+                            metric_name = metric_name_prefix + 'acc'
+                        # Added special case for CFMs
+                        elif metrics_module.get(metric).__name__ == 'cfm':
+                            metric_fn = metrics_module.get(metric)
+                            weighted_metric_fn = lambda y_true, y_pred, weights, mask: metric_fn(y_true, y_pred)
+                            metric_name = metric_name_prefix + metric_fn.__name__
+                        else:
+                            metric_fn = metrics_module.get(metric)
+                            weighted_metric_fn = _weighted_masked_objective(metric_fn)
+                            metric_name = metric_name_prefix + metric_fn.__name__
+
+                        with K.name_scope(metric_name):
+                            metric_result = weighted_metric_fn(y_true, y_pred,
+                                                               weights=weights,
+                                                               mask=masks[i])
+                        append_metric(i, metric_name, metric_result)
+
+                handle_metrics(output_metrics)
+                handle_metrics(output_weighted_metrics, weights=weights)
+
+        # Prepare gradient updates and state updates.
+        self.total_loss = total_loss
+        self.sample_weights = sample_weights
+        self._feed_sample_weights = []
+        for i in range(len(self.sample_weights)):
+            if i not in skip_target_weighing_indices:
+                self._feed_sample_weights.append(sample_weights[i])
+
+        # Functions for train, test and predict will
+        # be compiled lazily when required.
+        # This saves time when the user is not using all functions.
+        self._function_kwargs = kwargs
+
+        self.train_function = None
+        self.test_function = None
+        self.predict_function = None
+
+        # Collected trainable weights, sorted in topological order.
+        trainable_weights = self.trainable_weights
+        self._collected_trainable_weights = trainable_weights
 
     def predict_on_batch(self, x, use_training_phase_layers=False):
         """Returns predictions for a single batch of samples.
@@ -328,10 +735,12 @@ class ExtendedModel(Model):
         # Prepare display labels.
         out_labels = self._get_deduped_metrics_names()
         callback_metrics = out_labels + ['val_' + n for n in out_labels]
+        using_cfm_metric = 'logits_cfm' in out_labels or 'cfm' in out_labels
 
         # prepare callbacks
         self.history = cbks.History()
-        callbacks = [cbks.BaseLogger()] + (callbacks or []) + [self.history]
+        baselogger = cbks.BaseLogger()
+        callbacks = [baselogger] + (callbacks or []) + [self.history]
         if verbose:
             callbacks += [cbks.ProgbarLogger(count_mode='steps')]
         callbacks = cbks.CallbackList(callbacks)
@@ -487,7 +896,6 @@ class ExtendedModel(Model):
 
                     # Epoch finished.
                     if steps_done >= steps_per_epoch and do_validation:
-
                         self.logger.log('Epoch {} training took: {} s'.format(epoch, time.time()-epoch_s_time))
 
                         if val_gen:
@@ -518,11 +926,44 @@ class ExtendedModel(Model):
                         for l, o in zip(out_labels, val_outs):
                             epoch_logs['val_' + l] = o
 
-                callbacks.on_epoch_end(epoch, epoch_logs)
+                # Filter CFM logs
+                filtered_epoch_logs = {}
+
+                if using_cfm_metric:
+                    folder_path = self.logger.log_folder_path
+
+                    # Prune CFM information from the training logs of BaseLogger callback
+                    prune = []
+                    for key in baselogger.totals.keys():
+                        if 'cfm' in key:
+                            prune.append(key)
+
+                    # Write the training CFMs to file and prune the keys from epoch logs
+                    for key in prune:
+                        cfm = np.array(baselogger.totals[key], dtype=np.float64) / np.array(baselogger.seen, dtype=np.float64)
+
+                        if key in baselogger.totals:
+                            del baselogger.totals[key]
+
+                        self.write_cfm_to_file(epoch, cfm_key=key, cfm=cfm)
+
+                    # Write the validation CFMs to file
+                    if folder_path is None:
+                        self.logger.warn('Cannot log CFM metrics, log folder path is None')
+                    else:
+                        for key, value in epoch_logs.items():
+                            if 'cfm' not in key:
+                                filtered_epoch_logs[key] = value
+                            else:
+                                self.write_cfm_to_file(epoch, cfm_key=key, cfm=value)
+                else:
+                    filtered_epoch_logs = epoch_logs
+
+                callbacks.on_epoch_end(epoch, filtered_epoch_logs)
 
                 # Extended functionality: notify trainer
                 if trainer is not None:
-                    trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, epoch_logs)
+                    trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, filtered_epoch_logs)
 
                 epoch += 1
                 self.logger.log('Epoch {} took in total: {} s'.format(epoch-1, time.time()-epoch_s_time))
@@ -684,7 +1125,14 @@ class ExtendedModel(Model):
                               weights=batch_sizes)
         else:
             averages = []
+
             for i in range(len(outs)):
-                averages.append(np.average([out[i] for out in all_outs],
-                                           weights=batch_sizes))
+                per_batch_metrics = np.array([out[i] for out in all_outs])
+
+                # If the ndim is more than two e.g. in CFMs calculate the sum and append to the output metrics
+                if per_batch_metrics.ndim < 2:
+                    averages.append(np.average(per_batch_metrics, weights=batch_sizes))
+                else:
+                    averages.append(np.sum(per_batch_metrics, axis=0))
+
             return averages
