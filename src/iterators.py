@@ -180,7 +180,7 @@ class BatchIndexBuffer(object):
 
         current_sample_index = (b_idx * self.batch_size) % self.n
 
-        if self.n > b_idx + self.batch_size:
+        if self.n > current_sample_index + self.batch_size:
             samples_in_batch = self.batch_size
             is_last_batch = False
         else:
@@ -581,7 +581,9 @@ class BasicDataSetIterator(DataSetIterator):
                 unlabeled_batch = None
 
             # Use the data generator to generate the data
-            #self.logger.log('e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}, num labeled: {}'.format(e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch, len(labeled_batch)))
+            #import os
+            #self.logger.debug_log('Getting data batch from data generator: {}, e_idx: {}, b_idx: {}, g_idx: {}, pid: {}, labeled: {}, ul: {}, num labeled: {}'.format(self.data_generator.name, e_idx, b_idx, g_idx, os.getpid(), labeled_batch, unlabeled_batch, len(labeled_batch)))
+            #self.logger.debug_log('Labeled index buffer: {}'.format(self._labeled_batch_index_buffer._get_index_array_for_epoch(e_idx=e_idx)))
             return self.data_generator.get_data_batch(step_idx=g_idx,
                                                       labeled_batch=labeled_batch,
                                                       unlabeled_batch=unlabeled_batch)

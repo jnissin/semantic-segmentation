@@ -1851,6 +1851,10 @@ class MINCDataSet(object):
             self.data_set_type = MINCDataSetType.MINC
             for line in lines:
                 line = line.strip()
+
+                if line == "":
+                    continue
+
                 # Each line of the file is: 4-tuple list of (label,photo_id,x,y)
                 minc_label, photo_id, x, y = line.split(',')
                 samples.append(MINCSample(minc_label=int(minc_label), photo_id=photo_id.strip(), x=float(x), y=float(y)))
@@ -1859,6 +1863,10 @@ class MINCDataSet(object):
 
             for line in lines:
                 line = line.strip()
+
+                if line == "":
+                    continue
+
                 file_name = line.split('/')[-1]
                 class_name = file_name.split('_')[0]
                 minc_label = minc_class_to_minc_label[class_name]
