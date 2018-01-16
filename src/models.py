@@ -9,7 +9,7 @@ from keras.layers.advanced_activations import LeakyReLU
 from keras.layers import Lambda
 from keras.layers.advanced_activations import PReLU
 from keras.layers.core import SpatialDropout2D, Permute
-from keras.layers.pooling import MaxPooling2D, AveragePooling2D
+from keras.layers.pooling import MaxPooling2D, AveragePooling2D, GlobalAveragePooling2D
 from keras.layers.convolutional import Conv2D, ZeroPadding2D, Conv2DTranspose, UpSampling2D
 from keras.layers.core import Activation, Flatten, Dense
 from keras.layers.merge import add, concatenate
@@ -1660,17 +1660,14 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
 
     def _build_model(self, inputs):
         enet = ENetNaiveUpsampling.encoder_build(inputs)
+        enet = ENetNaiveUpsamplingEnhanced.decoder_build(enet, nc=self.num_classes)
 
+        # In order to avoid increasing the number of variables with a huge dense layer
+        # use average pooling with a pool size of the previous layer's spatial
+        # dimension
         if self.encoder_only:
-            # In order to avoid increasing the number of variables with a huge dense layer
-            # use average pooling with a pool size of the previous layer's spatial
-            # dimension
-            pool_size = K.int_shape(enet)[1:3]
-            enet = AveragePooling2D(pool_size=pool_size, name='avg_pool2d')(enet)
-            enet = Flatten(name='flatten')(enet)
+            enet = GlobalAveragePooling2D(name='avg_pool2d')(enet)
             enet = Dense(self.num_classes, name='logits')(enet)
-        else:
-            enet = ENetNaiveUpsamplingEnhanced.decoder_build(enet, nc=self.num_classes)
 
         return [enet]
 
@@ -1769,7 +1766,7 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         return decoder
 
     @staticmethod
-    def decoder_build(encoder, nc):
+    def decoder_build(encoder, nc, final_layer_name='logits'):
         enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(encoder, 64, name_prefix='de_bn_4.0', upsample=True, reverse_module=True)  # bottleneck 4.0
         enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(enet, 64, name_prefix='de_bn_4.1')  # bottleneck 4.1
         enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(enet, 64, name_prefix='de_bn_4.2')  # bottleneck 4.2
@@ -1793,7 +1790,7 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
                       kernel_initializer='he_normal',
                       bias_initializer='zeros',
                       padding='same',
-                      name='logits')(enet)
+                      name=final_layer_name)(enet)
 
         # L2 normalization
         #enet = Lambda(l2_normalization)(enet)
