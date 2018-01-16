@@ -1660,14 +1660,16 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
 
     def _build_model(self, inputs):
         enet = ENetNaiveUpsampling.encoder_build(inputs)
-        enet = ENetNaiveUpsamplingEnhanced.decoder_build(enet, nc=self.num_classes)
 
         # In order to avoid increasing the number of variables with a huge dense layer
         # use average pooling with a pool size of the previous layer's spatial
         # dimension
         if self.encoder_only:
+            enet = ENetNaiveUpsamplingEnhanced.decoder_build(enet, nc=self.num_classes, final_layer_name='decoder_logits')
             enet = GlobalAveragePooling2D(name='avg_pool2d')(enet)
             enet = Dense(self.num_classes, name='logits')(enet)
+        else:
+            enet = ENetNaiveUpsamplingEnhanced.decoder_build(enet, nc=self.num_classes)
 
         return [enet]
 
