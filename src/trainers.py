@@ -647,7 +647,7 @@ class TrainerBase:
         if self.training_data_iterator is None:
             raise ValueError('Training data iterator has not been initialized')
 
-        if settings.OVERRIDE_STEPS:
+        if settings.OVERRIDE_STEPS and settings.OVERRIDE_TRAINING_STEPS_PER_EPOCH is not None and settings.OVERRIDE_TRAINING_STEPS_PER_EPOCH > 0:
             return settings.OVERRIDE_TRAINING_STEPS_PER_EPOCH
 
         return self.training_data_iterator.num_steps_per_epoch
@@ -658,7 +658,7 @@ class TrainerBase:
         if self.validation_data_iterator is None:
             raise ValueError('Validation data iterator has not been initialized')
 
-        if settings.OVERRIDE_STEPS:
+        if settings.OVERRIDE_STEPS and settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH is not None and settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH > 0:
             return settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH
 
         return self.validation_data_iterator.num_steps_per_epoch
@@ -1351,7 +1351,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         if self.teacher_validation_data_iterator is None:
             raise ValueError('Teacher validation data iterator has not been initialized')
 
-        if settings.OVERRIDE_STEPS:
+        if settings.OVERRIDE_STEPS and settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH is not None and settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH > 0:
             return settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH
 
         return self.teacher_validation_data_iterator.num_steps_per_epoch

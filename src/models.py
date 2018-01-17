@@ -1493,8 +1493,7 @@ class ENetMaxUnpooling(ModelBase):
         pooling_indices.append(indices_single)
 
         # Bottleneck 1.0
-        enet, indices_single = ENetMaxUnpooling.encoder_bottleneck(enet, 64, name_prefix='en_bn_1.0', downsample=True,
-                                                  dropout_rate=dropout_rate)
+        enet, indices_single = ENetMaxUnpooling.encoder_bottleneck(enet, 64, name_prefix='en_bn_1.0', downsample=True, dropout_rate=dropout_rate)
         pooling_indices.append(indices_single)
 
         # Bottleneck 1.i
@@ -1780,7 +1779,7 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         enet = ENetNaiveUpsamplingEnhanced.decoder_bottleneck(enet, 16, name_prefix='de_bn_5.1')  # bottleneck 5.1
 
         # Unlike in regular ENet we will replace Conv2DTranspose with a Nearest-Neighbour
-        # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution
+        # upsampling on each layer plus a Conv2D. This is called a NN-Resize convolution (NNR Convolution)
         enet = UpSampling2D(size=(2, 2), name='final_nn_rs_conv_upsample2d')(enet)
         enet = Conv2D(filters=nc,
                       kernel_size=(3, 3),
@@ -1797,16 +1796,5 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
                       bias_initializer='zeros',
                       padding='same',
                       name=final_layer_name)(enet)
-
-        # L2 normalization
-        #enet = Lambda(l2_normalization)(enet)
-
-        # Final classification layer
-        #enet = Conv2D(filters=nc,
-        #              kernel_size=(1, 1),
-        #              kernel_initializer='he_normal',
-        #              bias_initializer='zeros',
-        #              padding='same',
-        #              name='logits')(enet)
 
         return enet
