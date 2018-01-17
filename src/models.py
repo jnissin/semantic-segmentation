@@ -1291,8 +1291,6 @@ class ENetNaiveUpsampling(ModelBase):
         if upsample and reverse_module is False:
             decoder = x
         else:
-            x = BatchNormalization(momentum=0.1, name='{}_bnorm_4'.format(name_prefix))(x)
-
             """
             Merge branches
             """
@@ -1759,8 +1757,6 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         if upsample and reverse_module is False:
             decoder = x
         else:
-            x = BatchNormalization(momentum=0.1, name='{}_bnorm_4'.format(name_prefix))(x)
-
             """
             Merge branches
             """
