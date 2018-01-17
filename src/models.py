@@ -1268,6 +1268,9 @@ class ENetNaiveUpsampling(ModelBase):
                    use_bias=False,
                    name='{}_proj_conv2d_2'.format((name_prefix)))(x)
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
+        # NOTE: Different than original ENet, original ENet omits dropout for decoder
+        x = SpatialDropout2D(rate=0.1, name='{}_sdrop2d_1'.format(name_prefix))(x)
+
 
         """
         Other branch
@@ -1734,6 +1737,8 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
                    use_bias=False,
                    name='{}_proj_conv2d_2'.format((name_prefix)))(x)
         x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
+        # NOTE: Different than original ENet, original ENet omits dropout for decoder
+        x = SpatialDropout2D(rate=0.1, name='{}_sdrop2d_1'.format(name_prefix))(x)
 
         """
         Other branch
