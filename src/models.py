@@ -1066,6 +1066,8 @@ class ENetNaiveUpsampling(ModelBase):
 
         max_pool = MaxPooling2D(name="initial_block_pool2d")(inp)
         merged = concatenate([conv, max_pool], axis=3, name="initial_block_concat")
+        merged = BatchNormalization(momentum=0.1, name='initial_block_bnorm')(merged)
+        merged = PReLU(shared_axes=[1, 2], name='initial_block_prelu')(merged)
         return merged
 
     @staticmethod
@@ -1265,6 +1267,7 @@ class ENetNaiveUpsampling(ModelBase):
                    padding='same',
                    use_bias=False,
                    name='{}_proj_conv2d_2'.format((name_prefix)))(x)
+        x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
 
         """
         Other branch
@@ -1288,7 +1291,7 @@ class ENetNaiveUpsampling(ModelBase):
         if upsample and reverse_module is False:
             decoder = x
         else:
-            x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
+            x = BatchNormalization(momentum=0.1, name='{}_bnorm_4'.format(name_prefix))(x)
 
             """
             Merge branches
@@ -1733,6 +1736,7 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
                    padding='same',
                    use_bias=False,
                    name='{}_proj_conv2d_2'.format((name_prefix)))(x)
+        x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
 
         """
         Other branch
@@ -1756,7 +1760,7 @@ class ENetNaiveUpsamplingEnhanced(ModelBase):
         if upsample and reverse_module is False:
             decoder = x
         else:
-            x = BatchNormalization(momentum=0.1, name='{}_bnorm_3'.format(name_prefix))(x)
+            x = BatchNormalization(momentum=0.1, name='{}_bnorm_4'.format(name_prefix))(x)
 
             """
             Merge branches
