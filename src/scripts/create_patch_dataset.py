@@ -17,7 +17,10 @@ def main():
     output = args["output"]
     num_samples_per_class = int(args["samples"])
     num_classes = int(args["classes"])
-    input_dataset = [[]] * num_classes
+    input_dataset = []
+
+    for i in range(0, num_classes):
+        input_dataset.append([])
 
     print 'Reading input dataset from {}'.format(input)
 

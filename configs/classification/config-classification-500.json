@@ -57,7 +57,7 @@
       "consistency_cost_coefficient_function": "lambda x: 600.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )"
     },
 
-    "use_data_augmentation": false,
+    "use_data_augmentation": true,
     "use_material_samples": false,
 
     "data_augmentation_params": {
