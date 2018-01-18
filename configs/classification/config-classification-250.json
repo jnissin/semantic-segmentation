@@ -1,0 +1,127 @@
+{
+    "path_to_material_class_file": null,
+    "path_to_data_set_information_file": null,
+    "path_to_labeled_photos": "data/final/labeled/patches/photos/",
+    "path_to_labeled_masks": null,
+    "path_to_unlabeled_photos": "data/final/unlabeled/",
+
+    "log_folder_path": "model-data/{model_folder}/logs/",
+    "log_file_path": "{log_folder_path}/log.txt",
+    "log_to_stdout": true,
+
+    "keras_tensorboard_log_path": "{log_folder_path}/tensorboard/",
+    "keras_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "{log_folder_path}/per-epoch-data.csv",
+    "optimizer_checkpoint_file_path": "model-data/{model_folder}/checkpoints/optimizer/optimizer-checkpoint.json",
+
+    "keras_model_checkpoint": {
+      "checkpoint_file_path": "model-data/{model_folder}/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "monitor": "val_loss",
+      "verbose": 1,
+      "save_best_only": false,
+      "save_weights_only": false,
+      "mode": "auto",
+      "period": 1
+    },
+
+    "loss_function": "dummy",
+
+    "num_epochs": 100,
+    "input_shape": [336, 336, 3],
+    "crop_shape": [336, 336],
+    "resize_shape": [[1408, null], null, [512, null]],
+    "div2_constraint": 1,
+    "num_crop_reattempts": 0,
+    "resized_image_cache_path": "/tmp/semantic-segmentation/classification/resized/",
+    "initial_resized_image_cache_tar_file_path": null,
+
+    "num_labeled_per_batch": 10,
+    "num_unlabeled_per_batch": 10,
+    "validation_num_labeled_per_batch": 10,
+    "validation_crop_shape": [336, 336],
+    "validation_resize_shape": null,
+
+    "num_color_channels": 3,
+    "random_seed": 14874,
+
+    "optimizer": {
+      "name": "adam",
+      "learning_rate": 5e-4,
+      "momentum": 0.9,
+      "decay": 0.0
+    },
+
+    "mean_teacher_params": {
+      "teacher_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "ema_smoothing_coefficient_function": "lambda x: 0.99 if x < 50000 else 0.999",
+      "consistency_cost_coefficient_function": "lambda x: 600.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )"
+    },
+
+    "use_data_augmentation": false,
+    "use_material_samples": false,
+
+    "data_augmentation_params": {
+      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )",
+      "rotation_range": 40.0,
+      "zoom_range": 0.15,
+      "width_shift_range": 0.05,
+      "height_shift_range": 0.05,
+      "channel_shift_range": 0.05,
+      "horizontal_flip": true,
+      "vertical_flip": false,
+      "gaussian_noise_stddev_function": "lambda x: 0.03 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )",
+      "gamma_adjust_range": 0.5,
+      "mean_teacher_noise_params": {
+        "gaussian_noise_stddev": 0.08,
+        "translate_range": 0.05,
+        "rotation_range": 10.0,
+        "horizontal_flip_probability": 0.5,
+        "vertical_flip_probability": null,
+        "channel_shift_range": 0.10
+      }
+    },
+
+    "classification_data_set_params": {
+      "path_to_training_set_file": "data/final/labeled/patches/train_equalized_250.txt",
+      "path_to_validation_set_file": "data/final/labeled/patches/validate_equalized.txt",
+      "path_to_test_set_file": "data/final/labeled/patches/test.txt",
+      "path_to_label_mapping_file": "data/final/minc_labels_to_custom_labels.csv",
+      "per_channel_mean": [0.044754233908065731, -0.057418912408161368, -0.1714380231617347],
+      "per_channel_mean_labeled": [0.018076410822129615, -0.077258054985311686, -0.18932095956721293],
+      "per_channel_stddev": [0.52123741619438047, 0.52375975744119097, 0.55330877835297221],
+      "per_channel_stddev_labeled": [0.52903003285108918, 0.52712047293536435, 0.55631583027212006]
+    },
+
+    "reduce_lr_on_plateau": {
+      "factor": 0.1,
+      "verbose": 1,
+      "patience": 2,
+      "epsilon": 0.0001,
+      "cooldown": 1,
+      "min_lr": 0,
+      "monitor": "val_loss"
+    },
+
+    "_early_stopping": {
+      "monitor": "val_loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
+    },
+
+    "stepwise_learning_rate_scheduler": {
+      "lr_schedule": "lambda x: 5e-4 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )",
+      "b2_schedule": "lambda x: 0.99 if x < 50000 else 0.999",
+      "last_scheduled_step": 50000,
+      "verbose": false
+    },
+
+    "image_data_format": "channels_last",
+    "continue_from_last_checkpoint": true,
+    "transfer_weights": false,
+    "use_class_weights": true,
+    "ignore_classes": [0],
+    "override_class_weights": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "save_values_on_early_exit": true
+}
