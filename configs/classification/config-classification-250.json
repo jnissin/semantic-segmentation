@@ -46,7 +46,7 @@
 
     "optimizer": {
       "name": "adam",
-      "learning_rate": 5e-4,
+      "learning_rate": 5e-3,
       "momentum": 0.9,
       "decay": 0.0
     },
