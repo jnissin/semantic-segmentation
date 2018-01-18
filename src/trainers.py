@@ -679,56 +679,56 @@ class TrainerBase:
         return path.format(model_folder=self.model_folder_name, log_folder_path=self.log_folder_path, **kwargs)
 
     def _get_data_augmentation_parameters(self):
-        if self._get_config_value('use_data_augmentation'):
-            self.logger.log('Parsing data augmentation parameters')
+        #if self._get_config_value('use_data_augmentation'):
+        self.logger.log('Parsing data augmentation parameters')
 
-            augmentation_config = self._get_config_value('data_augmentation_params')
+        augmentation_config = self._get_config_value('data_augmentation_params')
 
-            if not augmentation_config:
-                raise ValueError('No data with key data_augmentation_params was found in the configuration file')
+        if not augmentation_config:
+            raise ValueError('No data with key data_augmentation_params was found in the configuration file')
 
-            augmentation_probability_function = augmentation_config.get('augmentation_probability_function')
-            rotation_range = augmentation_config.get('rotation_range')
-            zoom_range = augmentation_config.get('zoom_range')
-            width_shift_range = augmentation_config.get('width_shift_range')
-            height_shift_range = augmentation_config.get('height_shift_range')
-            channel_shift_range = augmentation_config.get('channel_shift_range')
-            horizontal_flip = augmentation_config.get('horizontal_flip')
-            vertical_flip = augmentation_config.get('vertical_flip')
-            gaussian_noise_stddev_function = augmentation_config.get('gaussian_noise_stddev_function')
-            gamma_adjust_range = augmentation_config.get('gamma_adjust_range')
-            mean_teacher_noise_params = augmentation_config.get('mean_teacher_noise_params')
+        augmentation_probability_function = augmentation_config.get('augmentation_probability_function')
+        rotation_range = augmentation_config.get('rotation_range')
+        zoom_range = augmentation_config.get('zoom_range')
+        width_shift_range = augmentation_config.get('width_shift_range')
+        height_shift_range = augmentation_config.get('height_shift_range')
+        channel_shift_range = augmentation_config.get('channel_shift_range')
+        horizontal_flip = augmentation_config.get('horizontal_flip')
+        vertical_flip = augmentation_config.get('vertical_flip')
+        gaussian_noise_stddev_function = augmentation_config.get('gaussian_noise_stddev_function')
+        gamma_adjust_range = augmentation_config.get('gamma_adjust_range')
+        mean_teacher_noise_params = augmentation_config.get('mean_teacher_noise_params')
 
-            data_augmentation_parameters = DataAugmentationParameters(
-                augmentation_probability_function=augmentation_probability_function,
-                rotation_range=rotation_range,
-                zoom_range=zoom_range,
-                width_shift_range=width_shift_range,
-                height_shift_range=height_shift_range,
-                channel_shift_range=channel_shift_range,
-                horizontal_flip=horizontal_flip,
-                vertical_flip=vertical_flip,
-                gaussian_noise_stddev_function=gaussian_noise_stddev_function,
-                gamma_adjust_range=gamma_adjust_range,
-                mean_teacher_noise_params=mean_teacher_noise_params)
+        data_augmentation_parameters = DataAugmentationParameters(
+            augmentation_probability_function=augmentation_probability_function,
+            rotation_range=rotation_range,
+            zoom_range=zoom_range,
+            width_shift_range=width_shift_range,
+            height_shift_range=height_shift_range,
+            channel_shift_range=channel_shift_range,
+            horizontal_flip=horizontal_flip,
+            vertical_flip=vertical_flip,
+            gaussian_noise_stddev_function=gaussian_noise_stddev_function,
+            gamma_adjust_range=gamma_adjust_range,
+            mean_teacher_noise_params=mean_teacher_noise_params)
 
-            self.logger.log('Data augmentation params: augmentation probability function: {}, rotation range: {}, zoom range: {}, '
-                            'width shift range: {}, height shift range: {}, channel shift range: {}, horizontal flip: {}, vertical flip: {}, '
-                            'gaussian noise stddev function: {}, gamma_adjust_range: {}'
-                             .format(augmentation_probability_function,
-                                     rotation_range,
-                                     zoom_range,
-                                     width_shift_range,
-                                     height_shift_range,
-                                     channel_shift_range,
-                                     horizontal_flip,
-                                     vertical_flip,
-                                     gaussian_noise_stddev_function,
-                                     gamma_adjust_range))
+        self.logger.log('Data augmentation params: augmentation probability function: {}, rotation range: {}, zoom range: {}, '
+                        'width shift range: {}, height shift range: {}, channel shift range: {}, horizontal flip: {}, vertical flip: {}, '
+                        'gaussian noise stddev function: {}, gamma_adjust_range: {}'
+                         .format(augmentation_probability_function,
+                                 rotation_range,
+                                 zoom_range,
+                                 width_shift_range,
+                                 height_shift_range,
+                                 channel_shift_range,
+                                 horizontal_flip,
+                                 vertical_flip,
+                                 gaussian_noise_stddev_function,
+                                 gamma_adjust_range))
 
-            self.logger.log('Data augmentation params: mean teacher noise params: {}'.format(mean_teacher_noise_params))
-        else:
-            data_augmentation_parameters = None
+        self.logger.log('Data augmentation params: mean teacher noise params: {}'.format(mean_teacher_noise_params))
+        #else:
+        #    data_augmentation_parameters = None
 
         return data_augmentation_parameters
 
