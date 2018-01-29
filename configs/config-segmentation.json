@@ -32,7 +32,7 @@
     "resize_shape": [[1408, null], null, [512, null]],
     "div2_constraint": 4,
     "num_crop_reattempts": 5,
-    "resized_image_cache_path": "/tmp/semantic-segmentation/resized/",
+    "resized_image_cache_path": "/tmp/semantic-segmentation/segmentation/resized/",
     "initial_resized_image_cache_tar_file_path": "data/final/resized.tar",
 
     "num_labeled_per_batch": 15,

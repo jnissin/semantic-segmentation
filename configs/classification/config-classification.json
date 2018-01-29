@@ -32,12 +32,12 @@
     "resize_shape": [[1408, null], null, [512, null]],
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
-    "resized_image_cache_path": "/tmp/semantic-segmentation/resized/",
+    "resized_image_cache_path": "/tmp/semantic-segmentation/classification/resized/",
     "initial_resized_image_cache_tar_file_path": null,
 
-    "num_labeled_per_batch": 25,
-    "num_unlabeled_per_batch": 25,
-    "validation_num_labeled_per_batch": 25,
+    "num_labeled_per_batch": 10,
+    "num_unlabeled_per_batch": 10,
+    "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": [336, 336],
     "validation_resize_shape": null,
 
@@ -53,15 +53,15 @@
 
     "mean_teacher_params": {
       "teacher_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
-      "ema_smoothing_coefficient_function": "lambda x: 0.99 if x < 40000 else 0.999",
-      "consistency_cost_coefficient_function": "lambda x: 1.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )"
+      "ema_smoothing_coefficient_function": "lambda x: 0.99 if x < 50000 else 0.999",
+      "consistency_cost_coefficient_function": "lambda x: 276.552 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )"
     },
 
     "use_data_augmentation": true,
     "use_material_samples": false,
 
     "data_augmentation_params": {
-      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )",
       "rotation_range": 40.0,
       "zoom_range": 0.15,
       "width_shift_range": 0.05,
@@ -69,7 +69,7 @@
       "channel_shift_range": 0.05,
       "horizontal_flip": true,
       "vertical_flip": false,
-      "gaussian_noise_stddev_function": "lambda x: 0.03 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
+      "gaussian_noise_stddev_function": "lambda x: 0.03 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )",
       "gamma_adjust_range": 0.5,
       "mean_teacher_noise_params": {
         "gaussian_noise_stddev": 0.08,
@@ -92,7 +92,7 @@
       "per_channel_stddev_labeled": [0.52903003285108918, 0.52712047293536435, 0.55631583027212006]
     },
 
-    "reduce_lr_on_plateau": {
+    "__reduce_lr_on_plateau": {
       "factor": 0.1,
       "verbose": 1,
       "patience": 2,
@@ -102,7 +102,7 @@
       "monitor": "val_loss"
     },
 
-    "_early_stopping": {
+    "__early_stopping": {
       "monitor": "val_loss",
       "min_delta": 0,
       "patience": 2,
@@ -111,9 +111,9 @@
     },
 
     "stepwise_learning_rate_scheduler": {
-      "lr_schedule": "lambda x: 5e-4 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/40000.0)**2)), 1.0) ), 1.0 )",
-      "b2_schedule": "lambda x: 0.99 if x < 40000 else 0.999",
-      "last_scheduled_step": 40000,
+      "lr_schedule": "lambda x: 5e-4 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/50000.0)**2)), 1.0) ), 1.0 )",
+      "b2_schedule": "lambda x: 0.99 if x < 50000 else 0.999",
+      "last_scheduled_step": 50000,
       "verbose": false
     },
 
