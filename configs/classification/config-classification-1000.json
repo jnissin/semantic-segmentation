@@ -92,7 +92,7 @@
       "per_channel_stddev_labeled": [0.52903003285108918, 0.52712047293536435, 0.55631583027212006]
     },
 
-    "reduce_lr_on_plateau": {
+    "__reduce_lr_on_plateau": {
       "factor": 0.1,
       "verbose": 1,
       "patience": 2,
