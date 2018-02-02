@@ -142,7 +142,7 @@ def get_lambda_loss_function(model_lambda_loss_type):
     elif model_lambda_loss_type == ModelLambdaLossType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
         return losses.segmentation_mean_teacher_superpixel_lambda_loss
     elif model_lambda_loss_type == ModelLambdaLossType.CLASSIFICATION_CATEGORICAL_CROSS_ENTROPY:
-        return losses.classification_categorical_cross_entropy
+        return losses.classification_categorical_crossentropy_lambda_loss
     elif model_lambda_loss_type == ModelLambdaLossType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER:
         return losses.classification_mean_teacher_lambda_loss
 
