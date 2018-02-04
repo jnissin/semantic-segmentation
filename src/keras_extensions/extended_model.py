@@ -26,6 +26,7 @@ from keras.engine.training import _collect_metrics, _weighted_masked_objective
 
 from utils.data_utils import Sequence
 from utils.data_utils import OrderedEnqueuer
+import extended_callbacks as extended_cbks
 
 from ..logger import Logger
 
@@ -128,6 +129,13 @@ class ExtendedModel(Model):
             np.savetxt(_file_path, X=cfm)
         except Exception as e:
             self.logger.warn('Failed to write CFM metrics to file, exception: {}'.format(e.message))
+
+    def reset_metrics(self):
+        # Reset any necessary values from the metrics at the beginning of an epoch
+        for metric in self.metrics:
+            if getattr(metric, 'reset_op', None) is not None:
+                self.logger.log('Resetting metric: {}'.format(metric.__name__)) # TODO: Remove
+                K.get_session().run(metric.reset_op)
 
     @staticmethod
     def pre_create_training_enqueuer(generator,
@@ -467,6 +475,8 @@ class ExtendedModel(Model):
         self.weighted_metrics = weighted_metrics
         self.metrics_names = ['loss']
         self.metrics_tensors = []
+        self.metrics_hidden = set()
+        self.metrics_streaming = set()
 
         # Compute total loss.
         total_loss = None
@@ -507,12 +517,18 @@ class ExtendedModel(Model):
         nested_metrics = _collect_metrics(metrics, self.output_names)
         nested_weighted_metrics = _collect_metrics(weighted_metrics, self.output_names)
 
-        def append_metric(layer_index, metric_name, metric_tensor):
+        def append_metric(layer_index, metric_name, metric_tensor, is_hidden, is_streaming):
             """Helper function used in loop below."""
             if len(self.output_names) > 1:
                 metric_name = self.output_names[layer_index] + '_' + metric_name
             self.metrics_names.append(metric_name)
             self.metrics_tensors.append(metric_tensor)
+
+            if is_hidden:
+                self.metrics_hidden.add(metric_name)
+
+            if is_streaming:
+                self.metrics_streaming.add(metric_name)
 
         with K.name_scope('metrics'):
             for i in range(len(self.outputs)):
@@ -543,23 +559,32 @@ class ExtendedModel(Model):
                             else:
                                 acc_fn = metrics_module.categorical_accuracy
 
+                            is_hidden = getattr(acc_fn, 'hidden', False)
+                            is_streaming = getattr(acc_fn, 'streaming', False)
                             weighted_metric_fn = _weighted_masked_objective(acc_fn)
                             metric_name = metric_name_prefix + 'acc'
                         # Added special case for CFMs
                         elif metrics_module.get(metric).__name__ == 'cfm':
                             metric_fn = metrics_module.get(metric)
+                            is_hidden = getattr(metric_fn, 'hidden', False)
+                            is_streaming = getattr(metric_fn, 'streaming', False)
                             weighted_metric_fn = lambda y_true, y_pred, weights, mask: metric_fn(y_true, y_pred)
                             metric_name = metric_name_prefix + metric_fn.__name__
                         else:
                             metric_fn = metrics_module.get(metric)
-                            weighted_metric_fn = _weighted_masked_objective(metric_fn)
+                            is_hidden = getattr(metric_fn, 'hidden', False)
+                            is_streaming = getattr(metric_fn, 'streaming', False)
+                            if is_streaming:
+                                weighted_metric_fn = lambda y_true, y_pred, weights, mask: metric_fn(y_true, y_pred)
+                            else:
+                                weighted_metric_fn = _weighted_masked_objective(metric_fn)
                             metric_name = metric_name_prefix + metric_fn.__name__
 
                         with K.name_scope(metric_name):
                             metric_result = weighted_metric_fn(y_true, y_pred,
                                                                weights=weights,
                                                                mask=masks[i])
-                        append_metric(i, metric_name, metric_result)
+                        append_metric(i, metric_name, metric_result, is_hidden, is_streaming)
 
                 handle_metrics(output_metrics)
                 handle_metrics(output_weighted_metrics, weights=weights)
@@ -739,10 +764,10 @@ class ExtendedModel(Model):
 
         # prepare callbacks
         self.history = cbks.History()
-        baselogger = cbks.BaseLogger()
+        baselogger = extended_cbks.ExtendedBaseLogger()
         callbacks = [baselogger] + (callbacks or []) + [self.history]
         if verbose:
-            callbacks += [cbks.ProgbarLogger(count_mode='steps')]
+            callbacks += [extended_cbks.ExtendedProgbarLogger(count_mode='steps')]
         callbacks = cbks.CallbackList(callbacks)
 
         # it's possible to callback a different model than self:
@@ -818,6 +843,10 @@ class ExtendedModel(Model):
 
             callback_model.stop_training = False
             while epoch < epochs:
+
+                # Reset any necessary values from the metrics at the beginning of an epoch
+                self.reset_metrics()
+
                 epoch_s_time = time.time()
                 callbacks.on_epoch_begin(epoch)
                 steps_done = 0
@@ -897,6 +926,9 @@ class ExtendedModel(Model):
                     # Epoch finished.
                     if steps_done >= steps_per_epoch and do_validation:
                         self.logger.log('Epoch {} training took: {} s'.format(epoch, time.time()-epoch_s_time))
+
+                        # Reset any necessary metrics before validation run
+                        self.reset_metrics()
 
                         if val_gen:
                             # Extended functionality: pass trainer and validation flag
