@@ -130,12 +130,14 @@ class ExtendedModel(Model):
         except Exception as e:
             self.logger.warn('Failed to write CFM metrics to file, exception: {}'.format(e.message))
 
-    def reset_metrics(self):
+    def reset_streaming_metrics(self):
         # Reset any necessary values from the metrics at the beginning of an epoch
         for metric in self.metrics:
             if getattr(metric, 'reset_op', None) is not None:
                 self.logger.log('Resetting metric: {}'.format(metric.__name__)) # TODO: Remove
                 K.get_session().run(metric.reset_op)
+            else:
+                self.logger.log('')
 
     @staticmethod
     def pre_create_training_enqueuer(generator,
@@ -845,7 +847,7 @@ class ExtendedModel(Model):
             while epoch < epochs:
 
                 # Reset any necessary values from the metrics at the beginning of an epoch
-                self.reset_metrics()
+                self.reset_streaming_metrics()
 
                 epoch_s_time = time.time()
                 callbacks.on_epoch_begin(epoch)
@@ -928,7 +930,7 @@ class ExtendedModel(Model):
                         self.logger.log('Epoch {} training took: {} s'.format(epoch, time.time()-epoch_s_time))
 
                         # Reset any necessary metrics before validation run
-                        self.reset_metrics()
+                        self.reset_streaming_metrics()
 
                         if val_gen:
                             # Extended functionality: pass trainer and validation flag

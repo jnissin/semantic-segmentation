@@ -1772,10 +1772,15 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     def data_set_information(self):
         # Lazy load data set information
         if self._data_set_information is None:
+            training_set_unlabeled_size = 0
+
+            if self.using_unlabeled_training_data:
+                training_set_unlabeled_size = self.data_set_information.training_set.unlabeled_size
+
             self.logger.log('Loading data set information from: {}'.format(self.path_to_data_set_information_file))
             self._data_set_information = dataset_utils.load_segmentation_data_set_information(self.path_to_data_set_information_file)
             self.logger.log('Loaded data set information successfully with set sizes (tr, va, te): {}, {}, {}'
-                            .format(self.data_set_information.training_set.labeled_size + self.data_set_information.training_set.unlabeled_size,
+                            .format(self.data_set_information.training_set.labeled_size + training_set_unlabeled_size,
                                     self.data_set_information.validation_set.labeled_size,
                                     self.data_set_information.test_set.labeled_size))
 

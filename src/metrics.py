@@ -4,7 +4,6 @@ import keras.backend as K
 
 _CFM_DTYPE = K.tf.int64
 
-
 def _get_ignore_mask(labels, ignore_classes):
     """
     Creates a boolean mask where true marks ignored samples. Mask is the same shape
@@ -22,6 +21,22 @@ def _get_ignore_mask(labels, ignore_classes):
                              initializer=K.tf.zeros_like(labels, dtype=K.tf.int32),
                              elems=ignore_classes)
     return K.tf.cast(ignore_mask, dtype=K.tf.bool)
+
+
+def function_attributes(**kwargs):
+    """
+    Sets function attributes to the target function. Used as a decorator.
+
+    # Arguments
+        :param kwargs: attributes to be set
+    # Returns
+        :return: The function with the attributes set
+    """
+    def decorate(func):
+        for k in kwargs:
+            setattr(func, k, kwargs[k])
+        return func
+    return decorate
 
 
 def create_reset_metric(metric, scope='reset_metrics', **metric_args):
@@ -169,6 +184,7 @@ def _preprocess_segmentation_data(y_true, y_pred, num_unlabeled, ignore_classes)
 
 
 def segmentation_accuracy(num_unlabeled, ignore_classes=None):
+    @function_attributes(reset_op=None, streaming=True)
     def acc(y_true, y_pred):
         labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
                                                                                   y_pred=y_pred,
@@ -180,19 +196,21 @@ def segmentation_accuracy(num_unlabeled, ignore_classes=None):
                                                          labels=labels,
                                                          predictions=predictions,
                                                          weights=weights)
+
+        acc.reset_op = reset_op
         K.get_session().run(K.tf.local_variables_initializer())
-        setattr(acc, 'reset_op', reset_op)
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
             return value
 
-    setattr(acc, 'streaming', True)
+    print 'Has attr: {}'.format(getattr(acc, 'streaming', False))
     return acc
 
 
 def segmentation_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_classes=None):
+    @function_attributes(reset_op=None, streaming=True)
     def mpca(y_true, y_pred):
         labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
                                                                                   y_pred=y_pred,
@@ -206,19 +224,20 @@ def segmentation_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_clas
                                                          predictions=predictions,
                                                          num_classes=num_classes,
                                                          weights=weights)
+
+        mpca.reset_op = reset_op
         K.get_session().run(K.tf.local_variables_initializer())
-        setattr(mpca, 'reset_op', reset_op)
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
             return value
 
-    setattr(mpca, 'streaming', True)
     return mpca
 
 
 def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
+    @function_attributes(reset_op=None, streaming=True)
     def miou(y_true, y_pred):
         labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
                                                                                   y_pred=y_pred,
@@ -232,19 +251,20 @@ def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
                                                          predictions=predictions,
                                                          num_classes=num_classes,
                                                          weights=weights)
+
+        miou.reset_op = reset_op
         K.get_session().run(K.tf.local_variables_initializer())
-        setattr(miou, 'reset_op', reset_op)
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
             return value
 
-    setattr(miou, 'streaming', True)
     return miou
 
 
 def segmentation_confusion_matrix(num_classes, num_unlabeled, ignore_classes=None):
+    @function_attributes(hidden=True)
     def cfm(y_true, y_pred):
         labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
                                                                                   y_pred=y_pred,
@@ -254,5 +274,4 @@ def segmentation_confusion_matrix(num_classes, num_unlabeled, ignore_classes=Non
         confusion_matrix = K.tf.confusion_matrix(labels=labels, predictions=predictions, num_classes=num_classes, weights=weights, dtype=_CFM_DTYPE)
         return confusion_matrix
 
-    setattr(cfm, 'hidden', True)
     return cfm
