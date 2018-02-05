@@ -113,7 +113,7 @@ def _streaming_confusion_matrix(labels, predictions, num_classes, weights=None, 
     update_op: An operation that increments the confusion matrix.
     """
     # Local variable to accumulate the predictions in the confusion matrix.
-    total_cm = _create_local(name='total_confusion_matrix', shape=[num_classes, num_classes], dtype=dtype)
+    total_cm = _create_local(name='total_confusion_matrix', collections=K.tf.GraphKeys.GLOBAL_VARIABLES, shape=[num_classes, num_classes], dtype=dtype)
 
     # Cast the type to int64 required by confusion_matrix_ops.
     predictions = K.tf.to_int64(predictions)
