@@ -232,6 +232,7 @@ class ExtendedModel(Model):
 
         return validation_enqueuer
 
+    @property
     def _metrics_updates(self):
 
         update_ops = []
