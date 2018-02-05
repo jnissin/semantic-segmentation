@@ -995,6 +995,9 @@ class ExtendedModel(Model):
                 # Write CFMs to files
                 if self.using_cfm_metric:
 
+                    # TODO: Remove
+                    self.logger.log('BASE LOGGER SEEN: {}'.format(baselogger.seen))
+
                     # Write training CFM to file
                     for cfm_metric_name in self.metrics_cfm:
                         # Write training confusion matrix to file
@@ -1177,6 +1180,7 @@ class ExtendedModel(Model):
                     enqueuer.stop()
 
         self.logger.log('Evaluation took: {} s'.format(time.time()-eval_s_time))
+        self.logger.log('Batch sizes total: {}'.format(np.sum(batch_sizes))) # TODO: Remove
 
         if not isinstance(outs, list):
             return np.average(np.asarray(all_outs), weights=batch_sizes)
