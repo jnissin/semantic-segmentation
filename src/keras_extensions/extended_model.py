@@ -931,6 +931,7 @@ class ExtendedModel(Model):
 
                     s_time = time.time()
 
+                    self.logger.log('STEP: {}'.format(step_index)) # TODO: REMOVE!
                     outs = self.train_on_batch(x, y,
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)

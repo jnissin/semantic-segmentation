@@ -60,12 +60,6 @@ def _create_reset_metric(metric, scope='reset_metrics', **metric_args):
     with K.tf.variable_scope(scope) as scope:
         value, update_op = metric(**metric_args)
         metric_vars = K.tf.contrib.framework.get_variables(scope.original_name_scope, collection=K.tf.GraphKeys.LOCAL_VARIABLES)
-
-        # Add metric variables to GLOBAL_VARIABLES collection.
-        # They will be initialized for new session.
-        for v in metric_vars:
-            K.tf.add_to_collection(K.tf.GraphKeys.GLOBAL_VARIABLES, v)
-
         reset_op = K.tf.variables_initializer(metric_vars)
     return value, update_op, reset_op
 
@@ -113,7 +107,7 @@ def _streaming_confusion_matrix(labels, predictions, num_classes, weights=None, 
     update_op: An operation that increments the confusion matrix.
     """
     # Local variable to accumulate the predictions in the confusion matrix.
-    total_cm = _create_local(name='total_confusion_matrix', collections=K.tf.GraphKeys.GLOBAL_VARIABLES, shape=[num_classes, num_classes], dtype=dtype)
+    total_cm = _create_local(name='total_confusion_matrix', shape=[num_classes, num_classes], dtype=dtype)
 
     # Cast the type to int64 required by confusion_matrix_ops.
     predictions = K.tf.to_int64(predictions)
@@ -186,6 +180,7 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
+            K.tf.Print(value, [value], message='value: ', summarize=1024)
         return value
 
     return acc
