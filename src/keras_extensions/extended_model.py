@@ -120,9 +120,14 @@ class ExtendedModel(Model):
                 self.logger.warn('Cannot write CFMs to file, logger has not log_folder_path')
                 return
 
-            _file_path = os.path.join(self.logger.log_folder_path, '{}_{}.txt'.format(cfm_key, epoch))
+            _folder_path = os.path.join(self.logger.log_folder_path, 'cfms/')
+            _file_path = os.path.join(_folder_path, '{}_{}.txt'.format(cfm_key, epoch))
         else:
             _file_path = file_path
+
+        # Create directories if they don't exist
+        if not os.path.exists(os.path.dirname(_file_path)):
+            os.makedirs(os.path.dirname(_file_path))
 
         try:
             self.logger.log('Writing epoch {} confusion matrix {} to file: {}'.format(epoch, cfm_key, _file_path))
@@ -984,15 +989,25 @@ class ExtendedModel(Model):
                         for l, o in zip(out_labels, val_outs):
                             epoch_logs['val_' + l] = o
 
-                # Filter CFM logs
+                # Write CFMs to files
                 if self.using_cfm_metric:
+
                     # Write training CFM to file
                     for cfm_metric_name in self.metrics_cfm:
                         # Write training confusion matrix to file
-                        cfm = np.array(baselogger.get_metric_value(cfm_metric_name), dtype=np.float64)
+                        cfm = baselogger.get_metric_value(cfm_metric_name)
+
+                        self.logger.log('Totals: {}'.format(baselogger.totals))
+                        self.logger.log('CFM: {}'.format(cfm))
+
+                        if cfm is None:
+                            self.logger.warn('Could not get value from baselogger for CFM: {}'.format(cfm_metric_name))
+                            continue
+
+                        cfm = np.array(cfm, dtype=np.float64)
                         self.write_cfm_to_file(epoch, cfm_key=cfm_metric_name, cfm=cfm)
 
-                        # Write corresponding validation cfm to file
+                        # Write corresponding validation CFM to file
                         val_cfm_metric_name = 'val' + cfm_metric_name
                         if val_cfm_metric_name in epoch_logs:
                             val_cfm = epoch_logs[val_cfm_metric_name]

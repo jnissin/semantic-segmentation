@@ -21,12 +21,12 @@ class ExtendedBaseLogger(Callback):
 
     def get_metric_value(self, k):
         if k in self.totals:
-            # Streaming metrics are already averaged, so only assignment needed
+            # Streaming metrics are already averaged - return the value
             if self._is_streaming_metric(k):
                 return self.totals[k]
-            else:
-                # Make value available to next callbacks.
-                return self.totals[k] / self.seen
+
+            # Non-streaming metrics should be divided by the number of seen samples
+            return self.totals[k] / self.seen
 
         return None
 
