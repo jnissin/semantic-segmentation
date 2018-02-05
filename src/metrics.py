@@ -229,11 +229,13 @@ def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=N
                                                           weights=weights,
                                                           dtype=_CFM_DTYPE)
         cfm.reset_op = reset_op
-        cfm.update_op = update_op
+
+        K.get_session().run(K.tf.local_variables_initializer())
+        K.get_session().run([update_op])
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
-            value = K.tf.identity(value)
+        #with K.tf.control_dependencies([update_op]):
+        #    value = K.tf.identity(value)
         return value
 
     return cfm
