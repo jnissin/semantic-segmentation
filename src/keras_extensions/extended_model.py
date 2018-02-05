@@ -800,8 +800,8 @@ class ExtendedModel(Model):
         self.history = cbks.History()
         baselogger = extended_cbks.ExtendedBaseLogger()
         callbacks = [baselogger] + (callbacks or []) + [self.history]
-        if verbose:
-            callbacks += [extended_cbks.ExtendedProgbarLogger(count_mode='steps')]
+        #if verbose:
+        #    callbacks += [extended_cbks.ExtendedProgbarLogger(count_mode='steps')]
         callbacks = cbks.CallbackList(callbacks)
 
         # it's possible to callback a different model than self:

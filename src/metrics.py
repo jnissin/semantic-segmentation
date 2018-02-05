@@ -180,7 +180,6 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
-            value = K.tf.Print(value, [value], message='value: ', summarize=1024)
         return value
 
     return acc
@@ -208,6 +207,8 @@ def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
+            value = K.tf.Print(value, [value], message='\nacc: ', summarize=1024)
+
         return value
 
     return mpca
@@ -235,6 +236,8 @@ def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=N
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
+            value = K.tf.Print(value, [value], message='\ncfm: ', summarize=1024)
+
         return value
 
     return cfm
