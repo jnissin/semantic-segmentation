@@ -213,7 +213,7 @@ def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
 
 
 def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=None):
-    @function_attributes(update_op=None, reset_op=None, streaming=True, hide_from_progbar=True, exclude_from_callbacks=True, cfm=True)
+    @function_attributes(reset_op=None, streaming=True, hide_from_progbar=True, exclude_from_callbacks=True, cfm=True)
     def cfm(y_true, y_pred):
         # Get flattened versions for labels, predictions and weights
         labels, predictions, weights = _preprocess_classification_data(y_true=y_true,
@@ -230,12 +230,9 @@ def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=N
                                                           dtype=_CFM_DTYPE)
         cfm.reset_op = reset_op
 
-        K.get_session().run(K.tf.local_variables_initializer())
-        K.get_session().run([update_op])
-
         # Force to update metric values
-        #with K.tf.control_dependencies([update_op]):
-        #    value = K.tf.identity(value)
+        with K.tf.control_dependencies([update_op]):
+            value = K.tf.identity(value)
         return value
 
     return cfm
@@ -347,7 +344,7 @@ def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
 
 
 def segmentation_confusion_matrix(num_classes, num_unlabeled, ignore_classes=None):
-    @function_attributes(update_op=None, reset_op=None, streaming=True, hide_from_progbar=True, exclude_from_callbacks=True, cfm=True)
+    @function_attributes(reset_op=None, streaming=True, hide_from_progbar=True, exclude_from_callbacks=True, cfm=True)
     def cfm(y_true, y_pred):
         labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
                                                                                   y_pred=y_pred,
