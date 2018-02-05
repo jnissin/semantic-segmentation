@@ -9,7 +9,26 @@ class ExtendedBaseLogger(Callback):
 
     def _is_streaming_metric(self, metric_name):
         if metric_name is not None and self.model is not None:
+            if metric_name.startswith('val_'):
+                return (metric_name in self.model.metrics_streaming) or (metric_name[4:] in self.model.metrics_streaming)
             return metric_name in self.model.metrics_streaming
+
+    def _is_excluded_from_callbacks(self, metric_name):
+        if metric_name is not None and self.model is not None:
+            if metric_name.startswith('val_'):
+                return (metric_name in self.model.metrics_excluded_from_callbacks) or (metric_name[4:] in self.model.metrics_excluded_from_callbacks)
+            return metric_name in self.model.metrics_excluded_from_callbacks
+
+    def get_metric_value(self, k):
+        if k in self.totals:
+            # Streaming metrics are already averaged, so only assignment needed
+            if self._is_streaming_metric(k):
+                return self.totals[k]
+            else:
+                # Make value available to next callbacks.
+                return self.totals[k] / self.seen
+
+        return None
 
     def on_epoch_begin(self, epoch, logs=None):
         self.seen = 0
@@ -31,13 +50,19 @@ class ExtendedBaseLogger(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         if logs is not None:
+
+            exclude_keys = []
+
             for k in self.params['metrics']:
                 if k in self.totals:
-                    if self._is_streaming_metric(k):
-                        logs[k] = self.totals[k]
-                    else:
-                        # Make value available to next callbacks.
-                        logs[k] = self.totals[k] / self.seen
+                    logs[k] = self.get_metric_value(k)
+
+                    # If this should be excluded from the rest of the callbacks - remove the key from the dict
+                    if self._is_excluded_from_callbacks(k):
+                        exclude_keys.append(k)
+
+            for k in exclude_keys:
+                logs.pop(k)
 
 
 class ExtendedProgbarLogger(ProgbarLogger):
@@ -49,8 +74,12 @@ class ExtendedProgbarLogger(ProgbarLogger):
             filtered_logs = {}
 
             for k, v in logs.items():
-                if k not in self.model.metrics_hidden:
-                    filtered_logs[k] = v
+                if k.startswith('val_'):
+                    if k[4:] not in self.model.metrics_hidden_from_progbar and k not in self.model.metrics_hidden_from_progbar:
+                        filtered_logs[k] = v
+                else:
+                    if k not in self.model.metrics_hidden_from_progbar:
+                        filtered_logs[k] = v
 
         return filtered_logs
 

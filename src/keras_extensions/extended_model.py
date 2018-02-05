@@ -130,14 +130,29 @@ class ExtendedModel(Model):
         except Exception as e:
             self.logger.warn('Failed to write CFM metrics to file, exception: {}'.format(e.message))
 
-    def reset_streaming_metrics(self):
-        # Reset any necessary values from the metrics at the beginning of an epoch
-        for metric in self.metrics:
+    def reset_metrics(self):
+
+        def reset_metric(metric):
             if getattr(metric, 'reset_op', None) is not None:
-                self.logger.log('Resetting metric: {}'.format(metric.__name__)) # TODO: Remove
+                self.logger.debug_log('Resetting metric: {}'.format(metric.__name__))
                 K.get_session().run(metric.reset_op)
             else:
-                self.logger.log('')
+                self.logger.debug_log('No reset_op found for metric: {}'.format(metric.__name__))
+
+        # Reset any necessary values from the metrics at the beginning of an epoch
+        if isinstance(self.metrics, dict):
+            for output, metrics in self.metrics.items():
+                for metric in metrics:
+                    reset_metric(metric)
+        elif isinstance(self.metrics, list):
+            for metric in self.metrics:
+                reset_metric(metric)
+        else:
+            self.logger.warn('Unknown format for metrics, expected list or dict, got: {}'.format(self.metrics))
+
+    @property
+    def using_cfm_metric(self):
+        return self.metrics_cfm is not None and len(self.metrics_cfm) > 0
 
     @staticmethod
     def pre_create_training_enqueuer(generator,
@@ -477,8 +492,10 @@ class ExtendedModel(Model):
         self.weighted_metrics = weighted_metrics
         self.metrics_names = ['loss']
         self.metrics_tensors = []
-        self.metrics_hidden = set()
+        self.metrics_hidden_from_progbar = set()
+        self.metrics_excluded_from_callbacks = set()
         self.metrics_streaming = set()
+        self.metrics_cfm = set()
 
         # Compute total loss.
         total_loss = None
@@ -519,18 +536,24 @@ class ExtendedModel(Model):
         nested_metrics = _collect_metrics(metrics, self.output_names)
         nested_weighted_metrics = _collect_metrics(weighted_metrics, self.output_names)
 
-        def append_metric(layer_index, metric_name, metric_tensor, is_hidden, is_streaming):
+        def append_metric(layer_index, metric_name, metric_tensor, is_hidden_from_progbar, is_excluded_from_callbacks, is_streaming, is_cfm):
             """Helper function used in loop below."""
             if len(self.output_names) > 1:
                 metric_name = self.output_names[layer_index] + '_' + metric_name
             self.metrics_names.append(metric_name)
             self.metrics_tensors.append(metric_tensor)
 
-            if is_hidden:
-                self.metrics_hidden.add(metric_name)
+            if is_hidden_from_progbar:
+                self.metrics_hidden_from_progbar.add(metric_name)
+
+            if is_excluded_from_callbacks:
+                self.metrics_excluded_from_callbacks.add(metric_name)
 
             if is_streaming:
                 self.metrics_streaming.add(metric_name)
+
+            if is_cfm:
+                self.metrics_cfm.add(metric_name)
 
         with K.name_scope('metrics'):
             for i in range(len(self.outputs)):
@@ -561,32 +584,37 @@ class ExtendedModel(Model):
                             else:
                                 acc_fn = metrics_module.categorical_accuracy
 
-                            is_hidden = getattr(acc_fn, 'hidden', False)
+                            is_hidden_from_progbar = getattr(acc_fn, 'hide_from_progbar', False)
+                            is_excluded_from_callbacks = getattr(acc_fn, 'exclude_from_callbacks', False)
                             is_streaming = getattr(acc_fn, 'streaming', False)
+                            is_cfm = getattr(acc_fn, 'cfm', False)
                             weighted_metric_fn = _weighted_masked_objective(acc_fn)
                             metric_name = metric_name_prefix + 'acc'
-                        # Added special case for CFMs
-                        elif metrics_module.get(metric).__name__ == 'cfm':
-                            metric_fn = metrics_module.get(metric)
-                            is_hidden = getattr(metric_fn, 'hidden', False)
-                            is_streaming = getattr(metric_fn, 'streaming', False)
-                            weighted_metric_fn = lambda y_true, y_pred, weights, mask: metric_fn(y_true, y_pred)
-                            metric_name = metric_name_prefix + metric_fn.__name__
                         else:
                             metric_fn = metrics_module.get(metric)
-                            is_hidden = getattr(metric_fn, 'hidden', False)
+                            is_hidden_from_progbar = getattr(metric_fn, 'hide_from_progbar', False)
+                            is_excluded_from_callbacks = getattr(metric_fn, 'exclude_from_callbacks', False)
                             is_streaming = getattr(metric_fn, 'streaming', False)
-                            if is_streaming:
+                            is_cfm = getattr(metric_fn, 'cfm', False)
+
+                            # Streaming metrics and CFMs skip the weighted_masked_objective function
+                            if is_streaming or is_cfm:
                                 weighted_metric_fn = lambda y_true, y_pred, weights, mask: metric_fn(y_true, y_pred)
                             else:
                                 weighted_metric_fn = _weighted_masked_objective(metric_fn)
+
                             metric_name = metric_name_prefix + metric_fn.__name__
 
                         with K.name_scope(metric_name):
-                            metric_result = weighted_metric_fn(y_true, y_pred,
-                                                               weights=weights,
-                                                               mask=masks[i])
-                        append_metric(i, metric_name, metric_result, is_hidden, is_streaming)
+                            metric_result = weighted_metric_fn(y_true, y_pred, weights=weights, mask=masks[i])
+
+                        append_metric(i,
+                                      metric_name,
+                                      metric_result,
+                                      is_hidden_from_progbar,
+                                      is_excluded_from_callbacks,
+                                      is_streaming,
+                                      is_cfm)
 
                 handle_metrics(output_metrics)
                 handle_metrics(output_weighted_metrics, weights=weights)
@@ -762,7 +790,6 @@ class ExtendedModel(Model):
         # Prepare display labels.
         out_labels = self._get_deduped_metrics_names()
         callback_metrics = out_labels + ['val_' + n for n in out_labels]
-        using_cfm_metric = 'logits_cfm' in out_labels or 'cfm' in out_labels
 
         # prepare callbacks
         self.history = cbks.History()
@@ -847,7 +874,7 @@ class ExtendedModel(Model):
             while epoch < epochs:
 
                 # Reset any necessary values from the metrics at the beginning of an epoch
-                self.reset_streaming_metrics()
+                self.reset_metrics()
 
                 epoch_s_time = time.time()
                 callbacks.on_epoch_begin(epoch)
@@ -929,9 +956,6 @@ class ExtendedModel(Model):
                     if steps_done >= steps_per_epoch and do_validation:
                         self.logger.log('Epoch {} training took: {} s'.format(epoch, time.time()-epoch_s_time))
 
-                        # Reset any necessary metrics before validation run
-                        self.reset_streaming_metrics()
-
                         if val_gen:
                             # Extended functionality: pass trainer and validation flag
                             enqueuer.pause_run()
@@ -961,43 +985,24 @@ class ExtendedModel(Model):
                             epoch_logs['val_' + l] = o
 
                 # Filter CFM logs
-                filtered_epoch_logs = {}
+                if self.using_cfm_metric:
+                    # Write training CFM to file
+                    for cfm_metric_name in self.metrics_cfm:
+                        # Write training confusion matrix to file
+                        cfm = np.array(baselogger.get_metric_value(cfm_metric_name), dtype=np.float64)
+                        self.write_cfm_to_file(epoch, cfm_key=cfm_metric_name, cfm=cfm)
 
-                if using_cfm_metric:
-                    folder_path = self.logger.log_folder_path
+                        # Write corresponding validation cfm to file
+                        val_cfm_metric_name = 'val' + cfm_metric_name
+                        if val_cfm_metric_name in epoch_logs:
+                            val_cfm = epoch_logs[val_cfm_metric_name]
+                            self.write_cfm_to_file(epoch, cfm_key=val_cfm_metric_name, cfm=val_cfm)
 
-                    # Prune CFM information from the training logs of BaseLogger callback
-                    prune = []
-                    for key in baselogger.totals.keys():
-                        if 'cfm' in key:
-                            prune.append(key)
-
-                    # Write the training CFMs to file and prune the keys from epoch logs
-                    for key in prune:
-                        cfm = np.array(baselogger.totals[key], dtype=np.float64) / np.array(baselogger.seen, dtype=np.float64)
-
-                        if key in baselogger.totals:
-                            del baselogger.totals[key]
-
-                        self.write_cfm_to_file(epoch, cfm_key=key, cfm=cfm)
-
-                    # Write the validation CFMs to file
-                    if folder_path is None:
-                        self.logger.warn('Cannot log CFM metrics, log folder path is None')
-                    else:
-                        for key, value in epoch_logs.items():
-                            if 'cfm' not in key:
-                                filtered_epoch_logs[key] = value
-                            else:
-                                self.write_cfm_to_file(epoch, cfm_key=key, cfm=value)
-                else:
-                    filtered_epoch_logs = epoch_logs
-
-                callbacks.on_epoch_end(epoch, filtered_epoch_logs)
+                callbacks.on_epoch_end(epoch, epoch_logs)
 
                 # Extended functionality: notify trainer
                 if trainer is not None:
-                    trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, filtered_epoch_logs)
+                    trainer.on_epoch_end(epoch, (epoch+1)*steps_per_epoch, epoch_logs)
 
                 epoch += 1
                 self.logger.log('Epoch {} took in total: {} s'.format(epoch-1, time.time()-epoch_s_time))
@@ -1155,8 +1160,7 @@ class ExtendedModel(Model):
         self.logger.log('Evaluation took: {} s'.format(time.time()-eval_s_time))
 
         if not isinstance(outs, list):
-            return np.average(np.asarray(all_outs),
-                              weights=batch_sizes)
+            return np.average(np.asarray(all_outs), weights=batch_sizes)
         else:
             averages = []
 
