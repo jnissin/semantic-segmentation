@@ -1004,8 +1004,8 @@ class ExtendedModel(Model):
                         cfm = np.array(cfm, dtype=np.float64)
                         self.write_cfm_to_file(epoch, cfm_key=cfm_metric_name, cfm=cfm)
 
-                        # Write corresponding validation CFM to file
-                        val_cfm_metric_name = 'val' + cfm_metric_name
+                        # Write corresponding validation CFM to file - same labels with 'val_' prefix assumed
+                        val_cfm_metric_name = 'val_' + cfm_metric_name
                         if val_cfm_metric_name in epoch_logs:
                             val_cfm = epoch_logs[val_cfm_metric_name]
                             self.write_cfm_to_file(epoch, cfm_key=val_cfm_metric_name, cfm=val_cfm)
