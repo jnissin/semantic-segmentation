@@ -997,9 +997,6 @@ class ExtendedModel(Model):
                         # Write training confusion matrix to file
                         cfm = baselogger.get_metric_value(cfm_metric_name)
 
-                        self.logger.log('Totals: {}'.format(baselogger.totals))
-                        self.logger.log('CFM: {}'.format(cfm))
-
                         if cfm is None:
                             self.logger.warn('Could not get value from baselogger for CFM: {}'.format(cfm_metric_name))
                             continue
