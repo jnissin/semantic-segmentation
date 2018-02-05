@@ -59,8 +59,14 @@ def _create_reset_metric(metric, scope='reset_metrics', **metric_args):
     """
     with K.tf.variable_scope(scope) as scope:
         value, update_op = metric(**metric_args)
-        v = K.tf.contrib.framework.get_variables(scope.original_name_scope, collection=K.tf.GraphKeys.LOCAL_VARIABLES)
-        reset_op = K.tf.variables_initializer(v)
+        metric_vars = K.tf.contrib.framework.get_variables(scope.original_name_scope, collection=K.tf.GraphKeys.LOCAL_VARIABLES)
+
+        # Add metric variables to GLOBAL_VARIABLES collection.
+        # They will be initialized for new session.
+        for v in metric_vars:
+            K.tf.add_to_collection(K.tf.GraphKeys.GLOBAL_VARIABLES, v)
+
+        reset_op = K.tf.variables_initializer(metric_vars)
     return value, update_op, reset_op
 
 
@@ -220,6 +226,7 @@ def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=N
                                                                        y_pred=y_pred,
                                                                        num_unlabeled=num_unlabeled,
                                                                        ignore_classes=ignore_classes)
+
 
         value, update_op, reset_op = _create_reset_metric(_streaming_confusion_matrix,
                                                           'metrics_cfm',
