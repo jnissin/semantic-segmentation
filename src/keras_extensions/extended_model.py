@@ -961,6 +961,9 @@ class ExtendedModel(Model):
                     if steps_done >= steps_per_epoch and do_validation:
                         self.logger.log('Epoch {} training took: {} s'.format(epoch, time.time()-epoch_s_time))
 
+                        # Reset metrics before validation run
+                        self.reset_metrics()
+
                         if val_gen:
                             # Extended functionality: pass trainer and validation flag
                             enqueuer.pause_run()
@@ -1011,6 +1014,9 @@ class ExtendedModel(Model):
                             self.write_cfm_to_file(epoch, cfm_key=val_cfm_metric_name, cfm=val_cfm)
 
                 callbacks.on_epoch_end(epoch, epoch_logs)
+
+                # Reset metrics after epoch ends
+                self.reset_metrics()
 
                 # Extended functionality: notify trainer
                 if trainer is not None:
