@@ -231,9 +231,8 @@ def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=N
         cfm.reset_op = reset_op
 
         # Force to update metric values
-        K.get_session().run(update_op)
-#        with K.tf.control_dependencies([update_op]):
-        value = K.tf.identity(value)
+        with K.tf.control_dependencies([update_op]):
+            value = K.tf.identity(value)
         return value
 
     return cfm
@@ -362,9 +361,8 @@ def segmentation_confusion_matrix(num_classes, num_unlabeled, ignore_classes=Non
         cfm.reset_op = reset_op
 
         # Force to update metric values
-        K.get_session().run(update_op)
-        #with K.tf.control_dependencies([update_op]):
-        value = K.tf.identity(value)
+        with K.tf.control_dependencies([update_op]):
+            value = K.tf.identity(value)
         return value
 
     return cfm

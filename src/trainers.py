@@ -1535,18 +1535,19 @@ class MeanTeacherTrainerBase(TrainerBase):
                     random_seed=self.random_seed)
 
                 # Parse all validation metrics to a single string
-                metrics_names = self.teacher_model.metrics_names
                 val_outs_str = ""
 
                 for i in range(0, len(val_outs)):
-                    if 'cfm' in metrics_names[i]:
+                    metric_name = self.teacher_model.metrics_names[i]
+
+                    if self.teacher_model.using_cfm_metric and metric_name in self.teacher_model.metrics_cfm:
                         self.teacher_model.write_cfm_to_file(epoch=epoch_index,
-                                                             cfm_key='teacher_'+metrics_names[i],
+                                                             cfm_key='teacher_'+metric_name,
                                                              cfm=val_outs[i])
                     else:
-                        val_outs_str = val_outs_str + "val_{}: {}, ".format(metrics_names[i], val_outs[i])
+                        val_outs_str = val_outs_str + "val_{}: {}, ".format(metric_name, val_outs[i])
 
-                        if metrics_names[i] == 'loss':
+                        if metric_name == 'loss':
                             val_loss = val_outs[i]
 
                 val_outs_str = val_outs_str[0:-2]
