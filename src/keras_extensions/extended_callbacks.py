@@ -41,7 +41,7 @@ class ExtendedBaseLogger(Callback):
 
         for k, v in logs.items():
             if self._is_streaming_metric(k):
-                self.totals[k] = k
+                self.totals[k] = v
             else:
                 if k in self.totals:
                     self.totals[k] += v * batch_size
