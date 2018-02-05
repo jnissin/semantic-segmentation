@@ -180,7 +180,7 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
             value = K.tf.identity(value)
-            K.tf.Print(value, [value], message='value: ', summarize=1024)
+            value = K.tf.Print(value, [value], message='value: ', summarize=1024)
         return value
 
     return acc
