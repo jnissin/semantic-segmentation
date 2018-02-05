@@ -61,7 +61,7 @@ def _create_reset_metric(metric, scope='reset_metrics', **metric_args):
         value, update_op = metric(**metric_args)
         v = K.tf.contrib.framework.get_variables(scope.original_name_scope, collection=K.tf.GraphKeys.LOCAL_VARIABLES)
         reset_op = K.tf.variables_initializer(v)
-    return value, update_op, reset_op
+    return value, update_op, reset_op, v
 
 
 def _create_local(name, shape, collections=None, validate_shape=True, dtype=K.tf.float32):
@@ -169,16 +169,16 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
                                                                        ignore_classes=ignore_classes)
 
         # Calculate accuracy using Tensorflow
-        value, update_op, reset_op = _create_reset_metric(K.tf.metrics.accuracy,
-                                                          'metrics_accuracy',
-                                                          labels=labels,
-                                                          predictions=predictions,
-                                                          weights=weights)
+        value, update_op, reset_op, stream_vars = _create_reset_metric(K.tf.metrics.accuracy,
+                                                                       'metrics_accuracy',
+                                                                       labels=labels,
+                                                                       predictions=predictions,
+                                                                       weights=weights)
 
         acc.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
+        with K.tf.control_dependencies([update_op] + stream_vars):
             value = K.tf.identity(value)
         return value
 
@@ -195,17 +195,17 @@ def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
                                                                        ignore_classes=ignore_classes)
 
         # Calculate MPCA using Tensorflow
-        value, update_op, reset_op = _create_reset_metric(K.tf.metrics.mean_per_class_accuracy,
-                                                          'metrics_mpca',
-                                                          labels=labels,
-                                                          predictions=predictions,
-                                                          num_classes=num_classes,
-                                                          weights=weights)
+        value, update_op, reset_op, stream_vars = _create_reset_metric(K.tf.metrics.mean_per_class_accuracy,
+                                                                       'metrics_mpca',
+                                                                       labels=labels,
+                                                                       predictions=predictions,
+                                                                       num_classes=num_classes,
+                                                                       weights=weights)
 
         mpca.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
+        with K.tf.control_dependencies([update_op] + stream_vars):
             value = K.tf.identity(value)
         return value
 
@@ -221,17 +221,17 @@ def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=N
                                                                        num_unlabeled=num_unlabeled,
                                                                        ignore_classes=ignore_classes)
 
-        value, update_op, reset_op = _create_reset_metric(_streaming_confusion_matrix,
-                                                          'metrics_cfm',
-                                                          labels=labels,
-                                                          predictions=predictions,
-                                                          num_classes=num_classes,
-                                                          weights=weights,
-                                                          dtype=_CFM_DTYPE)
+        value, update_op, reset_op, stream_vars = _create_reset_metric(_streaming_confusion_matrix,
+                                                                       'metrics_cfm',
+                                                                       labels=labels,
+                                                                       predictions=predictions,
+                                                                       num_classes=num_classes,
+                                                                       weights=weights,
+                                                                       dtype=_CFM_DTYPE)
         cfm.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
+        with K.tf.control_dependencies([update_op] + stream_vars):
             value = K.tf.identity(value)
         return value
 
@@ -275,16 +275,16 @@ def segmentation_accuracy(num_unlabeled, ignore_classes=None):
                                                                                   num_unlabeled=num_unlabeled,
                                                                                   ignore_classes=ignore_classes)
         # Calculate accuracy using Tensorflow
-        value, update_op, reset_op = _create_reset_metric(K.tf.metrics.accuracy,
-                                                          'metrics_accuracy',
-                                                          labels=labels,
-                                                          predictions=predictions,
-                                                          weights=weights)
+        value, update_op, reset_op, stream_vars = _create_reset_metric(K.tf.metrics.accuracy,
+                                                                       'metrics_accuracy',
+                                                                       labels=labels,
+                                                                       predictions=predictions,
+                                                                       weights=weights)
 
         acc.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
+        with K.tf.control_dependencies([update_op] + stream_vars):
             value = K.tf.identity(value)
         return value
 
@@ -300,17 +300,17 @@ def segmentation_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_clas
                                                                                   ignore_classes=ignore_classes)
 
         # Calculate MPCA using Tensorflow
-        value, update_op, reset_op = _create_reset_metric(K.tf.metrics.mean_per_class_accuracy,
-                                                          'metrics_mpca',
-                                                          labels=labels,
-                                                          predictions=predictions,
-                                                          num_classes=num_classes,
-                                                          weights=weights)
+        value, update_op, reset_op, stream_vars = _create_reset_metric(K.tf.metrics.mean_per_class_accuracy,
+                                                                       'metrics_mpca',
+                                                                       labels=labels,
+                                                                       predictions=predictions,
+                                                                       num_classes=num_classes,
+                                                                       weights=weights)
 
         mpca.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
+        with K.tf.control_dependencies([update_op] + stream_vars):
             value = K.tf.identity(value)
         return value
 
@@ -326,17 +326,17 @@ def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
                                                                                   ignore_classes=ignore_classes)
 
         # Calculate MIoU using Tensorflow
-        value, update_op, reset_op = _create_reset_metric(K.tf.metrics.mean_iou,
-                                                          'metrics_miou',
-                                                          labels=labels,
-                                                          predictions=predictions,
-                                                          num_classes=num_classes,
-                                                          weights=weights)
+        value, update_op, reset_op, stream_vars = _create_reset_metric(K.tf.metrics.mean_iou,
+                                                                       'metrics_miou',
+                                                                       labels=labels,
+                                                                       predictions=predictions,
+                                                                       num_classes=num_classes,
+                                                                       weights=weights)
 
         miou.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
+        with K.tf.control_dependencies([update_op] + stream_vars):
             value = K.tf.identity(value)
         return value
 
@@ -351,17 +351,17 @@ def segmentation_confusion_matrix(num_classes, num_unlabeled, ignore_classes=Non
                                                                                   num_unlabeled=num_unlabeled,
                                                                                   ignore_classes=ignore_classes)
 
-        value, update_op, reset_op = _create_reset_metric(_streaming_confusion_matrix,
-                                                          'metrics_cfm',
-                                                          labels=labels,
-                                                          predictions=predictions,
-                                                          num_classes=num_classes,
-                                                          weights=weights,
-                                                          dtype=_CFM_DTYPE)
+        value, update_op, reset_op, stream_vars = _create_reset_metric(_streaming_confusion_matrix,
+                                                                       'metrics_cfm',
+                                                                       labels=labels,
+                                                                       predictions=predictions,
+                                                                       num_classes=num_classes,
+                                                                       weights=weights,
+                                                                       dtype=_CFM_DTYPE)
         cfm.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
+        with K.tf.control_dependencies([update_op] + stream_vars):
             value = K.tf.identity(value)
         return value
 
