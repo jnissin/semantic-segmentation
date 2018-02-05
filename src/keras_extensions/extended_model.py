@@ -1006,6 +1006,7 @@ class ExtendedModel(Model):
 
                         cfm = np.array(cfm, dtype=np.float64)
                         self.write_cfm_to_file(epoch, cfm_key=cfm_metric_name, cfm=cfm)
+                        self.logger.log('BaseLogger seen: {}'.format(baselogger.seen))
 
                         # Write corresponding validation CFM to file - same labels with 'val_' prefix assumed
                         val_cfm_metric_name = 'val_' + cfm_metric_name
@@ -1184,11 +1185,16 @@ class ExtendedModel(Model):
 
             for i in range(len(outs)):
                 per_batch_metrics = np.array([out[i] for out in all_outs])
+                metric_name = self.metrics_names[i]
 
-                # If the ndim is more than two e.g. in CFMs calculate the sum and append to the output metrics
-                if per_batch_metrics.ndim < 2:
-                    averages.append(np.average(per_batch_metrics, weights=batch_sizes))
+                # If the metric is a streaming metric - only use the lasr value
+                if metric_name in self.metrics_streaming:
+                    averages.append(per_batch_metrics[-1])
                 else:
-                    averages.append(np.sum(per_batch_metrics, axis=0))
+                    # If the metric is a CFM - calculate the sum across batches instead of an average
+                    if metric_name in self.metrics_cfm:
+                        averages.append(np.sum(per_batch_metrics, axis=0))
+                    else:
+                        averages.append(np.average(per_batch_metrics, weights=batch_sizes))
 
             return averages
