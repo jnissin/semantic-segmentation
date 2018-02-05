@@ -232,6 +232,32 @@ class ExtendedModel(Model):
 
         return validation_enqueuer
 
+    def _metrics_updates(self):
+
+        update_ops = []
+
+        for output, metrics in self.metrics.items():
+            for metric in metrics:
+                if getattr(metric, 'update_op', None) is not None:
+                    update_ops.append(getattr(metric, 'update_op', None))
+
+        return update_ops
+
+    def _make_test_function(self):
+        if not hasattr(self, 'test_function'):
+            raise RuntimeError('You must compile your model before using it.')
+        if self.test_function is None:
+            inputs = self._feed_inputs + self._feed_targets + self._feed_sample_weights
+            if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
+                inputs += [K.learning_phase()]
+            # Return loss and metrics, no gradient updates.
+            # Does update the network states.
+            self.test_function = K.function(inputs,
+                                            [self.total_loss] + self.metrics_tensors,
+                                            updates=self.state_updates + self._metrics_updates,
+                                            name='test_function',
+                                            **self._function_kwargs)
+
     def compile(self, optimizer, loss, metrics=None, loss_weights=None,
                 sample_weight_mode=None, weighted_metrics=None,
                 target_tensors=None, **kwargs):
