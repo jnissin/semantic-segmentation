@@ -16,8 +16,6 @@ class ExtendedBaseLogger(Callback):
 
     def _is_excluded_from_callbacks(self, metric_name):
         if metric_name is not None and self.model is not None:
-            print 'Checking exclusiong for: {}'.format(metric_name)
-            print 'Exclusion list: {}'.format(self.model.metrics_excluded_from_callbacks)
             if metric_name.startswith('val_'):
                 return (metric_name in self.model.metrics_excluded_from_callbacks) or\
                        (metric_name[4:] in self.model.metrics_excluded_from_callbacks)
@@ -55,15 +53,16 @@ class ExtendedBaseLogger(Callback):
     def on_epoch_end(self, epoch, logs=None):
         if logs is not None:
 
-            exclude_keys = []
-
             for k in self.params['metrics']:
                 if k in self.totals:
                     logs[k] = self.get_metric_value(k)
 
-                    # If this should be excluded from the rest of the callbacks - remove the key from the dict
-                    if self._is_excluded_from_callbacks(k):
-                        exclude_keys.append(k)
+            # If this should be excluded from the rest of the callbacks - remove the key from the dict
+            exclude_keys = []
+
+            for k, v in logs.items():
+                if self._is_excluded_from_callbacks(k):
+                    exclude_keys.append(k)
 
             for k in exclude_keys:
                 del logs[k]
