@@ -10,13 +10,15 @@ class ExtendedBaseLogger(Callback):
     def _is_streaming_metric(self, metric_name):
         if metric_name is not None and self.model is not None:
             if metric_name.startswith('val_'):
-                return (metric_name in self.model.metrics_streaming) or (metric_name[4:] in self.model.metrics_streaming)
+                return (metric_name in self.model.metrics_streaming) or\
+                       (metric_name[4:] in self.model.metrics_streaming)
             return metric_name in self.model.metrics_streaming
 
     def _is_excluded_from_callbacks(self, metric_name):
         if metric_name is not None and self.model is not None:
             if metric_name.startswith('val_'):
-                return (metric_name in self.model.metrics_excluded_from_callbacks) or (metric_name[4:] in self.model.metrics_excluded_from_callbacks)
+                return (metric_name in self.model.metrics_excluded_from_callbacks) or\
+                       (metric_name[4:] in self.model.metrics_excluded_from_callbacks)
             return metric_name in self.model.metrics_excluded_from_callbacks
 
     def get_metric_value(self, k):
@@ -62,7 +64,8 @@ class ExtendedBaseLogger(Callback):
                         exclude_keys.append(k)
 
             for k in exclude_keys:
-                logs.pop(k)
+                print 'EXCLUDING: {}'.format(k)
+                del logs[k]
 
 
 class ExtendedProgbarLogger(ProgbarLogger):
