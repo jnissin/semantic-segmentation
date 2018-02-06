@@ -189,12 +189,6 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
 def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_classes=None):
     @function_attributes(reset_op=None, streaming=True)
     def mpca(y_true, y_pred):
-        # Fix the number of classes attribute
-        if ignore_classes is not None:
-            nc = num_classes - len(ignore_classes)
-        else:
-            nc = num_classes
-
         # Get flattened versions for labels, predictions and weights
         labels, predictions, weights = _preprocess_classification_data(y_true=y_true,
                                                                        y_pred=y_pred,
@@ -206,7 +200,7 @@ def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
                                                           'metrics_mpca',
                                                           labels=labels,
                                                           predictions=predictions,
-                                                          num_classes=nc,
+                                                          num_classes=num_classes,
                                                           weights=weights)
 
         mpca.reset_op = reset_op

@@ -1042,6 +1042,7 @@ class TrainerBase:
         transfer_model_weights_file_path = transfer_weights_options['transfer_model_weights_file_path']
 
         self.logger.log('Transferring weights from file: {}'.format(transfer_model_weights_file_path))
+
         from_layer_index = int(transfer_weights_options['from_layer_index'])
         to_layer_index = int(transfer_weights_options['to_layer_index'])
         freeze_from_layer_index = transfer_weights_options.get('freeze_from_layer_index')
