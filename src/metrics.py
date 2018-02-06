@@ -178,8 +178,7 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
         acc.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
-            update_op = K.tf.identity(update_op)
+        with K.tf.control_dependencies([update_op, value]):
             value = K.tf.identity(value)
 
         return value
@@ -190,6 +189,12 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
 def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_classes=None):
     @function_attributes(reset_op=None, streaming=True)
     def mpca(y_true, y_pred):
+        # Fix the number of classes attribute
+        if ignore_classes is not None:
+            nc = num_classes - len(ignore_classes)
+        else:
+            nc = num_classes
+
         # Get flattened versions for labels, predictions and weights
         labels, predictions, weights = _preprocess_classification_data(y_true=y_true,
                                                                        y_pred=y_pred,
@@ -201,14 +206,13 @@ def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
                                                           'metrics_mpca',
                                                           labels=labels,
                                                           predictions=predictions,
-                                                          num_classes=num_classes,
+                                                          num_classes=nc,
                                                           weights=weights)
 
         mpca.reset_op = reset_op
 
         # Force to update metric values
-        with K.tf.control_dependencies([update_op]):
-            update_op = K.tf.identity(update_op)
+        with K.tf.control_dependencies([update_op, value]):
             value = K.tf.identity(value)
 
         return value
@@ -219,6 +223,7 @@ def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
 def classification_confusion_matrix(num_classes, num_unlabeled, ignore_classes=None):
     @function_attributes(reset_op=None, streaming=True, hide_from_progbar=True, exclude_from_callbacks=True, cfm=True)
     def cfm(y_true, y_pred):
+
         # Get flattened versions for labels, predictions and weights
         labels, predictions, weights = _preprocess_classification_data(y_true=y_true,
                                                                        y_pred=y_pred,
