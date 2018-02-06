@@ -1189,12 +1189,6 @@ class ExtendedModel(Model):
                 # If the metric is a streaming metric - only use the lasr value
                 if metric_name in self.metrics_streaming:
                     averages.append(per_batch_metrics[-1])
-
-                    # Writing debug CFMs to file, TODO: REMOVE
-                    if metric_name in self.metrics_cfm:
-                        for idx, cfm in enumerate(per_batch_metrics):
-                            self.write_cfm_to_file(idx, cfm_key='debug_cfm', cfm=cfm)
-
                 else:
                     # If the metric is a CFM - calculate the sum across batches instead of an average
                     if metric_name in self.metrics_cfm:
