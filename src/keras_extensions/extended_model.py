@@ -800,8 +800,8 @@ class ExtendedModel(Model):
         self.history = cbks.History()
         baselogger = extended_cbks.ExtendedBaseLogger()
         callbacks = [baselogger] + (callbacks or []) + [self.history]
-        #if verbose:
-        #    callbacks += [extended_cbks.ExtendedProgbarLogger(count_mode='steps')]
+        if verbose:
+            callbacks += [extended_cbks.ExtendedProgbarLogger(count_mode='steps')]
         callbacks = cbks.CallbackList(callbacks)
 
         # it's possible to callback a different model than self:
@@ -931,7 +931,7 @@ class ExtendedModel(Model):
 
                     s_time = time.time()
 
-                    self.logger.log('STEP: {}'.format(step_index)) # TODO: REMOVE!
+                    self.logger.log('Training step: {}, b_size: {}'.format(step_index, batch_size)) # TODO: REMOVE!
                     outs = self.train_on_batch(x, y,
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
@@ -1158,6 +1158,7 @@ class ExtendedModel(Model):
                     batch_size = len(list(x.values())[0])
                 else:
                     batch_size = len(x)
+                self.logger.log('Test step: {}, b_size: {}'.format(steps_done, batch_size))  # TODO: REMOVE!
                 if batch_size == 0:
                     raise ValueError('Received an empty batch. '
                                      'Batches should at least contain one item.')
