@@ -180,7 +180,7 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op, value]):
-            value = K.tf.identity(value)
+            value = K.tf.identity(update_op)
 
         return value
 
@@ -318,7 +318,7 @@ def segmentation_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_clas
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
-            value = K.tf.identity(update_op)
+            value = K.tf.identity(value)
 
         return value
 
@@ -345,7 +345,7 @@ def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
-            value = K.tf.identity(update_op)
+            value = K.tf.identity(value)
 
         return value
 
