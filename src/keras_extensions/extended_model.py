@@ -931,7 +931,6 @@ class ExtendedModel(Model):
 
                     s_time = time.time()
 
-                    self.logger.log('Training step: {}, b_size: {}'.format(step_index, batch_size)) # TODO: REMOVE!
                     outs = self.train_on_batch(x, y,
                                                sample_weight=sample_weight,
                                                class_weight=class_weight)
@@ -1158,7 +1157,6 @@ class ExtendedModel(Model):
                     batch_size = len(list(x.values())[0])
                 else:
                     batch_size = len(x)
-                self.logger.log('Test step: {}, b_size: {}'.format(steps_done, batch_size))  # TODO: REMOVE!
                 if batch_size == 0:
                     raise ValueError('Received an empty batch. '
                                      'Batches should at least contain one item.')
@@ -1191,6 +1189,12 @@ class ExtendedModel(Model):
                 # If the metric is a streaming metric - only use the lasr value
                 if metric_name in self.metrics_streaming:
                     averages.append(per_batch_metrics[-1])
+
+                    # Writing debug CFMs to file, TODO: REMOVE
+                    if metric_name in self.metrics_cfm:
+                        for idx, cfm in enumerate(per_batch_metrics):
+                            self.write_cfm_to_file(idx, cfm_key='debug_cfm', cfm=cfm)
+
                 else:
                     # If the metric is a CFM - calculate the sum across batches instead of an average
                     if metric_name in self.metrics_cfm:
