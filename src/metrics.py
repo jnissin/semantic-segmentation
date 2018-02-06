@@ -138,11 +138,6 @@ def _preprocess_classification_data(y_true, y_pred, num_unlabeled, ignore_classe
     K.tf.assert_rank(y_true, 2)  # BxC (one-hot encoded)
     K.tf.assert_rank(y_pred, 2)  # BxC (class probabilities)
 
-    if ignore_classes is not None and len(ignore_classes) > 0:
-        _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
-    else:
-        _ignore_classes = K.tf.constant([-1], dtype=K.tf.int32)
-
     # Assumes that in evaluation/validation there are no unlabeled
     num_labeled = K.in_train_phase(K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32),
                                    K.tf.shape(y_true)[0])
@@ -150,7 +145,13 @@ def _preprocess_classification_data(y_true, y_pred, num_unlabeled, ignore_classe
     # Get flattened versions for labels, predictions and weights
     labels = K.tf.cast(K.tf.argmax(y_true[0:num_labeled], axis=-1), dtype=K.tf.int32)
     predictions = K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), dtype=K.tf.int32)
-    weights = K.tf.cast(K.tf.logical_not(_get_ignore_mask(labels, _ignore_classes)), dtype=K.tf.float32)
+
+    if ignore_classes is not None and len(ignore_classes) > 0:
+        _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
+        ignore_mask =_get_ignore_mask(labels, _ignore_classes)
+        weights = K.tf.cast(K.tf.logical_not(ignore_mask), dtype=K.tf.float32)
+    else:
+        weights = K.tf.ones_like(labels, dtype=K.tf.float32)
 
     K.tf.assert_rank(labels, 1)
     K.tf.assert_rank(predictions, 1)
@@ -250,34 +251,35 @@ def _preprocess_segmentation_data(y_true, y_pred, num_unlabeled, ignore_classes)
     K.tf.assert_rank(y_true, 4)  # BxHxWx1
     K.tf.assert_rank(y_pred, 4)  # BxHxWxC
 
-    if ignore_classes is not None and len(ignore_classes) > 0:
-        _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
-    else:
-        _ignore_classes = K.tf.constant([-1], dtype=K.tf.int32)
-
     # Assumes that in evaluation/validation there are no unlabeled
     num_labeled = K.in_train_phase(K.tf.cast(K.tf.shape(y_true)[0] - num_unlabeled, dtype=K.tf.int32),
                                    K.tf.shape(y_true)[0])
 
     labels = K.tf.cast(K.flatten(K.tf.squeeze(y_true[0:num_labeled], axis=-1)), dtype=K.tf.int32)
     predictions = K.flatten(K.tf.cast(K.tf.argmax(y_pred[0:num_labeled], axis=-1), K.tf.int32))
-    ignore_mask = _get_ignore_mask(labels, _ignore_classes)
-    weights = K.tf.cast(K.tf.logical_not(ignore_mask), dtype=K.tf.float32)
+
+    if ignore_classes is not None and len(ignore_classes) > 0:
+        _ignore_classes = K.tf.constant(ignore_classes, dtype=K.tf.int32)
+        ignore_mask = _get_ignore_mask(labels, _ignore_classes)
+        weights = K.tf.cast(K.tf.logical_not(ignore_mask), dtype=K.tf.float32)
+        weights = weights
+    else:
+        weights = K.tf.ones_like(labels, dtype=K.tf.float32)
 
     K.tf.assert_rank(labels, 1)       # Flattened labels
     K.tf.assert_rank(predictions, 1)  # Flattened predictions
     K.tf.assert_rank(weights, 1)      # Flattened weights
 
-    return labels, predictions, ignore_mask, weights
+    return labels, predictions, weights
 
 
 def segmentation_accuracy(num_unlabeled, ignore_classes=None):
     @function_attributes(reset_op=None, streaming=True)
     def acc(y_true, y_pred):
-        labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
-                                                                                  y_pred=y_pred,
-                                                                                  num_unlabeled=num_unlabeled,
-                                                                                  ignore_classes=ignore_classes)
+        labels, predictions, weights = _preprocess_segmentation_data(y_true=y_true,
+                                                                     y_pred=y_pred,
+                                                                     num_unlabeled=num_unlabeled,
+                                                                     ignore_classes=ignore_classes)
         # Calculate accuracy using Tensorflow
         value, update_op, reset_op = _create_reset_metric(K.tf.metrics.accuracy,
                                                           'metrics_accuracy',
@@ -299,10 +301,10 @@ def segmentation_accuracy(num_unlabeled, ignore_classes=None):
 def segmentation_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_classes=None):
     @function_attributes(reset_op=None, streaming=True)
     def mpca(y_true, y_pred):
-        labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
-                                                                                  y_pred=y_pred,
-                                                                                  num_unlabeled=num_unlabeled,
-                                                                                  ignore_classes=ignore_classes)
+        labels, predictions, weights = _preprocess_segmentation_data(y_true=y_true,
+                                                                     y_pred=y_pred,
+                                                                     num_unlabeled=num_unlabeled,
+                                                                     ignore_classes=ignore_classes)
 
         # Calculate MPCA using Tensorflow
         value, update_op, reset_op = _create_reset_metric(K.tf.metrics.mean_per_class_accuracy,
@@ -326,10 +328,10 @@ def segmentation_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_clas
 def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
     @function_attributes(reset_op=None, streaming=True)
     def miou(y_true, y_pred):
-        labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
-                                                                                  y_pred=y_pred,
-                                                                                  num_unlabeled=num_unlabeled,
-                                                                                  ignore_classes=ignore_classes)
+        labels, predictions, weights = _preprocess_segmentation_data(y_true=y_true,
+                                                                     y_pred=y_pred,
+                                                                     num_unlabeled=num_unlabeled,
+                                                                     ignore_classes=ignore_classes)
 
         # Calculate MIoU using Tensorflow
         value, update_op, reset_op = _create_reset_metric(K.tf.metrics.mean_iou,
@@ -353,10 +355,10 @@ def segmentation_mean_iou(num_classes, num_unlabeled, ignore_classes=None):
 def segmentation_confusion_matrix(num_classes, num_unlabeled, ignore_classes=None):
     @function_attributes(reset_op=None, streaming=True, hide_from_progbar=True, exclude_from_callbacks=True, cfm=True)
     def cfm(y_true, y_pred):
-        labels, predictions, ignore_mask, weights = _preprocess_segmentation_data(y_true=y_true,
-                                                                                  y_pred=y_pred,
-                                                                                  num_unlabeled=num_unlabeled,
-                                                                                  ignore_classes=ignore_classes)
+        labels, predictions, weights = _preprocess_segmentation_data(y_true=y_true,
+                                                                     y_pred=y_pred,
+                                                                     num_unlabeled=num_unlabeled,
+                                                                     ignore_classes=ignore_classes)
 
         value, update_op, reset_op = _create_reset_metric(_streaming_confusion_matrix,
                                                           'metrics_cfm',

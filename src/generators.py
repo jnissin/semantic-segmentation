@@ -1658,7 +1658,7 @@ class SegmentationDataGenerator(DataGenerator):
 
         # If we are in debug mode, save the batch images
         if settings.DEBUG:
-            self._debug_log_batch_data(step_idx=step_idx, X=X, Y=Y, X_teacher=X_teacher)
+            self._debug_log_batch_data(step_idx=step_idx, X=X, Y=Y, X_teacher=X_teacher, W=W)
 
         return batch_input_data, batch_output_data
 
@@ -1774,23 +1774,34 @@ class SegmentationDataGenerator(DataGenerator):
 
         return mask
 
-    def _debug_log_batch_data(self, step_idx, X, Y, X_teacher):
+    def _debug_log_batch_data(self, step_idx, X, Y, X_teacher, W):
         if settings.DEBUG:
             b_min = np.min(X)
             b_max = np.max(X)
             b_min_teacher = np.min(X_teacher) if X_teacher is not None else 0.0
             b_max_teacher = np.max(X_teacher) if X_teacher is not None else 0.0
+            if W is not None and len(W) > 0:
+                b_w_min = np.min(W)
+                b_w_max = np.max(W)
+            else:
+                b_w_min = 0
+                b_w_max = 1
 
             for i in range(0, len(X)):
                 img = ((X[i] - b_min) / (b_max - b_min)) * 255.0    # Scale photos to [0, 255]
                 mask = Y[i][:, :, np.newaxis] * 10                  # Multiply mask values by 10 to make them visible
-                self.logger.debug_log_image(img, '{}_{}_{}_photo.jpg'.format(self.name, step_idx, i), scale=False)
-                self.logger.debug_log_image(mask, file_name='{}_{}_{}_mask.png'.format(self.name, step_idx, i), format='PNG', scale=False)
+
+                self.logger.log_image(img, '{}_{}_{}_photo.jpg'.format(self.name, step_idx, i), scale=False)
+                self.logger.log_image(mask, file_name='{}_{}_{}_mask.png'.format(self.name, step_idx, i), format='PNG', scale=False)
+
+                if W is not None and i < len(W):
+                    weights = W[i][:, :, np.newaxis]
+                    weights = ((weights - b_w_min) / (b_w_max - b_w_min)) * 255.0
+                    self.logger.log_image(weights, file_name='{}_{}_{}_weights.png'.format(self.name, step_idx, i), format='PNG', scale=False)
 
                 if X_teacher is not None:
                     img = ((X_teacher[i] - b_min_teacher) / (b_max_teacher - b_min_teacher)) * 255.0
-                    self.logger.debug_log_image(img, '{}_{}_{}_photo_teacher.jpg'.format(self.name, step_idx, i), scale=False)
-
+                    self.logger.log_image(img, '{}_{}_{}_photo_teacher.jpg'.format(self.name, step_idx, i), scale=False)
 
 ################################################
 # CLASSIFICATION DATA GENERATOR

@@ -679,7 +679,6 @@ class TrainerBase:
         return path.format(model_folder=self.model_folder_name, log_folder_path=self.log_folder_path, **kwargs)
 
     def _get_data_augmentation_parameters(self):
-        #if self._get_config_value('use_data_augmentation'):
         self.logger.log('Parsing data augmentation parameters')
 
         augmentation_config = self._get_config_value('data_augmentation_params')
@@ -727,8 +726,6 @@ class TrainerBase:
                                  gamma_adjust_range))
 
         self.logger.log('Data augmentation params: mean teacher noise params: {}'.format(mean_teacher_noise_params))
-        #else:
-        #    data_augmentation_parameters = None
 
         return data_augmentation_parameters
 
@@ -1072,7 +1069,6 @@ class TrainerBase:
                                 info.last_frozen_layer_name,
                                 info.num_lr_scaling_trainable_weights,
                                 scale_lr_factor))
-
         return info.lr_scalers
 
     @property
