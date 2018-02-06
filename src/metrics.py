@@ -179,7 +179,8 @@ def classification_accuracy(num_unlabeled, ignore_classes=None):
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
-            value = K.tf.identity(update_op)
+            update_op = K.tf.identity(update_op)
+            value = K.tf.identity(value)
 
         return value
 
@@ -207,7 +208,8 @@ def classification_mean_per_class_accuracy(num_classes, num_unlabeled, ignore_cl
 
         # Force to update metric values
         with K.tf.control_dependencies([update_op]):
-            value = K.tf.identity(update_op)
+            update_op = K.tf.identity(update_op)
+            value = K.tf.identity(value)
 
         return value
 
