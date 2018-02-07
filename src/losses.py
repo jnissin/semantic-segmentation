@@ -492,7 +492,7 @@ def segmentation_superpixel_lambda_loss(args):
     total_costs = K.tf.add(classification_costs, superpixel_consistency_costs)
 
     if settings.DEBUG:
-        total_costs = K.tf.Print(total_costs, [superpixel_consistency_costs, classification_costs, total_costs], message="costs: ")
+        total_costs = K.tf.Print(total_costs, [superpixel_consistency_costs, classification_costs, total_costs, (superpixel_consistency_costs/total_costs)*100.0], message="costs: ")
 
     return total_costs
 
