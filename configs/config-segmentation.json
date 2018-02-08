@@ -28,8 +28,7 @@
 
     "num_epochs": 100,
     "input_shape": [null, null, 3],
-    "__crop_shape": [336, 336],
-    "crop_shape": [480, 480],
+    "crop_shape": [336, 336],
     "resize_shape": [[1408, null], null, [512, null]],
     "div2_constraint": 4,
     "num_crop_reattempts": 5,
@@ -73,7 +72,7 @@
     },
 
     "superpixel_params": {
-      "unlabeled_cost_coefficient_function": "lambda x: 2.5 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/8500.0)**2)), 1.0) ), 1.0 )",
+      "unlabeled_cost_coefficient_function": "lambda x: 5.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/9000.0)**2)), 1.0) ), 1.0 )",
       "label_generation_function_name": "felzenszwalb",
       "superpixel_mask_cache_path": "data/final/unlabeled_fzw_masks/"
     },
