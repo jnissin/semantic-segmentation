@@ -1750,13 +1750,13 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Generate the mask and cache it if we have a cache path
         if self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.FELZENSZWALB:
-            np_mask = image_utils.np_get_felzenszwalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=True)
+            np_mask = image_utils.np_get_felzenszwalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=True, border_connectivity=2)
         elif self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.SLIC:
-            np_mask = image_utils.np_get_slic_segmentation(np_img, n_segments=400, sigma=1, compactness=10.0, max_iter=20, normalize_img=False, borders_only=True)
+            np_mask = image_utils.np_get_slic_segmentation(np_img, n_segments=400, sigma=1, compactness=10.0, max_iter=20, normalize_img=False, borders_only=True, border_connectivity=2)
         elif self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.QUICKSHIFT:
-            np_mask = image_utils.np_get_quickshift_segmentation(np_img, kernel_size=10, max_dist=20, ratio=0.5, sigma=0.0, normalize_img=False, borders_only=True)
+            np_mask = image_utils.np_get_quickshift_segmentation(np_img, kernel_size=10, max_dist=20, ratio=0.5, sigma=0.0, normalize_img=False, borders_only=True, border_connectivity=2)
         elif self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.WATERSHED:
-            np_mask = image_utils.np_get_watershed_segmentation(np_img, markers=400, compactness=0.0, normalize_img=False, borders_only=True)
+            np_mask = image_utils.np_get_watershed_segmentation(np_img, markers=400, compactness=0.0, normalize_img=False, borders_only=True, border_connectivity=2)
         else:
             raise ValueError('Unknown label generation function type: {}'.format(self.superpixel_segmentation_function))
 
