@@ -1500,7 +1500,7 @@ def np_adaptive_histogram_equalization(np_img, nbins=256):
 #######################################################
 
 
-def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_iter=20, normalize_img=False, borders_only=False):
+def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_iter=20, normalize_img=False, borders_only=False, border_connectivity=1):
     # type: (np.ndarray, int, int, float) -> np.ndarray
 
     """
@@ -1527,12 +1527,12 @@ def np_get_slic_segmentation(np_img, n_segments, sigma=0.8, compactness=2, max_i
         segments = slic(np_img, n_segments=n_segments, sigma=sigma, compactness=compactness, max_iter=max_iter)
 
     if borders_only:
-        segments = np.invert(find_boundaries(segments, mode='thick')).astype(np.int32)
+        segments = np.invert(find_boundaries(segments, mode='thick', connectivity=border_connectivity)).astype(np.int32)
 
     return segments
 
 
-def np_get_felzenszwalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False, borders_only=False):
+def np_get_felzenszwalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, multichannel=True, normalize_img=False, borders_only=False, border_connectivity=1):
     # type: (np.ndarray, float, float, int, bool) -> np.ndarray
 
     from skimage.segmentation import felzenszwalb, find_boundaries
@@ -1544,12 +1544,12 @@ def np_get_felzenszwalb_segmentation(np_img, scale=1, sigma=0.8, min_size=20, mu
         segments = felzenszwalb(image=np_img, scale=scale, sigma=sigma, min_size=min_size, multichannel=multichannel)
 
     if borders_only:
-        segments = np.invert(find_boundaries(segments, mode='thick')).astype(np.int32)
+        segments = np.invert(find_boundaries(segments, mode='thick', connectivity=border_connectivity)).astype(np.int32)
 
     return segments
 
 
-def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_img=False, borders_only=False):
+def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_img=False, borders_only=False, border_connectivity=1):
     # type: (np.ndarray, int, float) -> np.ndarray
 
     from skimage.segmentation import watershed, find_boundaries
@@ -1565,12 +1565,12 @@ def np_get_watershed_segmentation(np_img, markers, compactness=0.001, normalize_
     segments = watershed(gradient, markers=markers, compactness=compactness)
 
     if borders_only:
-        segments = np.invert(find_boundaries(segments, mode='thick')).astype(np.int32)
+        segments = np.invert(find_boundaries(segments, mode='thick', connectivity=border_connectivity)).astype(np.int32)
 
     return segments
 
 
-def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5, normalize_img=False, borders_only=False):
+def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, ratio=0.5, normalize_img=False, borders_only=False, border_connectivity=1):
     # type: (np.ndarray, float, float, float, float) -> np.ndarray
 
     from skimage.segmentation import quickshift, find_boundaries
@@ -1582,6 +1582,6 @@ def np_get_quickshift_segmentation(np_img, kernel_size=3, max_dist=6, sigma=0, r
         segments = quickshift(np_img, kernel_size=kernel_size, max_dist=max_dist, sigma=sigma, ratio=ratio)
 
     if borders_only:
-        segments = np.invert(find_boundaries(segments, mode='thick')).astype(np.int32)
+        segments = np.invert(find_boundaries(segments, mode='thick', connectivity=border_connectivity)).astype(np.int32)
 
     return segments

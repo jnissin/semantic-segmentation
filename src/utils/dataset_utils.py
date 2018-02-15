@@ -553,35 +553,35 @@ class SegmentationDataSetInformation(object):
 
             num_material_classes = len(self.training_set.material_samples)
             class_probabilities = np.zeros(num_material_classes, dtype=np.float32)
-            crop_area = crop_shape[0] * crop_shape[1]
+            crop_pixels = crop_shape[0] * crop_shape[1]
 
             for material_class_id in range(0, num_material_classes):
                 if material_class_id in ignore_classes:
+                    class_probabilities[material_class_id] = 0.0
                     continue
 
                 p_material_class = 0.0
 
+                # Calculate average percentage of material pixels in a crop
+                # for the material class
                 for material_sample in self.training_set.material_samples[material_class_id]:
-                    # Calculate bbox height and width in pixels
+                    # Calculate percentage of material pixels within the material sample
+                    # bounding box area
                     bbox_height = max(material_sample.yx_max[0] - material_sample.yx_min[0], 1)
                     bbox_width = max(material_sample.yx_max[1] - material_sample.yx_min[1], 1)
-                    bbox_area = bbox_height * bbox_width
+                    bbox_pixels = bbox_height * bbox_width
 
-                    # Calculate proportion of material sample pixels of the bbox area
-                    p_material_pixels = min(float(material_sample.num_material_pixels) / float(bbox_area), 1.0)
-
-                    # Calculate limit bbox dimensions to crop dimensions
-                    bbox_height = min(crop_shape[0], bbox_height)
-                    bbox_width = min(crop_shape[1], bbox_width)
-                    bbox_area = bbox_height * bbox_width
+                    p_material_pixels = min(float(material_sample.num_material_pixels) / float(bbox_pixels), 1.0)
 
                     # Calculate proportion of bbox pixels of the crop pixels
-                    p_bbox_pixels_in_crop = min(float(bbox_area) / float(crop_area), 1.0)
+                    p_bbox_pixels_in_crop = min(float(bbox_pixels) / float(crop_pixels), 1.0)
 
-                    # Calculate proportion of material pixels of the crop pixels
+                    # Calculate proportion (~probability) of material pixels of the crop pixels
                     p = p_material_pixels * p_bbox_pixels_in_crop
                     p_material_class += p
 
+                # Calculate the average proportion (~probability) of all the material samples
+                # within the material class. This is the material class probability.
                 p_material_class = p_material_class / len(self.training_set.material_samples[material_class_id])
                 class_probabilities[material_class_id] = p_material_class
 

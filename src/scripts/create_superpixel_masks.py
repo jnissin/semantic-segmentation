@@ -16,7 +16,7 @@ from skimage import exposure
 _NUM_PROCESSED_IMAGES = multiprocessing.Value('i', 0)
 
 
-def generate_mask_for_unlabeled_image(f_type, img_path, output_path, verbose=False, ignore_existing=False, borders_only=False, equalize=False, dtype='float'):
+def generate_mask_for_unlabeled_image(f_type, img_path, output_path, verbose=False, ignore_existing=False, borders_only=False, border_connectivity=2, equalize=False, dtype='float'):
     # type: (SuperpixelSegmentationFunctionType, str, str, bool) -> ()
     global _NUM_PROCESSED_IMAGES
 
@@ -66,13 +66,13 @@ def generate_mask_for_unlabeled_image(f_type, img_path, output_path, verbose=Fal
 
     # Segment
     if f_type == SuperpixelSegmentationFunctionType.FELZENSZWALB:
-        mask = image_utils.np_get_felzenszwalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=borders_only)
+        mask = image_utils.np_get_felzenszwalb_segmentation(np_img, scale=1000, sigma=0.8, min_size=250, normalize_img=False, borders_only=borders_only, border_connectivity=border_connectivity)
     elif f_type == SuperpixelSegmentationFunctionType.SLIC:
-        mask = image_utils.np_get_slic_segmentation(np_img, n_segments=400, sigma=1, compactness=10.0, max_iter=20, normalize_img=False, borders_only=borders_only)
+        mask = image_utils.np_get_slic_segmentation(np_img, n_segments=400, sigma=1, compactness=10.0, max_iter=20, normalize_img=False, borders_only=borders_only, border_connectivity=border_connectivity)
     elif f_type == SuperpixelSegmentationFunctionType.QUICKSHIFT:
-        mask = image_utils.np_get_quickshift_segmentation(np_img, kernel_size=10, max_dist=20, ratio=0.5, sigma=0.0, normalize_img=False, borders_only=borders_only)
+        mask = image_utils.np_get_quickshift_segmentation(np_img, kernel_size=10, max_dist=20, ratio=0.5, sigma=0.0, normalize_img=False, borders_only=borders_only, border_connectivity=border_connectivity)
     elif f_type == SuperpixelSegmentationFunctionType.WATERSHED:
-        mask = image_utils.np_get_watershed_segmentation(np_img, markers=400, compactness=0.0, normalize_img=False, borders_only=borders_only)
+        mask = image_utils.np_get_watershed_segmentation(np_img, markers=400, compactness=0.0, normalize_img=False, borders_only=borders_only, border_connectivity=border_connectivity)
     else:
         raise ValueError('Unknown label generation function type: {}'.format(f_type))
 
@@ -118,6 +118,7 @@ def main():
     ap.add_argument("--equalize", required=False, default=False, type=bool, help="Use histogram equalization")
     ap.add_argument("--iexisting", required=False, default=False, type=bool, help="Do not replace existing masks")
     ap.add_argument("--bonly", required=False, default=False, type=bool, help="Borders only segmentation")
+    ap.add_argument("--bconnectivity", required=False, default=2, type=int, help="Border connectivity for border only segmentation (1 or 2)")
     args = vars(ap.parse_args())
 
     function_name_to_type = {'slic': SuperpixelSegmentationFunctionType.SLIC,
@@ -133,6 +134,7 @@ def main():
     verbose = args['verbose']
     ignore_existing = args['iexisting']
     borders_only = args['bonly']
+    bconnectivity = args['bconnectivity']
     equalize = args['equalize']
     dtype = args['dtype']
 
@@ -152,7 +154,7 @@ def main():
 
     print 'Starting to create image masks with function: {}'.format(function_name)
     Parallel(n_jobs=n_jobs, backend='multiprocessing')\
-        (delayed(generate_mask_for_unlabeled_image)(function_type, img_path, output_path, verbose, ignore_existing, borders_only, equalize, dtype) for img_path in photos)
+        (delayed(generate_mask_for_unlabeled_image)(function_type, img_path, output_path, verbose, ignore_existing, borders_only, bconnectivity, equalize, dtype) for img_path in photos)
 
     print 'Done'
 
