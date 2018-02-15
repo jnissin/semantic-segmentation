@@ -159,14 +159,15 @@ def main():
 
     print 'Found {} photos'.format(len(photos))
 
-    print 'Ensuring the output directory: {} exists'.format(os.path.dirname(output_path))
-    general_utils.create_path_if_not_existing(os.path.dirname(output_path))
+    print 'Ensuring the output path: {} exists'.format(output_path)
+    general_utils.create_path_if_not_existing(output_path)
 
     print 'Starting to create image masks with function: {}'.format(function_name)
     Parallel(n_jobs=n_jobs, backend='multiprocessing')\
         (delayed(generate_mask_for_unlabeled_image)(function_type, img_path, output_path, verbose, ignore_existing, borders_only, bconnectivity, equalize, dtype) for img_path in photos)
 
     print 'Done'
+
 
 if __name__ == '__main__':
     main()
