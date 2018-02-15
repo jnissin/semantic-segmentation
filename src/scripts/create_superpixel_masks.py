@@ -138,6 +138,16 @@ def main():
     equalize = args['equalize']
     dtype = args['dtype']
 
+    print 'Input directory: {}'.format(photos_path)
+    print 'Output directory: {}'.format(output_path)
+    print 'Using {} parallel jobs'.format(n_jobs)
+    print 'Using segmentation function: {}'.format(function_name)
+    print 'Ignoring existing masks: {}'.format(ignore_existing)
+    print 'Using adaptive histogram equalization: {}'.format(equalize)
+    print 'Using borders only: {}'.format(borders_only)
+    print 'Using border connectivity: {}'.format(bconnectivity)
+    print 'Using data type: {} for segmentation'.format(dtype)
+
     # Without this some truncated images can throw errors
     ImageFile.LOAD_TRUNCATED_IMAGES = True
 
