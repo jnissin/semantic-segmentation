@@ -162,6 +162,18 @@ def main():
     print 'Ensuring the output path: {} exists'.format(output_path)
     general_utils.create_path_if_not_existing(output_path)
 
+    if ignore_existing:
+        existing_masks = image_utils.list_pictures(output_path)
+        print 'Found {} existing masks'
+
+        # Remove file extension from mask paths
+        mask_file_names_without_ext = set([os.path.basename(m.split('.'))[0] for m in existing_masks])
+
+        # Filter out photos that match the existing mask file names
+        photos_without_mask = [p for p in photos if os.path.basename(p).split('.')[0] not in mask_file_names_without_ext]
+        print 'Ignoring {} matching photos'.format(len(photos) - len(photos_without_mask))
+        photos = photos_without_mask
+
     print 'Starting to create image masks with function: {}'.format(function_name)
     Parallel(n_jobs=n_jobs, backend='multiprocessing')\
         (delayed(generate_mask_for_unlabeled_image)(function_type, img_path, output_path, verbose, ignore_existing, borders_only, bconnectivity, equalize, dtype) for img_path in photos)
