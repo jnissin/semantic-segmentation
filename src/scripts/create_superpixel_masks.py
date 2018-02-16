@@ -167,7 +167,7 @@ def main():
         print 'Found {} existing masks'.format(len(existing_masks))
 
         # Remove file extension from mask paths
-        mask_file_names_without_ext = set([os.path.basename(m.split('.'))[0] for m in existing_masks])
+        mask_file_names_without_ext = set([os.path.basename(m).split('.')[0] for m in existing_masks])
 
         # Filter out photos that match the existing mask file names
         photos_without_mask = [p for p in photos if os.path.basename(p).split('.')[0] not in mask_file_names_without_ext]
