@@ -164,7 +164,7 @@ def main():
 
     if ignore_existing:
         existing_masks = image_utils.list_pictures(output_path)
-        print 'Found {} existing masks'
+        print 'Found {} existing masks'.format(len(existing_masks))
 
         # Remove file extension from mask paths
         mask_file_names_without_ext = set([os.path.basename(m.split('.'))[0] for m in existing_masks])
