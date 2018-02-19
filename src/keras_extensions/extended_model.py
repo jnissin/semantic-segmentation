@@ -961,9 +961,6 @@ class ExtendedModel(Model):
                     if steps_done >= steps_per_epoch and do_validation:
                         self.logger.log('Epoch {} training took: {} s'.format(epoch, time.time()-epoch_s_time))
 
-                        # Reset metrics before validation run
-                        self.reset_metrics()
-
                         if val_gen:
                             # Extended functionality: pass trainer and validation flag
                             enqueuer.pause_run()
@@ -1123,6 +1120,9 @@ class ExtendedModel(Model):
             enqueuer.continue_run()
             output_generator = enqueuer.get()
             eval_s_time = time.time()
+
+            # Reset metrics before evaluation run
+            self.reset_metrics()
 
             while steps_done < steps:
                 generator_output = next(output_generator)
