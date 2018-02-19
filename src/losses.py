@@ -618,8 +618,6 @@ def _preprocess_classification_lambda_loss_args(args, num_expected_args):
     if len(args) != num_expected_args:
         raise ValueError('Expected {} arguments, got: {} ({})'.format(num_expected_args, len(args), args))
 
-    y_pred, y_true, labeled_weights, num_unlabeled = args
-
     # Extract the arguments
     y_pred = args[0]
     y_true = args[1]
