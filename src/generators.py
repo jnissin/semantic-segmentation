@@ -521,16 +521,16 @@ class DataGenerator(object):
             img.save(tmp_cached_img_path, format=save_format)
             os.rename(tmp_cached_img_path, cached_img_path)
 
-    def _pil_resize_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE):
-        # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage
+    def _pil_get_target_resize_shape_for_image(self, img, resize_shape):
+        # type: (PILImage, tuple) -> tuple
 
         # If the resize shape is None just return the original image
         if resize_shape is None:
-            return img
+            return (img.height, img.width)
 
-        assert(isinstance(resize_shape, list) or isinstance(resize_shape, tuple) or isinstance(resize_shape, np.ndarray))
-        assert(len(resize_shape) == 2)
-        assert(not (resize_shape[0] is None and resize_shape[1] is None))
+        assert (isinstance(resize_shape, list) or isinstance(resize_shape, tuple) or isinstance(resize_shape, np.ndarray))
+        assert (len(resize_shape) == 2)
+        assert (not (resize_shape[0] is None and resize_shape[1] is None))
 
         # Scale to match the sdim found in index 0
         if resize_shape[0] is not None and resize_shape[1] is None:
@@ -538,9 +538,9 @@ class DataGenerator(object):
             img_sdim = min(img.size)
 
             if target_sdim == img_sdim:
-                return img
+                return (img.height, img.width)
 
-            scale_factor = float(target_sdim)/float(img_sdim)
+            scale_factor = float(target_sdim) / float(img_sdim)
             target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
         # Scale the match the bdim found in index 1
         elif resize_shape[0] is None and resize_shape[1] is not None:
@@ -548,19 +548,29 @@ class DataGenerator(object):
             img_bdim = max(img.size)
 
             if target_bdim == img_bdim:
-                return img
+                return (img.height, img.width)
 
-            scale_factor = float(target_bdim)/float(img_bdim)
+            scale_factor = float(target_bdim) / float(img_bdim)
             target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
         # Scale to the exact shape
         else:
             target_shape = tuple(resize_shape)
 
             if target_shape[0] == img.height and target_shape[1] == img.width:
-                return img
+                return (img.height, img.width)
+
+        return target_shape
+
+    def _pil_resize_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE, bypass_cache=False):
+        # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage
+
+        target_shape = self._pil_get_target_resize_shape_for_image(img=img, resize_shape=resize_shape)
+
+        if target_shape[0] == img.height and target_shape[1] == img.width:
+            return img
 
         # If using caching
-        if self.resized_image_cache_path is not None and isinstance(img, PILImageFile):
+        if not bypass_cache and self.resized_image_cache_path is not None and isinstance(img, PILImageFile):
             # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
             cached_img_name = os.path.splitext(os.path.basename(img.filename))
             filename_no_ext = cached_img_name[0]
@@ -607,7 +617,8 @@ class DataGenerator(object):
                 self._pil_save_image_to_cache(resized_img, cached_img_path=cached_img_path, save_format=save_format)
             except Exception as e:
                 self.logger.warn('Caught exception during resized image caching (write): {}'.format(e.message))
-                return resized_img
+
+            return resized_img
 
         # If everything else fails - just resize to target shape without caching
         return image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
@@ -788,10 +799,11 @@ class DataGenerator(object):
         # * Translations
         # * Intensity shifts
         # * Gaussian noise
-        noise_params = self.data_augmentation_params.mean_teacher_noise_params
-
-        X_teacher = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')(
-            delayed(pickle_method)(self, '_apply_mean_teacher_noise_to_image', img=img) for img in X)
+        if settings.DATA_GENERATION_THREADS_PER_PROCESS < 2:
+            X_teacher = [self._apply_mean_teacher_noise_to_image(img=img) for img in X]
+        else:
+            X_teacher = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')(
+                delayed(pickle_method)(self, '_apply_mean_teacher_noise_to_image', img=img) for img in X)
 
         # Transform from PIL to Numpy
         X_teacher = [img_to_array(img) for img in X_teacher]
@@ -801,7 +813,7 @@ class DataGenerator(object):
         X_teacher = self._np_normalize_image_batch(X_teacher)
 
         # Apply gaussian noise to the whole batch at once
-        gaussian_noise_stddev = noise_params.get('gaussian_noise_stddev')
+        gaussian_noise_stddev = self.data_augmentation_params.mean_teacher_noise_params.get('gaussian_noise_stddev')
 
         if gaussian_noise_stddev is not None:
             X_teacher += np.random.normal(loc=0.0, scale=gaussian_noise_stddev, size=X_teacher.shape)
@@ -1063,16 +1075,25 @@ class SegmentationDataGenerator(DataGenerator):
             labeled_batch_files, material_samples = self.labeled_data_set.get_indices(index_array), None
 
         # Process the labeled files for this batch
-        labeled_data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-            (delayed(pickle_method)
-             (self,
-              'get_labeled_segmentation_data_pair',
-              step_idx=step_index,
-              photo_file=labeled_batch_files[i][0],
-              mask_file=labeled_batch_files[i][1],
-              material_sample=material_samples[i] if material_samples is not None else None,
-              crop_shape=crop_shape,
-              resize_shape=resize_shape) for i in range(len(labeled_batch_files)))
+        if settings.DATA_GENERATION_THREADS_PER_PROCESS < 2:
+            labeled_data = [self.get_labeled_segmentation_data_pair(
+                step_idx = step_index,
+                photo_file = labeled_batch_files[i][0],
+                mask_file = labeled_batch_files[i][1],
+                material_sample = material_samples[i] if material_samples is not None else None,
+                crop_shape = crop_shape,
+                resize_shape = resize_shape) for i in range(len(labeled_batch_files))]
+        else:
+            labeled_data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+                (delayed(pickle_method)
+                 (self,
+                  'get_labeled_segmentation_data_pair',
+                  step_idx=step_index,
+                  photo_file=labeled_batch_files[i][0],
+                  mask_file=labeled_batch_files[i][1],
+                  material_sample=material_samples[i] if material_samples is not None else None,
+                  crop_shape=crop_shape,
+                  resize_shape=resize_shape) for i in range(len(labeled_batch_files)))
 
         # Unzip the photo mask pairs
         X, Y = zip(*labeled_data)
@@ -1098,14 +1119,21 @@ class SegmentationDataGenerator(DataGenerator):
         unlabeled_batch_files = self.unlabeled_data_set.get_indices(index_array)
 
         # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        unlabeled_data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-            (delayed(pickle_method)
-             (self,
-              'get_unlabeled_segmentation_data_pair',
-              step_idx=step_index,
-              photo_file=photo_file,
-              crop_shape=crop_shape,
-              resize_shape=resize_shape) for photo_file in unlabeled_batch_files)
+        if settings.DATA_GENERATION_THREADS_PER_PROCESS < 2:
+            unlabeled_data = [self.get_unlabeled_segmentation_data_pair(
+                step_idx=step_index,
+                photo_file=photo_file,
+                crop_shape=crop_shape,
+                resize_shape=resize_shape) for photo_file in unlabeled_batch_files]
+        else:
+            unlabeled_data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+                (delayed(pickle_method)
+                 (self,
+                  'get_unlabeled_segmentation_data_pair',
+                  step_idx=step_index,
+                  photo_file=photo_file,
+                  crop_shape=crop_shape,
+                  resize_shape=resize_shape) for photo_file in unlabeled_batch_files)
 
         X_unlabeled, Y_unlabeled = zip(*unlabeled_data)
         return X_unlabeled, Y_unlabeled
@@ -2110,20 +2138,31 @@ class ClassificationDataGenerator(DataGenerator):
 
     def get_labeled_batch_data(self, step_index, index_array, crop_shape, resize_shape):
         if self.labeled_data_set.data_set_type == MINCDataSetType.MINC_2500:
-            data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-                (delayed(pickle_method)(self,
-                                        'get_labeled_sample_minc_2500',
-                                        step_index=step_index,
-                                        sample_index=sample_index,
-                                        resize_shape=resize_shape) for sample_index in index_array)
+            if settings.DATA_GENERATION_THREADS_PER_PROCESS < 2:
+                data = [self.get_labeled_sample_minc_2500(step_index=step_index,
+                                                          sample_index=sample_index,
+                                                          resize_shape=resize_shape) for sample_index in index_array]
+            else:
+                data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+                    (delayed(pickle_method)(self,
+                                            'get_labeled_sample_minc_2500',
+                                            step_index=step_index,
+                                            sample_index=sample_index,
+                                            resize_shape=resize_shape) for sample_index in index_array)
         elif self.labeled_data_set.data_set_type == MINCDataSetType.MINC:
-            data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-                (delayed(pickle_method)(self,
-                                        'get_labeled_sample_minc',
-                                        step_index=step_index,
-                                        sample_index=sample_index,
-                                        crop_shape=crop_shape,
-                                        resize_shape=resize_shape) for sample_index in index_array)
+            if settings.DATA_GENERATION_THREADS_PER_PROCESS < 2:
+                data = [self.get_labeled_sample_minc(step_index=step_index,
+                                                     sample_index=sample_index,
+                                                     crop_shape=crop_shape,
+                                                     resize_shape=resize_shape) for sample_index in index_array]
+            else:
+                data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+                    (delayed(pickle_method)(self,
+                                            'get_labeled_sample_minc',
+                                            step_index=step_index,
+                                            sample_index=sample_index,
+                                            crop_shape=crop_shape,
+                                            resize_shape=resize_shape) for sample_index in index_array)
         else:
             raise ValueError('Unknown data set type: {}'.format(self.labeled_data_set.data_set_type))
 
@@ -2198,7 +2237,6 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
-            img_orig = img.copy()
             images, transform = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                             cvals=[self.photo_cval],
                                                                             random_seed=self.random_seed+step_index,
@@ -2212,18 +2250,18 @@ class ClassificationDataGenerator(DataGenerator):
 
             # If the center has gone out of bounds abandon the augmentation - otherwise, update the crop center values
             if (not (0.0 < crop_center_y_new < 1.0)) or (not (0.0 < crop_center_x_new < 1.0)):
-                # Destroy the augmented version and revert back to the copy of the original
+                # Destroy the augmented version and revert back to the original image
                 img.close()
                 del img
 
-                img = img_orig
+                # Revert to the original image without augmentation
+                img = img_file.get_image(self.num_color_channels)
+
+                if resize_shape is not None:
+                    img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
-
-                # Destroy the backup image
-                img_orig.close()
-                del img_orig
 
         # Crop the image with the specified crop center. Regions going out of bounds are padded with a
         # constant value.
@@ -2279,14 +2317,21 @@ class ClassificationDataGenerator(DataGenerator):
             return (), (), ()
 
         # Process the unlabeled data pairs (take crops, apply data augmentation, etc).
-        data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
-            (delayed(pickle_method)
-             (self,
-              'get_unlabeled_sample',
-              step_index=step_index,
-              sample_index=sample_index,
-              crop_shape=crop_shape,
-              resize_shape=resize_shape) for sample_index in index_array)
+        if settings.DATA_GENERATION_THREADS_PER_PROCESS < 2:
+            data = [self.get_unlabeled_sample(
+                        step_index=step_index,
+                        sample_index=sample_index,
+                        crop_shape=crop_shape,
+                        resize_shape=resize_shape) for sample_index in index_array]
+        else:
+            data = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')\
+                (delayed(pickle_method)
+                 (self,
+                  'get_unlabeled_sample',
+                  step_index=step_index,
+                  sample_index=sample_index,
+                  crop_shape=crop_shape,
+                  resize_shape=resize_shape) for sample_index in index_array)
 
         X, Y, W = zip(*data)
 
@@ -2298,9 +2343,20 @@ class ClassificationDataGenerator(DataGenerator):
         img_file = self.unlabeled_data_set.get_index(sample_index)
         img = img_file.get_image(self.num_color_channels)
 
-        # Check whether we need to resize the photo and the mask to a constant size
+        # Optimization: If we need to resize the image and the resized image has more pixels, omit resize
+        # until after augmentation
+        resize_after_augmentation = False
+
         if resize_shape is not None:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
+            target_shape = self._pil_get_target_resize_shape_for_image(img, resize_shape=resize_shape)
+
+            num_target_pixels = target_shape[0] * target_shape[1]
+            num_img_pixels = img.height*img.width
+
+            if num_target_pixels > num_img_pixels:
+                resize_after_augmentation = True
+            elif num_target_pixels < num_img_pixels:
+                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -2311,12 +2367,18 @@ class ClassificationDataGenerator(DataGenerator):
             img = image_utils.pil_pad_image_to_shape(img, min_img_shape, self.photo_cval)
 
         # Apply data augmentation
-        if self._should_apply_augmentation(step_index):
+        augmentation_applied = self._should_apply_augmentation(step_index)
+
+        if augmentation_applied:
             images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                     cvals=[self.photo_cval],
                                                                     random_seed=self.random_seed+step_index,
                                                                     interpolations=[ImageInterpolationType.BICUBIC])
             img, = images
+
+        # Apply possibly omitted resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
+        if resize_after_augmentation:
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=augmentation_applied)
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
