@@ -436,7 +436,7 @@ def main():
     # If using ensembling create the different sized versions
     if ensembling:
         # TODO: Figure out whether scale factors or or set sdim sizes are better
-        ENSEMBLING_SCALE_FACTORS = [1.0/math.sqrt(2.0), 1.0, math.sqrt(2)] # [1.0, 1.5, 2.0]
+        ENSEMBLING_SCALE_FACTORS = [1.0/math.sqrt(2.0), 1.0, math.sqrt(2)] # [0.50, 0.75, 1.0] # [1.0, 1.5, 2.0] #
         print 'Using ensembling scale factors: {}'.format(ENSEMBLING_SCALE_FACTORS)
 
         for sfactor in ENSEMBLING_SCALE_FACTORS:

@@ -22,6 +22,14 @@ from src import settings
 ###################################################
 
 def get_distinct_colors(n, seed=None):
+
+    # Try to use the HUSL system from Seaborn if available
+    #try:
+    #    import seaborn as sns
+    #    sns.set()
+    #    return sns.husl_palette(n)
+    #except Exception as e:
+        # Fall back to HLS iteration
     from colorsys import hls_to_rgb
 
     if seed is not None:
@@ -733,6 +741,9 @@ def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cva
     width = img.width + h_pad_before + h_pad_after
     height = img.height + v_pad_before + v_pad_after
     mode = img.mode
+
+    if width == img.width and height == img.height:
+        return img
 
     # Make sure the cval is in the correct format if None default to black
     if cval is not None:
