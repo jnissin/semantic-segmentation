@@ -212,7 +212,7 @@ class TrainerBase:
 
                 try:
                     import tarfile
-                    self.logger.log('Unpacking initial cache tar file: {} to: {}'.format(self.resized_image_cache_path, self.initial_resized_image_cache_tar_file_path))
+                    self.logger.log('Unpacking initial cache tar file: {} to: {}'.format(self.initial_resized_image_cache_tar_file_path, self.resized_image_cache_path))
                     tar = tarfile.open(self.initial_resized_image_cache_tar_file_path)
                     tar.extractall(path=self.resized_image_cache_path)
                     self.logger.log('Successfully unpacked {} images to initial resized image cache'.format(len(tar.getnames())))
