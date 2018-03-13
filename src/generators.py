@@ -575,6 +575,31 @@ class DataGenerator(object):
             cached_img_name = os.path.splitext(os.path.basename(img.filename))
             filename_no_ext = cached_img_name[0]
             file_ext = cached_img_name[1]
+
+            # TODO: Remove hack to fix BICUBIC ~ BILINEAR for photos
+            if img_type == ImageType.PHOTO:
+                cached_img_name_bicubic = '{}_{}_{}_{}_{}{}'.format(filename_no_ext,
+                                                                    target_shape[0],
+                                                                    target_shape[1],
+                                                                    ImageInterpolationType.BICUBIC.value,
+                                                                    img_type.value,
+                                                                    file_ext)
+                cached_img_path_bicubic = os.path.join(self.resized_image_cache_path, cached_img_name_bicubic)
+
+                if os.path.exists(cached_img_path_bicubic):
+                    try:
+                        resized_img = image_utils.load_img(cached_img_path_bicubic)
+
+                        # Remove the old image resource
+                        img.close()
+                        del img
+
+                        return resized_img
+                    # Log the exception and default to the non cached resize
+                    except Exception as e:
+                        self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
+            # TODO: End of hack
+
             cached_img_name = '{}_{}_{}_{}_{}{}'.format(filename_no_ext,
                                                         target_shape[0],
                                                         target_shape[1],
