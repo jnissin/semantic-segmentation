@@ -2356,7 +2356,7 @@ class ClassificationDataGenerator(DataGenerator):
             if num_target_pixels > num_img_pixels:
                 resize_after_augmentation = True
             elif num_target_pixels < num_img_pixels:
-                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
+                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -2378,7 +2378,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Apply possibly omitted resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
         if resize_after_augmentation:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=augmentation_applied)
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
