@@ -2379,14 +2379,14 @@ class ClassificationDataGenerator(DataGenerator):
 
             # Apply possibly postponed resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
             if resize_after_augmentation:
-                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
+                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
             y1x1, y2x2 = self._get_random_crop_area(img_width=img.width, img_height=img.height, crop_width=crop_shape[1], crop_height=crop_shape[0])
             img = image_utils.pil_crop_image(img, x1=y1x1[1], y1=y1x1[0], x2=y2x2[1], y2=y2x2[0])
 
-        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC)
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR)
 
         # Create a dummy label vector (one-hot) all zeros
         y = self.dummy_label_vector
