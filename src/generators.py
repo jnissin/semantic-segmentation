@@ -2221,9 +2221,19 @@ class ClassificationDataGenerator(DataGenerator):
         if crop_shape is None:
             raise ValueError('MINC data set images cannot be used without setting a crop shape')
 
-        # Check whether we need to resize the photo to a constant size
+        apply_augmentation = self._should_apply_augmentation(step_index)
+        resize_after_augmentation = False
+
         if resize_shape is not None:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
+            target_shape = self._pil_get_target_resize_shape_for_image(img, resize_shape=resize_shape)
+
+            num_target_pixels = target_shape[0] * target_shape[1]
+            num_img_pixels = img.height*img.width
+
+            if num_target_pixels > num_img_pixels and apply_augmentation:
+                resize_after_augmentation = True
+            elif num_target_pixels != num_img_pixels:
+                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
 
         img_height = img.height
         img_width = img.width
@@ -2236,7 +2246,7 @@ class ClassificationDataGenerator(DataGenerator):
             img = image_utils.pil_draw_square(img, center_x=crop_center_x, center_y=crop_center_y, size=6, color=(255, 0, 0))
 
         # Apply data augmentation
-        if self._should_apply_augmentation(step_index):
+        if apply_augmentation:
             images, transform = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                             cvals=[self.photo_cval],
                                                                             random_seed=self.random_seed+step_index,
@@ -2244,6 +2254,13 @@ class ClassificationDataGenerator(DataGenerator):
                                                                             transform_origin=np.array([crop_center_y, crop_center_x]))
 
             img, = images
+
+            if resize_after_augmentation:
+                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
+                img_height = img.height
+                img_width = img.width
+                transform.image_height = img_height
+                transform.image_width = img_width
 
             crop_center_new = transform.transform_normalized_coordinates(np.array([crop_center_x, crop_center_y]))
             crop_center_x_new, crop_center_y_new = crop_center_new[0], crop_center_new[1]
@@ -2376,7 +2393,7 @@ class ClassificationDataGenerator(DataGenerator):
                                                                     interpolations=[ImageInterpolationType.BICUBIC])
             img, = images
 
-        # Apply possibly omitted resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
+        # Apply possibly postponed resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
         if resize_after_augmentation:
             img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
 
