@@ -2367,9 +2367,9 @@ class ClassificationDataGenerator(DataGenerator):
             img = image_utils.pil_pad_image_to_shape(img, min_img_shape, self.photo_cval)
 
         # Apply data augmentation
-        augmentation_applied = self._should_apply_augmentation(step_index)
+        apply_augmentation = self._should_apply_augmentation(step_index)
 
-        if augmentation_applied:
+        if apply_augmentation:
             images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                     cvals=[self.photo_cval],
                                                                     random_seed=self.random_seed+step_index,
