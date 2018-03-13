@@ -2222,18 +2222,10 @@ class ClassificationDataGenerator(DataGenerator):
             raise ValueError('MINC data set images cannot be used without setting a crop shape')
 
         apply_augmentation = self._should_apply_augmentation(step_index)
-        resize_after_augmentation = False
 
+        # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            target_shape = self._pil_get_target_resize_shape_for_image(img, resize_shape=resize_shape)
-
-            num_target_pixels = target_shape[0] * target_shape[1]
-            num_img_pixels = img.height*img.width
-
-            if num_target_pixels > num_img_pixels and apply_augmentation:
-                resize_after_augmentation = True
-            elif num_target_pixels != num_img_pixels:
-                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
+            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
 
         img_height = img.height
         img_width = img.width
@@ -2250,17 +2242,10 @@ class ClassificationDataGenerator(DataGenerator):
             images, transform = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                             cvals=[self.photo_cval],
                                                                             random_seed=self.random_seed+step_index,
-                                                                            interpolations=[ImageInterpolationType.BICUBIC],
+                                                                            interpolations=[ImageInterpolationType.BILINEAR],
                                                                             transform_origin=np.array([crop_center_y, crop_center_x]))
 
             img, = images
-
-            if resize_after_augmentation:
-                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
-                img_height = img.height
-                img_width = img.width
-                transform.image_height = img_height
-                transform.image_width = img_width
 
             crop_center_new = transform.transform_normalized_coordinates(np.array([crop_center_x, crop_center_y]))
             crop_center_x_new, crop_center_y_new = crop_center_new[0], crop_center_new[1]
@@ -2275,7 +2260,7 @@ class ClassificationDataGenerator(DataGenerator):
                 img = img_file.get_image(self.num_color_channels)
 
                 if resize_shape is not None:
-                    img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO)
+                    img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
@@ -2317,7 +2302,7 @@ class ClassificationDataGenerator(DataGenerator):
                 (crop_size_x, crop_size_y)))
 
         img = image_utils.pil_crop_image_with_fill(img, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
-        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC)
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR)
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -2362,6 +2347,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Optimization: If we need to resize the image and the resized image has more pixels, omit resize
         # until after augmentation
+        apply_augmentation = self._should_apply_augmentation(step_index)
         resize_after_augmentation = False
 
         if resize_shape is not None:
@@ -2370,10 +2356,10 @@ class ClassificationDataGenerator(DataGenerator):
             num_target_pixels = target_shape[0] * target_shape[1]
             num_img_pixels = img.height*img.width
 
-            if num_target_pixels > num_img_pixels:
+            if num_target_pixels > num_img_pixels and apply_augmentation:
                 resize_after_augmentation = True
-            elif num_target_pixels < num_img_pixels:
-                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
+            elif num_target_pixels != num_img_pixels:
+                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -2384,18 +2370,16 @@ class ClassificationDataGenerator(DataGenerator):
             img = image_utils.pil_pad_image_to_shape(img, min_img_shape, self.photo_cval)
 
         # Apply data augmentation
-        apply_augmentation = self._should_apply_augmentation(step_index)
-
         if apply_augmentation:
             images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                     cvals=[self.photo_cval],
                                                                     random_seed=self.random_seed+step_index,
-                                                                    interpolations=[ImageInterpolationType.BICUBIC])
+                                                                    interpolations=[ImageInterpolationType.BILINEAR])
             img, = images
 
-        # Apply possibly postponed resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
-        if resize_after_augmentation:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
+            # Apply possibly postponed resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
+            if resize_after_augmentation:
+                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BICUBIC, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
