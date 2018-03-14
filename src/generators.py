@@ -5,6 +5,9 @@ import random
 import os
 import numpy as np
 
+from diskcache import Cache
+from io import BytesIO
+
 from enum import Enum
 from abc import ABCMeta, abstractmethod, abstractproperty
 
@@ -335,6 +338,8 @@ class DataGenerator(object):
         self.generate_mean_teacher_data = params.generate_mean_teacher_data
         self.resized_image_cache_path = params.resized_image_cache_path
 
+        self._resized_image_cache = None
+
         # If caching resized images ensure the cache path exists
         if self.resized_image_cache_path is not None:
             if not os.path.exists(self.resized_image_cache_path):
@@ -419,6 +424,198 @@ class DataGenerator(object):
         if not hasattr(self, '_logger') or self._logger is None:
             self._logger = Logger.instance()
         return self._logger
+
+    @property
+    def using_resized_image_cache(self):
+        # type: () -> bool
+        return self.resized_image_cache_path is not None
+
+    @property
+    def resized_image_cache(self):
+        #  type: () -> Cache
+
+        if not self.using_resized_image_cache:
+            return None
+
+        if self._resized_image_cache is None:
+
+            if os.path.exists(self.resized_image_cache_path):
+                self.logger.log('Loading existing resized image cache from: {}'.format(self.resized_image_cache_path))
+                self._resized_image_cache = Cache(self.resized_image_cache_path)
+                self.logger.log('Loaded image cache with {} images, size_limit: {}, cull_limit: {}, eviction_policy: {}'
+                                .format(len(self._resized_image_cache), self._resized_image_cache.size_limit, self._resized_image_cache.cull_limit, self._resized_image_cache.eviction_policy))
+            else:
+                size_limit = 100 * 1073741824
+                cull_limit = 0
+                eviction_policy = "least-frequently-used"
+
+                self.logger.log('Creating new resized image cache: {}, size_limit: {}, cull_limit: {}, eviction_policy: {}'
+                                .format(self.resized_image_cache_path, size_limit, cull_limit, eviction_policy))
+
+                self._resized_image_cache = Cache(self.resized_image_cache_path,
+                                                  size_limit=size_limit,
+                                                  cull_limit=cull_limit,
+                                                  eviction_policy=eviction_policy)
+
+        return self._resized_image_cache
+
+    def _pil_save_resized_img_to_cache(self, img, cache_key, img_type):
+        # type: (PILImage) -> None
+
+        if not self.using_resized_image_cache:
+            return
+
+        save_format = img.format
+
+        if save_format is None:
+            cached_img_name = os.path.splitext(os.path.basename(cache_key))
+            file_ext = cached_img_name[1]
+
+            # Try determining format from file ending
+            if file_ext.lower() == '.jpg' or file_ext.lower() == '.jpeg':
+                save_format = 'JPEG'
+            elif file_ext.lower() == '.png':
+                save_format = 'PNG'
+            else:
+                # If we couldn't determine format from extension use the img type to guess
+                save_format = 'PNG' if img_type.MASK else 'JPEG'
+
+            if img_type == ImageType.PHOTO:
+                tag = 'photo'
+            elif img_type == ImageType.MASK:
+                tag = 'mask'
+            else:
+                tag = None
+
+            # Save this way in order to get the JPEG/PNG encoding instead of raw bytes
+            img_bytes = BytesIO()
+            img.save(img_bytes, format=save_format)
+            img_bytes.seek(0)
+
+            self.resized_image_cache.set(cache_key, img_bytes, read=True, tag=tag)
+
+    def _pil_get_resized_img_from_cache(self, cache_key):
+        # type: (str) -> PILImage
+
+        if not self.using_resized_image_cache:
+            return None
+
+        if cache_key not in self.resized_image_cache:
+            return None
+
+        img = PImage.open(BytesIO(self.resized_image_cache[cache_key]))
+        return img
+
+    def _pil_get_target_resize_shape_for_image(self, img, resize_shape):
+        # type: (PILImage, tuple) -> tuple
+
+        # If the resize shape is None just return the original image
+        if resize_shape is None:
+            return (img.height, img.width)
+
+        assert (isinstance(resize_shape, list) or isinstance(resize_shape, tuple) or isinstance(resize_shape, np.ndarray))
+        assert (len(resize_shape) == 2)
+        assert (not (resize_shape[0] is None and resize_shape[1] is None))
+
+        # Scale to match the sdim found in index 0
+        if resize_shape[0] is not None and resize_shape[1] is None:
+            target_sdim = resize_shape[0]
+            img_sdim = min(img.size)
+
+            if target_sdim == img_sdim:
+                return (img.height, img.width)
+
+            scale_factor = float(target_sdim) / float(img_sdim)
+            target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
+        # Scale the match the bdim found in index 1
+        elif resize_shape[0] is None and resize_shape[1] is not None:
+            target_bdim = resize_shape[1]
+            img_bdim = max(img.size)
+
+            if target_bdim == img_bdim:
+                return (img.height, img.width)
+
+            scale_factor = float(target_bdim) / float(img_bdim)
+            target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
+        # Scale to the exact shape
+        else:
+            target_shape = tuple(resize_shape)
+
+            if target_shape[0] == img.height and target_shape[1] == img.width:
+                return (img.height, img.width)
+
+        return target_shape
+
+    def _pil_get_cache_key_for_target_resize_shape(self, img, target_shape, interp, img_type):
+        # type: (PILImage, tuple, ImageInterpolationType, ImageType) -> str
+
+        # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
+        cached_img_name = os.path.splitext(os.path.basename(img.filename))
+        filename_no_ext = cached_img_name[0]
+        file_ext = cached_img_name[1]
+
+        cached_img_name = '{}_{}_{}_{}_{}{}'.format(filename_no_ext,
+                                                    target_shape[0],
+                                                    target_shape[1],
+                                                    interp.value,
+                                                    img_type.value,
+                                                    file_ext)
+
+        return cached_img_name
+
+    def _pil_get_resized_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE, bypass_cache=False):
+        # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage
+
+        target_shape = self._pil_get_target_resize_shape_for_image(img=img, resize_shape=resize_shape)
+
+        if target_shape[0] == img.height and target_shape[1] == img.width:
+            return img
+
+        # If we are supposed to use caching
+        if not bypass_cache and self.using_resized_image_cache and isinstance(img, PILImageFile):
+            resized_img_cache_key = self._pil_get_cache_key_for_target_resize_shape(img=img,
+                                                                                    target_shape=target_shape,
+                                                                                    interp=interp,
+                                                                                    img_type=img_type)
+
+            # TODO: Remove hack for bicubic ~ bilinear photos
+            if interp != ImageInterpolationType.BICUBIC and img_type == ImageType.PHOTO and resized_img_cache_key not in self.resized_image_cache:
+                resized_img_cache_key = self._pil_get_cache_key_for_target_resize_shape(img=img,
+                                                                                        target_shape=target_shape,
+                                                                                        interp=ImageInterpolationType.BICUBIC,
+                                                                                        img_type=img_type)
+
+            if resized_img_cache_key in self.resized_image_cache:
+                try:
+                    resized_img = self._pil_get_resized_img_from_cache(cache_key=resized_img_cache_key)
+
+                    # Remove the old image resource
+                    img.close()
+                    del img
+
+                    return resized_img
+
+                except Exception as e:
+                    self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
+            else:
+                resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
+
+                try:
+                    self._pil_save_resized_img_to_cache(img=resized_img, cache_key=resized_img_cache_key, img_type=img_type)
+
+                    # Remove the old image resource
+                    img.close()
+                    del img
+                except Exception as e:
+                    self.logger.warn('Caught exception during resized image caching (write): {}'.format(e.message))
+
+                return resized_img
+
+        # If all else fails - just resize the image and return it
+        resized_img = image_utils.pil_resize_image_with_padding(img,shape=target_shape, cval=cval, interp=interp)
+        img.close()
+        del img
+        return resized_img
 
     def get_batch_crop_shape(self):
         if self.using_random_crop_sizes:
@@ -520,46 +717,6 @@ class DataGenerator(object):
             # use .tmp extension and remove .tmp extension when save is complete
             img.save(tmp_cached_img_path, format=save_format)
             os.rename(tmp_cached_img_path, cached_img_path)
-
-    def _pil_get_target_resize_shape_for_image(self, img, resize_shape):
-        # type: (PILImage, tuple) -> tuple
-
-        # If the resize shape is None just return the original image
-        if resize_shape is None:
-            return (img.height, img.width)
-
-        assert (isinstance(resize_shape, list) or isinstance(resize_shape, tuple) or isinstance(resize_shape, np.ndarray))
-        assert (len(resize_shape) == 2)
-        assert (not (resize_shape[0] is None and resize_shape[1] is None))
-
-        # Scale to match the sdim found in index 0
-        if resize_shape[0] is not None and resize_shape[1] is None:
-            target_sdim = resize_shape[0]
-            img_sdim = min(img.size)
-
-            if target_sdim == img_sdim:
-                return (img.height, img.width)
-
-            scale_factor = float(target_sdim) / float(img_sdim)
-            target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
-        # Scale the match the bdim found in index 1
-        elif resize_shape[0] is None and resize_shape[1] is not None:
-            target_bdim = resize_shape[1]
-            img_bdim = max(img.size)
-
-            if target_bdim == img_bdim:
-                return (img.height, img.width)
-
-            scale_factor = float(target_bdim) / float(img_bdim)
-            target_shape = (int(round(img.height * scale_factor)), int(round(img.width * scale_factor)))
-        # Scale to the exact shape
-        else:
-            target_shape = tuple(resize_shape)
-
-            if target_shape[0] == img.height and target_shape[1] == img.width:
-                return (img.height, img.width)
-
-        return target_shape
 
     def _pil_resize_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE, bypass_cache=False):
         # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage

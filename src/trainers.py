@@ -9,6 +9,8 @@ import shutil
 import resource
 import numpy as np
 
+from diskcache import Cache
+
 from enum import Enum
 from PIL import ImageFile
 from abc import ABCMeta, abstractmethod, abstractproperty
@@ -215,7 +217,12 @@ class TrainerBase:
                     self.logger.log('Unpacking initial cache tar file: {} to: {}'.format(self.initial_resized_image_cache_tar_file_path, self.resized_image_cache_path))
                     tar = tarfile.open(self.initial_resized_image_cache_tar_file_path)
                     tar.extractall(path=self.resized_image_cache_path)
-                    self.logger.log('Successfully unpacked {} images to initial resized image cache'.format(len(tar.getnames())))
+                    self.logger.log('Unpacking complete - reading cache statistics')
+
+                    with Cache(self.resized_image_cache_path) as cache:
+                        cached_images = len(cache)
+                        self.logger.log('Successfully unpacked {} images to initial resized image cache'.format(cached_images))
+
                 except Exception as e:
                     self.logger.warn('Failed to unpack initial cache tar file from: {}, caught exception: {}'.format(self.initial_resized_image_cache_tar_file_path, e.message))
                 finally:
