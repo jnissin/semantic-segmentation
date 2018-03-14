@@ -9,6 +9,8 @@ import multiprocessing
 from enum import Enum
 from PIL import Image
 from tarfile import TarInfo, TarFile
+from diskcache import Cache
+from io import BytesIO
 
 from abc import ABCMeta, abstractmethod, abstractproperty
 
@@ -18,15 +20,16 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 ##############################################
 
 class ImageFileType(Enum):
-    NONE = -1
+    NONE = -1,
     TAR = 0,
-    FILE_PATH = 1
+    FILE_PATH = 1,
+    DISKCACHE = 2
 
 
 class ImageFile(object):
 
-    def __init__(self, image_path=None, tar_info=None, shared_resources=None):
-        # type: (str, TarInfo, ImageSetSharedResources) -> None
+    def __init__(self, image_path=None, tar_info=None, image_key=None, shared_resources=None):
+        # type: (str, TarInfo, str, ImageSetSharedResources) -> None
 
         """
         Creates an ImageFile instance either from the file path or from the tar
@@ -38,20 +41,23 @@ class ImageFile(object):
         # Arguments
             :param image_path: File path to the image file
             :param tar_info: The TarInfo of the image
+            :param image_key: The key of the image in the diskcache
             :param shared_resources: Shared resources in the image set
         # Returns
             Nothing
         """
+        if image_path is None and tar_info is None and image_key is None:
+            raise ValueError('You must provide either an image_path or shared_resources and tar_info/image_key')
 
-        if image_path is None and (shared_resources is None or shared_resources.tar_file is None or tar_info is None):
-            raise ValueError('You must provide either an image_path or shared_resources and tar_info')
-
-        if image_path is not None and tar_info is not None:
-            raise ValueError('You cannot provide both image_path and tar information')
+        if (image_path is not None and tar_info is not None) or \
+           (image_path is not None and image_key is not None) or \
+           (image_key is not None and tar_info is not None):
+            raise ValueError('Please provide only one of the following: image_path/tar_info/image_key')
 
         self._image_path = image_path
         self._shared_resources = shared_resources
         self._tar_info = tar_info
+        self._image_key = image_key
         self.type = ImageFileType.NONE
 
         # Validate the image path if not in a tar archive - better fail early
@@ -63,10 +69,12 @@ class ImageFile(object):
                 if not os.path.exists(os.path.join(self._shared_resources.path_to_archive, self._image_path)):
                     raise ValueError('Image path {} does not exist'.format(os.path.join(self._shared_resources.path_to_archive, self._image_path)))
 
-        if self.tar_file is not None and tar_info is not None:
-            self.type = ImageFileType.TAR
-        elif image_path is not None:
+        if image_path is not None:
             self.type = ImageFileType.FILE_PATH
+        elif self.diskcache is not None and image_key is not None:
+            self.type = ImageFileType.DISKCACHE
+        elif self.tar_file is not None and tar_info is not None:
+            self.type = ImageFileType.TAR
 
     def __eq__(self, other):
         if not isinstance(other, ImageFile):
@@ -120,6 +128,14 @@ class ImageFile(object):
         return None
 
     @property
+    def diskcache(self):
+        if self._shared_resources is not None:
+            if self._shared_resources.diskcache is None:
+                self.reopen_diskcache_handle()
+
+        return self._shared_resources.diskcache
+
+    @property
     def tar_read_lock(self):
         if self._shared_resources is not None:
             return self._shared_resources.tar_read_lock
@@ -131,6 +147,17 @@ class ImageFile(object):
             return os.path.basename(self.image_path)
         elif self._tar_info is not None:
             return os.path.basename(self.tar_info.name)
+        elif self._image_key is not None:
+            return os.path.basename(self._image_key)
+
+    def reopen_diskcache_handle(self):
+        if self._shared_resources is None:
+            raise ValueError('No shared resources available - cannot open diskcache handle')
+
+        if self._shared_resources.diskcache_path is None:
+            raise ValueError('Diskcache path of shared resources is none - cannot open diskcache handle')
+
+        self._shared_resources.reopen_diskcache()
 
     def get_image(self, color_channels=3, target_size=None):
         # type: (int, tuple[int, int]) -> Image
@@ -150,16 +177,23 @@ class ImageFile(object):
 
         img = None
 
+        if self.type == ImageFileType.FILE_PATH:
+            img = Image.open(self.file_path)
+        elif self.type == ImageFileType.DISKCACHE:
+            try:
+                img = Image.open(BytesIO(self.diskcache[self._image_key]))
+            except Exception as e:
+                # Attempt to reopen the diskcache and read again
+                self.reopen_diskcache_handle()
+                img = Image.open(BytesIO(self.diskcache[self._image_key]))
         # Loading the data from the TAR file is not thread safe. So for each
         # image load the image data before releasing the lock. Regular files
         # can be lazy loaded, opening is enough.
-        if self.type == ImageFileType.TAR:
+        elif self.type == ImageFileType.TAR:
             with self.tar_read_lock:
                 f = self.tar_file.extractfile(self.tar_info)
                 img = Image.open(f)
                 img.load()
-        elif self.type == ImageFileType.FILE_PATH:
-            img = Image.open(self.file_path)
         else:
             raise ValueError('Cannot open ImageFileType: {}'.format(self.type))
 
@@ -187,22 +221,36 @@ class ImageFile(object):
 
 class ImageSetSharedResources(object):
 
-    def __init__(self, tar_file, tar_read_lock, path_to_archive):
+    def __init__(self, path_to_archive, tar_file=None, tar_read_lock=None, diskcache=None, diskcache_path=None):
+        self._path_to_archive = path_to_archive
         self._tar_read_lock = tar_read_lock
         self._tar_file = tar_file
-        self._path_to_archive = path_to_archive
+        self._diskcache = diskcache
+        self._diskcache_path = diskcache_path
 
     @property
-    def tar_read_lock(self):
-        return self._tar_read_lock
+    def path_to_archive(self):
+        return self._path_to_archive
 
     @property
     def tar_file(self):
         return self._tar_file
 
     @property
-    def path_to_archive(self):
-        return self._path_to_archive
+    def tar_read_lock(self):
+        return self._tar_read_lock
+
+    @property
+    def diskcache(self):
+        return self._diskcache
+
+    @property
+    def diskcache_path(self):
+        return self._diskcache_path
+
+    def reopen_diskcache(self):
+        if self._diskcache_path is not None:
+            self._diskcache = Cache(self._diskcache_path)
 
 
 class ImageSet(object):
@@ -238,19 +286,32 @@ class ImageSet(object):
                     file_name = os.path.basename(tar_info.name)
                     self._file_name_to_image_file[file_name] = img_file
         elif os.path.isdir(path_to_archive):
-            image_paths = ImageSet.list_pictures(path_to_archive)
+            # If the dataset is a diskcache
+            if os.path.exists(os.path.join(path_to_archive, 'cache.db')):
+                cache = Cache(path_to_archive)
+                self._image_set_shared_resources = ImageSetSharedResources(path_to_archive=None, tar_file=None, tar_read_lock=None, diskcache_path=path_to_archive, diskcache=cache)
 
-            # Remove the shared part of the path - also: filter hidden files and non-files
-            image_paths = [os.path.relpath(p, start=self.path_to_archive) for p in image_paths if os.path.isfile(p) and not os.path.basename(p).startswith('.')]
+                image_keys = list(cache)
 
-            # Create the shared resources
-            self._image_set_shared_resources = ImageSetSharedResources(path_to_archive=self.path_to_archive, tar_file=None, tar_read_lock=None)
+                for image_key in image_keys:
+                    img_file = ImageFile(image_path=None, tar_info=None, image_key=image_key, shared_resources=self._image_set_shared_resources)
+                    file_name = img_file.file_name
+                    self._image_files.append(img_file)
+                    self._file_name_to_image_file[file_name] = img_file
+            else:
+                image_paths = ImageSet.list_pictures(path_to_archive)
 
-            for image_path in image_paths:
-                img_file = ImageFile(image_path=image_path, tar_info=None, shared_resources=self._image_set_shared_resources)
-                file_name = img_file.file_name
-                self._image_files.append(img_file)
-                self._file_name_to_image_file[file_name] = img_file
+                # Remove the shared part of the path - also: filter hidden files and non-files
+                image_paths = [os.path.relpath(p, start=self.path_to_archive) for p in image_paths if os.path.isfile(p) and not os.path.basename(p).startswith('.')]
+
+                # Create the shared resources
+                self._image_set_shared_resources = ImageSetSharedResources(path_to_archive=self.path_to_archive, tar_file=None, tar_read_lock=None)
+
+                for image_path in image_paths:
+                    img_file = ImageFile(image_path=image_path, tar_info=None, shared_resources=self._image_set_shared_resources)
+                    file_name = img_file.file_name
+                    self._image_files.append(img_file)
+                    self._file_name_to_image_file[file_name] = img_file
         else:
             raise ValueError('The given archive path is not recognized as a tar file or a directory: {}'.format(path_to_archive))
 

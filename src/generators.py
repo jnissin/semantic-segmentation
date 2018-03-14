@@ -718,93 +718,6 @@ class DataGenerator(object):
             img.save(tmp_cached_img_path, format=save_format)
             os.rename(tmp_cached_img_path, cached_img_path)
 
-    def _pil_resize_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE, bypass_cache=False):
-        # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage
-
-        target_shape = self._pil_get_target_resize_shape_for_image(img=img, resize_shape=resize_shape)
-
-        if target_shape[0] == img.height and target_shape[1] == img.width:
-            return img
-
-        # If using caching
-        if not bypass_cache and self.resized_image_cache_path is not None and isinstance(img, PILImageFile):
-            # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
-            cached_img_name = os.path.splitext(os.path.basename(img.filename))
-            filename_no_ext = cached_img_name[0]
-            file_ext = cached_img_name[1]
-
-            # TODO: Remove hack to fix BICUBIC ~ BILINEAR for photos
-            if img_type == ImageType.PHOTO:
-                cached_img_name_bicubic = '{}_{}_{}_{}_{}{}'.format(filename_no_ext,
-                                                                    target_shape[0],
-                                                                    target_shape[1],
-                                                                    ImageInterpolationType.BICUBIC.value,
-                                                                    img_type.value,
-                                                                    file_ext)
-                cached_img_path_bicubic = os.path.join(self.resized_image_cache_path, cached_img_name_bicubic)
-
-                if os.path.exists(cached_img_path_bicubic):
-                    try:
-                        resized_img = image_utils.load_img(cached_img_path_bicubic)
-
-                        # Remove the old image resource
-                        img.close()
-                        del img
-
-                        return resized_img
-                    # Log the exception and default to the non cached resize
-                    except Exception as e:
-                        self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
-            # TODO: End of hack
-
-            cached_img_name = '{}_{}_{}_{}_{}{}'.format(filename_no_ext,
-                                                        target_shape[0],
-                                                        target_shape[1],
-                                                        interp.value,
-                                                        img_type.value,
-                                                        file_ext)
-            cached_img_path = os.path.join(self.resized_image_cache_path, cached_img_name)
-
-            # If the cached file exists load and return it
-            if os.path.exists(cached_img_path):
-                try:
-                    resized_img = image_utils.load_img(cached_img_path)
-
-                    # Remove the old image resource
-                    img.close()
-                    del img
-
-                    return resized_img
-                # Log the exception and default to the non cached resize
-                except Exception as e:
-                    self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
-
-            # If there was no cached file - resize using PIL and cache
-            # Use the same save format as the original file if it is given
-            save_format = img.format
-
-            if save_format is None:
-                # Try determining format from file ending
-                if file_ext.lower() == '.jpg' or file_ext.lower() == '.jpeg':
-                    save_format = 'JPEG'
-                elif file_ext.lower() == '.png':
-                    save_format = 'PNG'
-                else:
-                    # If we couldn't determine format from extension use the img type to guess
-                    save_format = 'PNG' if img_type.MASK else 'JPEG'
-
-            resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
-
-            try:
-                self._pil_save_image_to_cache(resized_img, cached_img_path=cached_img_path, save_format=save_format)
-            except Exception as e:
-                self.logger.warn('Caught exception during resized image caching (write): {}'.format(e.message))
-
-            return resized_img
-
-        # If everything else fails - just resize to target shape without caching
-        return image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
-
     def _pil_fit_image_to_div2_constraint(self, img, cval, interp):
         # type: (PILImage, np.ndarray, ImageInterpolationType) -> PILImage
 
@@ -1347,7 +1260,7 @@ class SegmentationDataGenerator(DataGenerator):
         # Resize the photo to match the mask size if necessary, since
         # the original photos are sometimes huge
         if pil_photo.size != pil_mask.size:
-            pil_photo = self._pil_resize_image(pil_photo, resize_shape=(pil_mask.height, pil_mask.width), cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=(pil_mask.height, pil_mask.width), cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
 
         if pil_photo.size != pil_mask.size:
             raise ValueError('Non-matching photo and mask dimensions after resize: {} != {}'.format(pil_photo.size, pil_mask.size))
@@ -1452,8 +1365,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            pil_photo = self._pil_resize_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
-            pil_mask = self._pil_resize_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK)
+            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            pil_mask = self._pil_get_resized_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK)
 
         # Drop any unnecessary channels from the mask image we only use the red or L (luma for grayscale)
         if len(pil_mask.getbands()) > 1:
@@ -2365,7 +2278,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
@@ -2407,7 +2320,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
 
         img_height = img.height
         img_width = img.width
@@ -2442,7 +2355,7 @@ class ClassificationDataGenerator(DataGenerator):
                 img = img_file.get_image(self.num_color_channels)
 
                 if resize_shape is not None:
-                    img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+                    img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
@@ -2541,7 +2454,7 @@ class ClassificationDataGenerator(DataGenerator):
             if num_target_pixels > num_img_pixels and apply_augmentation:
                 resize_after_augmentation = True
             elif num_target_pixels != num_img_pixels:
-                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
+                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -2561,7 +2474,7 @@ class ClassificationDataGenerator(DataGenerator):
 
             # Apply possibly postponed resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
             if resize_after_augmentation:
-                img = self._pil_resize_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
+                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
