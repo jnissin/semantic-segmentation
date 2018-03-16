@@ -288,16 +288,16 @@ class TrainerBase:
 
             # If the destination directory already exists
             if os.path.exists(dst_path):
-                num_src_files = len([name for name in os.listdir(src_path)])
-                num_dst_files = len([name for name in os.listdir(dst_path)])
+                src_files = set([name for name in os.listdir(src_path)])
+                dst_files = set([name for name in os.listdir(dst_path)])
 
-                # If the number of files is the same - skip copying (likely the same content)
-                if num_src_files == num_dst_files:
-                    self.logger.log('Skipping copying {} to {} - number of files is the same for both: {} and {}'.format(src_path, dst_path, num_src_files, num_dst_files))
+                # If all src files are found in dst - skip (likely the same data)
+                if src_files.issubset(dst_files):
+                    self.logger.log('Skipping copying {} to {} - all src files are found in dst. Number of files: src: {}, dst {}'.format(src_path, dst_path, len(src_files), (dst_files)))
                     return
                 # If the number of files is different - destroy the existing tmp and copy the files
                 else:
-                    self.logger.log('Found existing tmp for: {} -> {} with different number of files {} vs {}. Destroying and recopying the files.'.format(src_path, dst_path, num_src_files, num_dst_files))
+                    self.logger.log('Found existing tmp for: {} -> {} with different some src files missing. Number of files src: {}, dst: {}. Destroying and recopying the files.'.format(src_path, dst_path, len(src_files), len(dst_files)))
                     shutil.rmtree(dst_path)
 
             general_utils.create_path_if_not_existing(dst_path)
