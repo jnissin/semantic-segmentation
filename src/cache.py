@@ -87,7 +87,10 @@ class MemoryMappedImageCache(object):
             self.data_fp.close()
             self.data_fp = None
 
-        self.data_fp = open(self.data_file_path, self.file_mode)
+        if self.read_only or self.write_to_secondary_file_cache:
+            self.data_fp = open(self.data_file_path, os.O_RDONLY)
+        else:
+            self.data_fp = open(self.data_file_path, self.file_mode)
         return self.data_fp
 
     def update_fp(self):
@@ -108,7 +111,10 @@ class MemoryMappedImageCache(object):
 
         try:
             self.data_fp.flush()
-            self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size)
+            if self.read_only or self.write_to_secondary_file_cache:
+                self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size, prot=mmap.PROT_READ)
+            else:
+                self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size)
         except IOError as e:
             print 'ERROR: Could not open memory mapped data file: {}'.format(e.message)
 
