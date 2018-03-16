@@ -87,10 +87,10 @@ class MemoryMappedImageCache(object):
             self.data_fp.close()
             self.data_fp = None
 
-        if self.read_only or self.write_to_secondary_file_cache:
-            self.data_fp = open(self.data_file_path, mode=os.O_RDONLY)
-        else:
-            self.data_fp = open(self.data_file_path, self.file_mode)
+        #if self.read_only or self.write_to_secondary_file_cache:
+        #    self.data_fp = open(self.data_file_path, mode=os.O_RDONLY)
+        #else:
+        self.data_fp = open(self.data_file_path, self.file_mode)
         return self.data_fp
 
     def update_fp(self):
