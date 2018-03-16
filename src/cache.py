@@ -1,6 +1,7 @@
 import mmap
 import os
 import pickle
+import re
 
 from PIL import Image
 from io import BytesIO
@@ -20,7 +21,7 @@ class MemoryMappedImageCache(object):
     # Internally keeps an index of filename -> (start_byte, end_byte)
     # and stores the image data to a memory mapped file.
 
-    def __init__(self, cache_path, max_mmap_file_size=0, read_only=False, memory_map_update_mode=MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE):
+    def __init__(self, cache_path, max_mmap_file_size=0, read_only=False, memory_map_update_mode=MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE, write_to_secondary_file_cache=False):
         # type: (str, int, bool, MemoryMapUpdateMode) -> None
 
         self.cache_path = cache_path
@@ -32,6 +33,7 @@ class MemoryMappedImageCache(object):
         self.data_mm_fp = None
         self.index = None
 
+        # Primary memory mapped cache
         if not os.path.exists(os.path.dirname(self.cache_path)):
             os.makedirs(os.path.dirname(self.cache_path))
 
@@ -46,6 +48,16 @@ class MemoryMappedImageCache(object):
             # Open the memory mapped file and load the index file
             self.data_mm_fp = self.open_mmap_file()
             self.index = self.load_index_file()
+
+        # Secondary file cache information
+        self.secondary_file_cache_path = os.path.join(os.path.dirname(self.cache_path), 'file_cache/')
+        self.secondary_file_cache_index = set()
+        self.write_to_secondary_file_cache = write_to_secondary_file_cache
+
+        if not os.path.exists(os.path.dirname(self.secondary_file_cache_path)):
+            os.makedirs(os.path.dirname(self.secondary_file_cache_path))
+        else:
+            self.update_secondary_file_cache_index()
 
     def __contains__(self, key):
         return key in self.index
@@ -139,10 +151,21 @@ class MemoryMappedImageCache(object):
         if self.data_fp is not None:
             self.data_fp.close()
 
+    def update_secondary_file_cache_index(self):
+        ext = 'jpg|jpeg|bmp|png'
+        self.secondary_file_cache_index = set([f for root, _, files in os.walk(self.secondary_file_cache_path) for f in files if re.match(r'([\w]+\.(?:' + ext + '))', f)])
+
     def key_in_cache(self, key):
+        key_in_primary_index = False
+        key_in_secondary_index = False
+
         if self.index is not None:
-            return key in self.index
-        return False
+            key_in_primary_index = key in self.index
+
+        if self.secondary_file_cache_index is not None:
+            key_in_secondary_index = key in self.secondary_file_cache_index
+
+        return key_in_primary_index or key_in_secondary_index
 
     def set_image_to_cache(self, key, img, save_format=None):
         # type: (str, Image) -> None
@@ -158,25 +181,56 @@ class MemoryMappedImageCache(object):
         else:
             format = save_format
 
-        img.save(img_bytes, format=format)
-        num_bytes = img_bytes.tell()
-        img_bytes.seek(0)
+        if self.write_to_secondary_file_cache:
+            try:
+                cached_img_path = os.path.join(self.secondary_file_cache_path, key)
+                tmp_cached_img_path = cached_img_path + '.tmp'
 
-        with _MEMORY_MAPPED_IMAGE_CACHE_WRITE_LOCK:
-            self.data_fp.seek(0, os.SEEK_END)
-            first_byte = self.data_fp.tell()
-            last_byte = first_byte + num_bytes
-            self.data_fp.write(img_bytes.read())
-            self.index[key] = (first_byte, last_byte)
+                # If there is no tmp file and no real cached file - save the image
+                if not os.path.exists(tmp_cached_img_path) and not os.path.exists(cached_img_path):
+                    # Save is a long process and during save the file is not always valid,
+                    # use .tmp extension and remove .tmp extension when save is complete
+                    img.save(tmp_cached_img_path, format=save_format)
+                    os.rename(tmp_cached_img_path, cached_img_path)
 
-            if self.memory_map_update_mode == MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE:
-                self.update_mmap_fp()
+                self.secondary_file_cache_index.add(key)
+            except Exception as e:
+                print 'ERROR: Failed to write to secondary file cache: {}'.format(e.message)
+                self.secondary_file_cache_index.remove(key)
+        else:
+            img.save(img_bytes, format=format)
+            num_bytes = img_bytes.tell()
+            img_bytes.seek(0)
+
+            with _MEMORY_MAPPED_IMAGE_CACHE_WRITE_LOCK:
+                self.data_fp.seek(0, os.SEEK_END)
+                first_byte = self.data_fp.tell()
+                last_byte = first_byte + num_bytes
+                self.data_fp.write(img_bytes.read())
+                self.index[key] = (first_byte, last_byte)
+
+                if self.memory_map_update_mode == MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE:
+                    self.update_mmap_fp()
 
     def get_image_from_cache(self, key):
         # If the image is in cache
-        if key in self.index:
-            bytes = self.index[key]
-            img = Image.open(BytesIO(self.data_mm_fp[bytes[0]:bytes[1]]))
-            return img
+        if self.index is not None and key in self.index:
+            try:
+                bytes = self.index[key]
+                img = Image.open(BytesIO(self.data_mm_fp[bytes[0]:bytes[1]]))
+                return img
+            except IOError as e:
+                print 'ERROR: Failed to read from image mapped file: {}'.format(e.message)
+                return None
+        # If the image is in secondary file cache
+        elif self.secondary_file_cache_index is not None and key in self.secondary_file_cache_index:
+            try:
+                img = Image.open(os.path.join(self.secondary_file_cache_path, key))
+                return img
+            except IOError as e:
+                print 'ERROR: Failed to read from secondary file cache: {}'.format(e.message)
+                os.remove(os.path.join(self.secondary_file_cache_path, key))
+                self.secondary_file_cache_index.remove(key)
+                return None
         else:
             return None

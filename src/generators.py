@@ -439,17 +439,17 @@ class DataGenerator(object):
 
         if self._resized_image_cache is None:
 
-            # TODO: Fix to support writing
-            read_only = True
+            read_only = False
             memory_map_update_mode = MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE
+            write_to_secondary_file_cache = True
 
             if os.path.exists(self.resized_image_cache_path):
                 self.logger.log('Loading existing resized image cache from: {}'.format(self.resized_image_cache_path))
-                self._resized_image_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only)
-                self.logger.log('Loaded image cache with {} images, memory_map_update_mode: {}, read_only: {}'.format(self._resized_image_cache.size, memory_map_update_mode, read_only))
+                self._resized_image_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
+                self.logger.log('Loaded image cache with {} images, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self._resized_image_cache.size, memory_map_update_mode, read_only, write_to_secondary_file_cache))
             else:
-                self.logger.log('Creating new resized image cache: {}, memory_map_update_mode: {}, read_only: {}'.format(self.resized_image_cache_path, memory_map_update_mode, read_only))
-                self._resized_image_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only)
+                self.logger.log('Creating new resized image cache: {}, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self.resized_image_cache_path, memory_map_update_mode, read_only, write_to_secondary_file_cache))
+                self._resized_image_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
 
         return self._resized_image_cache
 
@@ -567,12 +567,12 @@ class DataGenerator(object):
                 try:
                     resized_img = self._pil_get_resized_img_from_cache(cache_key=resized_img_cache_key)
 
-                    # Remove the old image resource
-                    img.close()
-                    del img
+                    if resized_img is not None:
+                        # Remove the old image resource
+                        img.close()
+                        del img
 
-                    return resized_img
-
+                        return resized_img
                 except Exception as e:
                     self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
             else:
