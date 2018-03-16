@@ -55,7 +55,7 @@ class MemoryMappedImageCache(object):
             self.data_mm_fp = self.open_mmap_file()
             self.index = self.load_index_file()
 
-        if not os.path.exists(os.path.dirname(self.secondary_file_cache_path)):
+        if not os.path.exists(os.path.dirname(self.secondary_file_cache_path)) and self.write_to_secondary_file_cache:
             os.makedirs(os.path.dirname(self.secondary_file_cache_path))
         else:
             self.update_secondary_file_cache_index()

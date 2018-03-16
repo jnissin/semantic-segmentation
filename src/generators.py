@@ -524,11 +524,18 @@ class DataGenerator(object):
 
         return target_shape
 
-    def _pil_get_cache_key_for_target_resize_shape(self, img, target_shape, interp, img_type):
-        # type: (PILImage, tuple, ImageInterpolationType, ImageType) -> str
+    def _pil_get_cache_key_for_target_resize_shape(self, img, key, target_shape, interp, img_type):
+        # type: (PILImage, str, tuple, ImageInterpolationType, ImageType) -> str
 
         # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
         cached_img_name = os.path.splitext(os.path.basename(img.filename))
+
+        if cached_img_name is None or cached_img_name == '':
+            cached_img_name = key
+
+        if cached_img_name is None or cached_img_name == '':
+            self.logger.warn('Cached image name is ill formed')
+
         filename_no_ext = cached_img_name[0]
         file_ext = cached_img_name[1]
 
@@ -541,7 +548,7 @@ class DataGenerator(object):
 
         return cached_img_name
 
-    def _pil_get_resized_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE, bypass_cache=False):
+    def _pil_get_resized_image(self, img, resize_shape, cval, interp, img_type=ImageType.NONE, bypass_cache=False, key=None):
         # type: (PILImage, tuple, np.ndarray, ImageInterpolationType, ImageType) -> PILImage
 
         target_shape = self._pil_get_target_resize_shape_for_image(img=img, resize_shape=resize_shape)
@@ -552,6 +559,7 @@ class DataGenerator(object):
         # If we are supposed to use caching
         if not bypass_cache and self.using_resized_image_cache and isinstance(img, PILImageFile):
             resized_img_cache_key = self._pil_get_cache_key_for_target_resize_shape(img=img,
+                                                                                    key=key,
                                                                                     target_shape=target_shape,
                                                                                     interp=interp,
                                                                                     img_type=img_type)
@@ -559,6 +567,7 @@ class DataGenerator(object):
             # TODO: Remove hack for bicubic ~ bilinear photos
             if interp != ImageInterpolationType.BICUBIC and img_type == ImageType.PHOTO and resized_img_cache_key not in self.resized_image_cache:
                 resized_img_cache_key = self._pil_get_cache_key_for_target_resize_shape(img=img,
+                                                                                        key=key,
                                                                                         target_shape=target_shape,
                                                                                         interp=ImageInterpolationType.BICUBIC,
                                                                                         img_type=img_type)
@@ -1238,7 +1247,7 @@ class SegmentationDataGenerator(DataGenerator):
         # Resize the photo to match the mask size if necessary, since
         # the original photos are sometimes huge
         if pil_photo.size != pil_mask.size:
-            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=(pil_mask.height, pil_mask.width), cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            pil_photo = self._pil_get_resized_image(pil_photo, key=photo_file.file_name, resize_shape=(pil_mask.height, pil_mask.width), cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
 
         if pil_photo.size != pil_mask.size:
             raise ValueError('Non-matching photo and mask dimensions after resize: {} != {}'.format(pil_photo.size, pil_mask.size))
@@ -1252,7 +1261,9 @@ class SegmentationDataGenerator(DataGenerator):
                                                                         material_sample=material_sample,
                                                                         crop_shape=crop_shape,
                                                                         resize_shape=resize_shape,
-                                                                        validate_crops=True)
+                                                                        validate_crops=True,
+                                                                        pil_photo_key=photo_file.file_name,
+                                                                        pil_mask_key=mask_file.file_name)
 
         if material_sample is not None:
             # Sanity check: material samples are supposed to guarantee material instances
@@ -1308,12 +1319,14 @@ class SegmentationDataGenerator(DataGenerator):
                                                                         crop_shape=crop_shape,
                                                                         resize_shape=resize_shape,
                                                                         validate_crops=False,
-                                                                        dummy_mask=self.superpixel_segmentation_function is SuperpixelSegmentationFunctionType.NONE)
+                                                                        dummy_mask=self.superpixel_segmentation_function is SuperpixelSegmentationFunctionType.NONE,
+                                                                        pil_photo_key=photo_file.file_name,
+                                                                        pil_mask_key=os.path.splitext(photo_file.file_name)[0] + '.png')
 
         return pil_photo, pil_mask
 
-    def process_segmentation_photo_mask_pair(self, step_idx, pil_photo, pil_mask, photo_cval, mask_cval, material_sample=None, crop_shape=None, resize_shape=None, validate_crops=True, dummy_mask=False):
-        # type: (int, PILImage, PILImage, np.ndarray, np.ndarray, MaterialSample, tuple, tuple, bool) -> (PILImage, PILImage)
+    def process_segmentation_photo_mask_pair(self, step_idx, pil_photo, pil_mask, photo_cval, mask_cval, material_sample=None, crop_shape=None, resize_shape=None, validate_crops=True, dummy_mask=False, pil_photo_key=None, pil_mask_key=None):
+        # type: (int, PILImage, PILImage, np.ndarray, np.ndarray, MaterialSample, tuple, tuple, bool, str, str) -> (PILImage, PILImage)
 
         """
         Applies crop and data augmentation to two numpy arrays representing the photo and
@@ -1343,8 +1356,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
-            pil_mask = self._pil_get_resized_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK)
+            pil_photo = self._pil_get_resized_image(pil_photo, key=pil_photo_key, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            pil_mask = self._pil_get_resized_image(pil_mask, key=pil_mask_key, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK)
 
         # Drop any unnecessary channels from the mask image we only use the red or L (luma for grayscale)
         if len(pil_mask.getbands()) > 1:
@@ -2256,7 +2269,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            img = self._pil_get_resized_image(img, key=img_file.file_name, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
@@ -2298,7 +2311,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            img = self._pil_get_resized_image(img, key=img_file.file_name, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
 
         img_height = img.height
         img_width = img.width
@@ -2333,7 +2346,7 @@ class ClassificationDataGenerator(DataGenerator):
                 img = img_file.get_image(self.num_color_channels)
 
                 if resize_shape is not None:
-                    img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+                    img = self._pil_get_resized_image(img, key=img_file.file_name, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
@@ -2432,7 +2445,7 @@ class ClassificationDataGenerator(DataGenerator):
             if num_target_pixels > num_img_pixels and apply_augmentation:
                 resize_after_augmentation = True
             elif num_target_pixels != num_img_pixels:
-                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
+                img = self._pil_get_resized_image(img, key=img_file.file_name, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -2452,7 +2465,7 @@ class ClassificationDataGenerator(DataGenerator):
 
             # Apply possibly postponed resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
             if resize_after_augmentation:
-                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
+                img = self._pil_get_resized_image(img, key=img_file.file_name, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
