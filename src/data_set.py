@@ -9,7 +9,7 @@ import multiprocessing
 from enum import Enum
 from PIL import Image
 from tarfile import TarInfo, TarFile
-from diskcache import Cache
+from cache import MemoryMappedImageCache, MemoryMapUpdateMode
 from io import BytesIO
 
 from abc import ABCMeta, abstractmethod, abstractproperty
@@ -23,7 +23,7 @@ class ImageFileType(Enum):
     NONE = -1,
     TAR = 0,
     FILE_PATH = 1,
-    DISKCACHE = 2
+    MMI_CACHE = 2
 
 
 class ImageFile(object):
@@ -41,7 +41,7 @@ class ImageFile(object):
         # Arguments
             :param image_path: File path to the image file
             :param tar_info: The TarInfo of the image
-            :param image_key: The key of the image in the diskcache
+            :param image_key: The key of the image in the MMI
             :param shared_resources: Shared resources in the image set
         # Returns
             Nothing
@@ -71,8 +71,8 @@ class ImageFile(object):
 
         if image_path is not None:
             self.type = ImageFileType.FILE_PATH
-        elif self.diskcache is not None and image_key is not None:
-            self.type = ImageFileType.DISKCACHE
+        elif self.mmi_cache is not None and image_key is not None:
+            self.type = ImageFileType.MMI_CACHE
         elif self.tar_file is not None and tar_info is not None:
             self.type = ImageFileType.TAR
 
@@ -128,12 +128,12 @@ class ImageFile(object):
         return None
 
     @property
-    def diskcache(self):
+    def mmi_cache(self):
         if self._shared_resources is not None:
-            if self._shared_resources.diskcache is None:
-                self.reopen_diskcache_handle()
+            if self._shared_resources.mmi_cache is None:
+                self.reopen_mmi_cache_handles()
 
-        return self._shared_resources.diskcache
+        return self._shared_resources.mmi_cache
 
     @property
     def tar_read_lock(self):
@@ -150,14 +150,14 @@ class ImageFile(object):
         elif self._image_key is not None:
             return os.path.basename(self._image_key)
 
-    def reopen_diskcache_handle(self):
+    def reopen_mmi_cache_handles(self):
         if self._shared_resources is None:
-            raise ValueError('No shared resources available - cannot open diskcache handle')
+            raise ValueError('No shared resources available - cannot open mmi cache')
 
-        if self._shared_resources.diskcache_path is None:
-            raise ValueError('Diskcache path of shared resources is none - cannot open diskcache handle')
+        if self._shared_resources.mmi_cache_path is None:
+            raise ValueError('mmi_cache_path of shared resources is none - cannot open mmi cache handle')
 
-        self._shared_resources.reopen_diskcache()
+        self._shared_resources.reopen_mmi_cache()
 
     def get_image(self, color_channels=3, target_size=None):
         # type: (int, tuple[int, int]) -> Image
@@ -179,13 +179,13 @@ class ImageFile(object):
 
         if self.type == ImageFileType.FILE_PATH:
             img = Image.open(self.file_path)
-        elif self.type == ImageFileType.DISKCACHE:
+        elif self.type == ImageFileType.MMI_CACHE:
             try:
-                img = Image.open(BytesIO(self.diskcache[self._image_key]))
+                img = Image.open(BytesIO(self.mmi_cache[self._image_key]))
             except Exception as e:
-                # Attempt to reopen the diskcache and read again
-                self.reopen_diskcache_handle()
-                img = Image.open(BytesIO(self.diskcache[self._image_key]))
+                # Attempt to reopen the MMI cache and read again
+                self.reopen_mmi_cache_handles()
+                img = Image.open(BytesIO(self.mmi_cache[self._image_key]))
         # Loading the data from the TAR file is not thread safe. So for each
         # image load the image data before releasing the lock. Regular files
         # can be lazy loaded, opening is enough.
@@ -221,12 +221,12 @@ class ImageFile(object):
 
 class ImageSetSharedResources(object):
 
-    def __init__(self, path_to_archive, tar_file=None, tar_read_lock=None, diskcache=None, diskcache_path=None):
+    def __init__(self, path_to_archive, tar_file=None, tar_read_lock=None, mmi_cache=None, mmi_cache_path=None):
         self._path_to_archive = path_to_archive
         self._tar_read_lock = tar_read_lock
         self._tar_file = tar_file
-        self._diskcache = diskcache
-        self._diskcache_path = diskcache_path
+        self._mmi_cache = mmi_cache
+        self._mmi_cache_path = mmi_cache_path
 
     @property
     def path_to_archive(self):
@@ -241,16 +241,20 @@ class ImageSetSharedResources(object):
         return self._tar_read_lock
 
     @property
-    def diskcache(self):
-        return self._diskcache
+    def mmi_cache(self):
+        # type: () -> MemoryMappedImageCache
+        return self._mmi_cache
 
     @property
-    def diskcache_path(self):
-        return self._diskcache_path
+    def mmi_cache_path(self):
+        # type: () -> str
+        return self._mmi_cache_path
 
-    def reopen_diskcache(self):
-        if self._diskcache_path is not None:
-            self._diskcache = Cache(self._diskcache_path)
+    def reopen_mmi_cache(self):
+        if self.mmi_cache is not None:
+            self.mmi_cache.update_fps()
+        else:
+            self._mmi_cache = MemoryMappedImageCache(self.mmi_cache_path, read_only=True, memory_map_update_mode=MemoryMapUpdateMode.MANUAL)
 
 
 class ImageSet(object):
@@ -286,12 +290,12 @@ class ImageSet(object):
                     file_name = os.path.basename(tar_info.name)
                     self._file_name_to_image_file[file_name] = img_file
         elif os.path.isdir(path_to_archive):
-            # If the dataset is a diskcache
-            if os.path.exists(os.path.join(path_to_archive, 'cache.db')):
-                cache = Cache(path_to_archive)
-                self._image_set_shared_resources = ImageSetSharedResources(path_to_archive=None, tar_file=None, tar_read_lock=None, diskcache_path=path_to_archive, diskcache=cache)
+            # If the dataset is a MemoryMappedImageCache
+            if os.path.exists(os.path.join(path_to_archive, 'data.bin')) and os.path.exists(os.path.join(path_to_archive, 'index.pkl')):
+                cache = MemoryMappedImageCache(path_to_archive, read_only=True, memory_map_update_mode=MemoryMapUpdateMode.MANUAL)
+                self._image_set_shared_resources = ImageSetSharedResources(path_to_archive=None, tar_file=None, tar_read_lock=None, mmi_cache_path=path_to_archive, mmi_cache=cache)
 
-                image_keys = list(cache)
+                image_keys = cache.keys()
 
                 for image_key in image_keys:
                     img_file = ImageFile(image_path=None, tar_info=None, image_key=image_key, shared_resources=self._image_set_shared_resources)

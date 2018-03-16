@@ -5,7 +5,7 @@ import random
 import os
 import numpy as np
 
-from diskcache import Cache
+from cache import MemoryMappedImageCache, MemoryMapUpdateMode
 from io import BytesIO
 
 from enum import Enum
@@ -432,30 +432,24 @@ class DataGenerator(object):
 
     @property
     def resized_image_cache(self):
-        #  type: () -> Cache
+        #  type: () -> MemoryMappedImageCache
 
         if not self.using_resized_image_cache:
             return None
 
         if self._resized_image_cache is None:
 
+            # TODO: Fix to support writing
+            read_only = True
+            memory_map_update_mode = MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE
+
             if os.path.exists(self.resized_image_cache_path):
                 self.logger.log('Loading existing resized image cache from: {}'.format(self.resized_image_cache_path))
-                self._resized_image_cache = Cache(self.resized_image_cache_path)
-                self.logger.log('Loaded image cache with {} images, size_limit: {}, cull_limit: {}, eviction_policy: {}'
-                                .format(len(self._resized_image_cache), self._resized_image_cache.size_limit, self._resized_image_cache.cull_limit, self._resized_image_cache.eviction_policy))
+                self._resized_image_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only)
+                self.logger.log('Loaded image cache with {} images, memory_map_update_mode: {}, read_only: {}'.format(self._resized_image_cache.size, memory_map_update_mode, read_only))
             else:
-                size_limit = 100 * 1073741824
-                cull_limit = 0
-                eviction_policy = "least-frequently-used"
-
-                self.logger.log('Creating new resized image cache: {}, size_limit: {}, cull_limit: {}, eviction_policy: {}'
-                                .format(self.resized_image_cache_path, size_limit, cull_limit, eviction_policy))
-
-                self._resized_image_cache = Cache(self.resized_image_cache_path,
-                                                  size_limit=size_limit,
-                                                  cull_limit=cull_limit,
-                                                  eviction_policy=eviction_policy)
+                self.logger.log('Creating new resized image cache: {}, memory_map_update_mode: {}, read_only: {}'.format(self.resized_image_cache_path, memory_map_update_mode, read_only))
+                self._resized_image_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only)
 
         return self._resized_image_cache
 
@@ -480,19 +474,7 @@ class DataGenerator(object):
                 # If we couldn't determine format from extension use the img type to guess
                 save_format = 'PNG' if img_type.MASK else 'JPEG'
 
-            if img_type == ImageType.PHOTO:
-                tag = 'photo'
-            elif img_type == ImageType.MASK:
-                tag = 'mask'
-            else:
-                tag = None
-
-            # Save this way in order to get the JPEG/PNG encoding instead of raw bytes
-            img_bytes = BytesIO()
-            img.save(img_bytes, format=save_format)
-            img_bytes.seek(0)
-
-            self.resized_image_cache.set(cache_key, img_bytes, read=True, tag=tag)
+        self.resized_image_cache.set_image_to_cache(key=cache_key, img=img, save_format=save_format)
 
     def _pil_get_resized_img_from_cache(self, cache_key):
         # type: (str) -> PILImage
@@ -500,11 +482,7 @@ class DataGenerator(object):
         if not self.using_resized_image_cache:
             return None
 
-        if cache_key not in self.resized_image_cache:
-            return None
-
-        img = PImage.open(BytesIO(self.resized_image_cache[cache_key]))
-        return img
+        return self.resized_image_cache.get_image_from_cache(cache_key)
 
     def _pil_get_target_resize_shape_for_image(self, img, resize_shape):
         # type: (PILImage, tuple) -> tuple

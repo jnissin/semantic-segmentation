@@ -9,7 +9,7 @@ import shutil
 import resource
 import numpy as np
 
-from diskcache import Cache
+from cache import MemoryMappedImageCache
 
 from enum import Enum
 from PIL import ImageFile
@@ -180,7 +180,11 @@ class TrainerBase:
         self.logger.log('Settings settings.DEFAULT_NUMPY_FLOAT_DTYPE to: {}'.format(K.floatx()))
         settings.DEFAULT_NUMPY_FLOAT_DTYPE = K.floatx()
 
+        # Init caches
         self._init_caches()
+
+        # Init tmp for datasets
+        self._init_tmp()
 
         # Get data augmentation parameters
         self.data_augmentation_parameters = self._get_data_augmentation_parameters()
@@ -219,9 +223,11 @@ class TrainerBase:
                     tar.extractall(path=self.resized_image_cache_path)
                     self.logger.log('Unpacking complete - reading cache statistics')
 
-                    with Cache(self.resized_image_cache_path) as cache:
-                        cached_images = len(cache)
-                        self.logger.log('Successfully unpacked {} images to initial resized image cache'.format(cached_images))
+                    if os.path.exists(os.path.join(self.resized_image_cache_path, 'data.bin')):
+                        cache = MemoryMappedImageCache(self.resized_image_cache_path, read_only=True)
+                        self.logger.log('Successfully unpacked {} images to initial resized image cache'.format(cache.size))
+                        cache.close()
+                        cache = None
 
                 except Exception as e:
                     self.logger.warn('Failed to unpack initial cache tar file from: {}, caught exception: {}'.format(self.initial_resized_image_cache_tar_file_path, e.message))
@@ -230,6 +236,86 @@ class TrainerBase:
                         tar.close()
             else:
                 self.logger.log('Existing resized image cache folder found - skipping initial population')
+
+                if os.path.exists(os.path.join(self.resized_image_cache_path, 'data.bin')):
+                    cache = MemoryMappedImageCache(self.resized_image_cache_path, read_only=True)
+                    self.logger.log('Found MemoryMappedImageCache at: {} with {} images'.format(self.resized_image_cache_path, cache.size))
+                    cache.close()
+                    cache = None
+
+    def _init_dataset_tmp(self):
+        if settings.COPY_DATASET_TO_TMP:
+            self.logger.log('Copying dataset contents to /tmp/ for faster access')
+
+            # If classification supervised trainer, copy: photos
+            if self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED or self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER:
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_photos'), self.classification_tmp_labeled_photos_path)
+            # If classification semi-supervised mean teacher trainer, copy: photos, unlabeled
+            elif self.trainer_type == TrainerType.CLASSIFICATION_SEMI_SUPERVISED_MEAN_TEACHER:
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_photos'), self.classification_tmp_labeled_photos_path)
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_unlabeled_photos'), self.classification_tmp_unlabeled_photos_path)
+            # If segmentation supervised trainer, copy: photos, masks
+            elif self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED or self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_photos'), self.segmentation_tmp_labeled_photos_path)
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_masks'), self.segmentation_tmp_labeled_masks_path)
+            # If segmentation semi-supervised mean teacher trainer, copy: photos, masks, unlabeled
+            elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_photos'), self.segmentation_tmp_labeled_photos_path)
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_masks'), self.segmentation_tmp_labeled_masks_path)
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_unlabeled_photos'), self.segmentation_tmp_unlabeled_photos_path)
+            # If segmentation semi-supervised mean teacher superpixel trainer, copy: photos, masks, unlabeled, superpixel_masks
+            elif self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_SUPERPIXEL or self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER_SUPERPIXEL:
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_photos'), self.segmentation_tmp_labeled_photos_path)
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_masks'), self.segmentation_tmp_labeled_masks_path)
+                self._copy_dataset_to_tmp(self._get_config_value('path_to_unlabeled_photos'), self.segmentation_tmp_unlabeled_photos_path)
+                self._copy_dataset_to_tmp(self._get_config_value('superpixel_params')['superpixel_mask_cache_path'], self.segmentation_tmp_unlabeled_superpixel_masks_path)
+            else:
+                raise ValueError('Unknown trainer type: {}'.format(self.trainer_type))
+
+    def _copy_dataset_to_tmp(self, src_path, dst_path):
+        # type: (str, str) -> None
+
+        if src_path is None or dst_path is None:
+            raise ValueError('Expected valid ')
+
+        src_is_file = os.path.isfile(src_path)
+        dst_is_file = os.path.basename(dst_path) != ''
+
+        # If both are paths copy entire folder contents
+        if not src_is_file and not dst_is_file:
+            from shutil import copyfile
+            from distutils import dir_util
+
+            # If the destination directory already exists
+            if os.path.exists(dst_path):
+                num_src_files = len([name for name in os.listdir(src_path)])
+                num_dst_files = len([name for name in os.listdir(dst_path)])
+
+                # If the number of files is the same - skip copying (likely the same content)
+                if num_src_files == num_dst_files:
+                    self.logger.log('Skipping copying {} to {} - number of files is the same for both: {} and {}'.format(src_path, dst_path, num_src_files, num_dst_files))
+                    return
+                # If the number of files is different - destroy the existing tmp and copy the files
+                else:
+                    self.logger.log('Found existing tmp for: {} -> {} with different number of files {} vs {}. Destroying and recopying the files.'.format(src_path, dst_path, num_src_files, num_dst_files))
+                    shutil.rmtree(dst_path)
+
+            general_utils.create_path_if_not_existing(dst_path)
+            self.logger.log('Copying dataset from: {} to: {}'.format(src_path, dst_path))
+            dir_util.copy_tree(os.path.dirname(src_path), os.path.dirname(dst_path))
+        # If both are files copy the file
+        elif src_is_file and dst_is_file:
+
+            # Do not copy if the file already exists
+            if os.path.exists(dst_path):
+                self.logger.log('Skipping copying {} to {} - file already exists'.format(src_path, dst_path))
+                return
+
+            from shutil import copyfile
+            self.logger.log('Copying dataset from: {} to: {}'.format(src_path, dst_path))
+            copyfile(src_path, dst_path)
+        else:
+            raise ValueError('Source and destination paths are not both files/directories: {} -> {}'.format(src_path, dst_path))
 
     def _pre_create_enqueuers(self):
         self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
@@ -408,6 +494,36 @@ class TrainerBase:
     def class_weights(self):
         # type: () -> np.ndarray
         pass
+
+    @property
+    def classification_tmp_labeled_photos_path(self):
+        # type: () -> str
+        return "/tmp/semantic-segmentation/dataset/classification/photos/"
+
+    @property
+    def classification_tmp_unlabeled_photos_path(self):
+        # type: () -> str
+        return "/tmp/semantic-segmentation/dataset/unlabeled/photos/"
+
+    @property
+    def segmentation_tmp_labeled_photos_path(self):
+        # type: () -> str
+        return "/tmp/semantic-segmentation/dataset/segmentation/photos/"
+
+    @property
+    def segmentation_tmp_labeled_masks_path(self):
+        # type: () -> str
+        return "/tmp/semantic-segmentation/dataset/segmentation/masks/"
+
+    @property
+    def segmentation_tmp_unlabeled_photos_path(self):
+        # type: () -> str
+        return "/tmp/semantic-segmentation/dataset/unlabeled/photos/"
+
+    @property
+    def segmentation_tmp_unlabeled_superpixel_masks_path(self):
+        # type: () -> str
+        return "/tmp/semantic-segmentation/dataset/unlabeled/sp_masks/"
 
     @property
     def image_data_format(self):
@@ -1725,7 +1841,10 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     def superpixel_mask_cache_path(self):
         # type: () -> str
         if self.using_superpixel_method:
-            return self.superpixel_method_config['superpixel_mask_cache_path']
+            if settings.COPY_DATASET_TO_TMP:
+                return self.segmentation_tmp_unlabeled_superpixel_masks_path
+            else:
+                return self.superpixel_method_config['superpixel_mask_cache_path']
 
         return None
 
@@ -1763,15 +1882,27 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
     @property
     def path_to_labeled_photos(self):
-        return self._get_config_value('path_to_labeled_photos')
+        # type: () -> str
+        if settings.COPY_DATASET_TO_TMP:
+            return self.segmentation_tmp_labeled_photos_path
+        else:
+            return self._get_config_value('path_to_labeled_photos')
 
     @property
     def path_to_labeled_masks(self):
-        return self._get_config_value('path_to_labeled_masks')
+        # type: () -> str
+        if settings.COPY_DATASET_TO_TMP:
+            return self.segmentation_tmp_labeled_masks_path
+        else:
+            return self._get_config_value('path_to_labeled_masks')
 
     @property
     def path_to_unlabeled_photos(self):
-        return self._get_config_value('path_to_unlabeled_photos')
+        # type: () -> str
+        if settings.COPY_DATASET_TO_TMP:
+            return self.segmentation_tmp_unlabeled_photos_path
+        else:
+            return self._get_config_value('path_to_unlabeled_photos')
 
     @property
     def data_set_information(self):
@@ -2294,11 +2425,19 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
     @property
     def path_to_labeled_photos(self):
-        return self.config['path_to_labeled_photos']
+        # type: () -> str
+        if settings.COPY_DATASET_TO_TMP:
+            return self.classification_tmp_labeled_photos_path
+        else:
+            return self.config['path_to_labeled_photos']
 
     @property
     def path_to_unlabeled_photos(self):
-        return self.config['path_to_unlabeled_photos']
+        # type: () -> str
+        if settings.COPY_DATASET_TO_TMP:
+            return self.classification_tmp_unlabeled_photos_path
+        else:
+            return self.config['path_to_unlabeled_photos']
 
     @property
     def classification_data_set_config(self):
