@@ -33,6 +33,11 @@ class MemoryMappedImageCache(object):
         self.data_mm_fp = None
         self.index = None
 
+        # Secondary file cache information
+        self.write_to_secondary_file_cache = write_to_secondary_file_cache
+        self.secondary_file_cache_path = os.path.join(os.path.dirname(self.cache_path), 'file_cache/')
+        self.secondary_file_cache_index = set()
+
         # Primary memory mapped cache
         if not os.path.exists(os.path.dirname(self.cache_path)):
             os.makedirs(os.path.dirname(self.cache_path))
@@ -48,11 +53,6 @@ class MemoryMappedImageCache(object):
             # Open the memory mapped file and load the index file
             self.data_mm_fp = self.open_mmap_file()
             self.index = self.load_index_file()
-
-        # Secondary file cache information
-        self.secondary_file_cache_path = os.path.join(os.path.dirname(self.cache_path), 'file_cache/')
-        self.secondary_file_cache_index = set()
-        self.write_to_secondary_file_cache = write_to_secondary_file_cache
 
         if not os.path.exists(os.path.dirname(self.secondary_file_cache_path)):
             os.makedirs(os.path.dirname(self.secondary_file_cache_path))
