@@ -528,16 +528,20 @@ class DataGenerator(object):
         # type: (PILImage, str, tuple, ImageInterpolationType, ImageType) -> str
 
         # Cached file name is: <file_name>_<height>_<width>_<interp>_<img_type><file_ext>
-        cached_img_name = os.path.splitext(os.path.basename(img.filename))
+        filename_no_ext = ''
+        file_ext = ''
 
-        if cached_img_name is None or cached_img_name == '':
-            cached_img_name = key
-
-        if cached_img_name is None or cached_img_name == '':
+        # If the image has no filename use the key - unless it's none
+        if (img.filename is None or img.filename == '') and key is not None:
+            cached_img_name = os.path.splitext(os.path.basename(key))
+            filename_no_ext = cached_img_name[0]
+            file_ext = cached_img_name[1]
+        elif (img.filename is None or img.filename == '') and key is None:
             self.logger.warn('Cached image name is ill formed')
-
-        filename_no_ext = cached_img_name[0]
-        file_ext = cached_img_name[1]
+        else:
+            cached_img_name = os.path.splitext(os.path.basename(img.filename))
+            filename_no_ext = cached_img_name[0]
+            file_ext = cached_img_name[1]
 
         cached_img_name = '{}_{}_{}_{}_{}{}'.format(filename_no_ext,
                                                     target_shape[0],
