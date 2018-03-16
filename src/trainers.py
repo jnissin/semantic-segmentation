@@ -184,7 +184,7 @@ class TrainerBase:
         self._init_caches()
 
         # Init tmp for datasets
-        self._init_tmp()
+        self._init_dataset_tmp()
 
         # Get data augmentation parameters
         self.data_augmentation_parameters = self._get_data_augmentation_parameters()
