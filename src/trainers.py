@@ -245,7 +245,7 @@ class TrainerBase:
 
     def _init_dataset_tmp(self):
         if settings.COPY_DATASET_TO_TMP:
-            self.logger.log('Copying dataset contents to /tmp/ for faster access')
+            self.logger.log('Copying dataset contents to temporary folder for faster access')
 
             # If classification supervised trainer, copy: photos
             if self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED or self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED_MEAN_TEACHER:

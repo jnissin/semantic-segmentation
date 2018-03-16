@@ -7,6 +7,7 @@ from PIL import Image
 from io import BytesIO
 from enum import Enum
 from multiprocessing import Lock
+from logger import Logger
 
 _MEMORY_MAPPED_IMAGE_CACHE_WRITE_LOCK = Lock()
 
@@ -113,7 +114,7 @@ class MemoryMappedImageCache(object):
             else:
                 self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size)
         except IOError as e:
-            print 'ERROR: Could not open memory mapped data file: {}'.format(e.message)
+            Logger.instance().warn('Could not open memory mapped data file: {}'.format(e.message))
 
         return self.data_mm_fp
 
@@ -198,7 +199,7 @@ class MemoryMappedImageCache(object):
 
                 self.secondary_file_cache_index.add(key)
             except Exception as e:
-                print 'ERROR: Failed to write to secondary file cache: {}'.format(e.message)
+                Logger.instance().warn('Failed to write to secondary file cache: {}'.format(e.message))
                 self.secondary_file_cache_index.remove(key)
         else:
             img.save(img_bytes, format=format)
@@ -223,7 +224,7 @@ class MemoryMappedImageCache(object):
                 img = Image.open(BytesIO(self.data_mm_fp[bytes[0]:bytes[1]]))
                 return img
             except IOError as e:
-                print 'ERROR: Failed to read from image mapped file: {}'.format(e.message)
+                Logger.instance().warn('Failed to read from image mapped file: {}'.format(e.message))
                 return None
         # If the image is in secondary file cache
         elif self.secondary_file_cache_index is not None and key in self.secondary_file_cache_index:
@@ -231,7 +232,7 @@ class MemoryMappedImageCache(object):
                 img = Image.open(os.path.join(self.secondary_file_cache_path, key))
                 return img
             except IOError as e:
-                print 'ERROR: Failed to read from secondary file cache: {}'.format(e.message)
+                Logger.instance().warn('ERROR: Failed to read from secondary file cache: {}'.format(e.message))
                 os.remove(os.path.join(self.secondary_file_cache_path, key))
                 self.secondary_file_cache_index.remove(key)
                 return None
