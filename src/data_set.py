@@ -128,6 +128,7 @@ class ImageFile(object):
 
     @property
     def mmi_cache(self):
+        # type: () -> MemoryMappedImageCache
         if self._shared_resources is not None:
             if self._shared_resources.mmi_cache is None:
                 self.reopen_mmi_cache_handles()
@@ -180,11 +181,17 @@ class ImageFile(object):
             img = Image.open(self.file_path)
         elif self.type == ImageFileType.MMI_CACHE:
             try:
-                img = Image.open(BytesIO(self.mmi_cache[self._image_key]))
-            except Exception as e:
+                img = self.mmi_cache.get_image_from_cache(self._image_key)
+
+                if img is None:
+                    raise ValueError('Image with key: {} could not be found from cache: {}'.format(self._image_key, self.mmi_cache.cache_path))
+            except IOError as e:
                 # Attempt to reopen the MMI cache and read again
                 self.reopen_mmi_cache_handles()
-                img = Image.open(BytesIO(self.mmi_cache[self._image_key]))
+                img = self.mmi_cache.get_image_from_cache(self._image_key)
+
+                if img is None:
+                    raise ValueError('Image with key: {} could not be found from cache: {}'.format(self._image_key, self.mmi_cache.cache_path))
         # Loading the data from the TAR file is not thread safe. So for each
         # image load the image data before releasing the lock. Regular files
         # can be lazy loaded, opening is enough.
