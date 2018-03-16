@@ -293,7 +293,7 @@ class TrainerBase:
 
                 # If all src files are found in dst - skip (likely the same data)
                 if src_files.issubset(dst_files):
-                    self.logger.log('Skipping copying {} to {} - all src files are found in dst. Number of files: src: {}, dst {}'.format(src_path, dst_path, len(src_files), (dst_files)))
+                    self.logger.log('Skipping copying {} to {} - all src files are found in dst. Number of files: src: {}, dst {}'.format(src_path, dst_path, len(src_files), len(dst_files)))
                     return
                 # If the number of files is different - destroy the existing tmp and copy the files
                 else:
