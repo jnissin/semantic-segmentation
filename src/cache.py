@@ -222,6 +222,11 @@ class MemoryMappedImageCache(object):
             try:
                 bytes = self.index[key]
                 img = Image.open(BytesIO(self.data_mm_fp[bytes[0]:bytes[1]]))
+
+                # Fix the filename of the PIL Image to match the key when reading from binary blob,
+                # otherwise the filename will be empty/None
+                img.filename = key
+
                 return img
             except IOError as e:
                 Logger.instance().warn('Failed to read from image mapped file: {}'.format(e.message))
