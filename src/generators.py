@@ -1309,9 +1309,7 @@ class SegmentationDataGenerator(DataGenerator):
                                                                         crop_shape=crop_shape,
                                                                         resize_shape=resize_shape,
                                                                         validate_crops=False,
-                                                                        dummy_mask=self.superpixel_segmentation_function is SuperpixelSegmentationFunctionType.NONE,
-                                                                        pil_photo_key=photo_file.file_name,
-                                                                        pil_mask_key=os.path.splitext(photo_file.file_name)[0] + '.png')
+                                                                        dummy_mask=self.superpixel_segmentation_function is SuperpixelSegmentationFunctionType.NONE)
 
         return pil_photo, pil_mask
 
