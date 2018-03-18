@@ -218,6 +218,11 @@ class ImageFile(object):
             if img.size != hw_tuple:
                 img = img.resize(hw_tuple)
 
+        # Fix possibly missing filename as it's used for key in caching
+        if img is not None:
+            if img.filename is None or img.filename == '':
+                img.filename = self.file_name
+
         return img
 
 
