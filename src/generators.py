@@ -1000,6 +1000,8 @@ class SegmentationDataGenerator(DataGenerator):
         self.superpixel_mask_cache_path = params.superpixel_mask_cache_path
         self.material_sample_iteration_mode = params.material_sample_iteration_mode
 
+        self._superpixel_mask_cache = None
+
         super(SegmentationDataGenerator, self).__init__(params)
 
         # Create the superpixel cache path if it doesn't exist
@@ -1820,6 +1822,34 @@ class SegmentationDataGenerator(DataGenerator):
 
         return np_weights
 
+    @property
+    def using_superpixel_mask_cache(self):
+        # type: () -> bool
+        return self.superpixel_mask_cache_path is not None
+
+    @property
+    def superpixel_mask_cache(self):
+        #  type: () -> MemoryMappedImageCache
+
+        if not self.using_superpixel_mask_cache:
+            return None
+
+        if self._superpixel_mask_cache is None:
+
+            read_only = False
+            memory_map_update_mode = MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE
+            write_to_secondary_file_cache = True
+
+            if os.path.exists(self.superpixel_mask_cache_path):
+                self.logger.log('Loading existing superpixel mask cache from: {}'.format(self.superpixel_mask_cache_path))
+                self._superpixel_mask_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
+                self.logger.log('Loaded superpixel mask cache with {} images, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self._superpixel_mask_cache.size, memory_map_update_mode, read_only, write_to_secondary_file_cache))
+            else:
+                self.logger.log('Creating new superpixel mask cache: {}, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self.superpixel_mask_cache_path, memory_map_update_mode, read_only, write_to_secondary_file_cache))
+                self._superpixel_mask_cache = MemoryMappedImageCache(self.superpixel_mask_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
+
+        return self._superpixel_mask_cache
+
     def _generate_mask_for_unlabeled_image(self, pil_img):
         # type: (PILImage) -> PILImage
 
@@ -1839,22 +1869,19 @@ class SegmentationDataGenerator(DataGenerator):
         if self.superpixel_segmentation_function == SuperpixelSegmentationFunctionType.NONE:
             return PImage.new('L', pil_img.size, 0)
 
-        # All superpixel masks are always saved in PNG to avoid any compression artefacts
-        cached_mask_file_path = None
+        # Attempt to find the mask from cache
+        cached_mask_key = None
 
-        # If this is an ImageFile it has a file name and it might be cached
-        if self.superpixel_mask_cache_path is not None and isinstance(pil_img, PILImageFile):
+        if self.using_superpixel_mask_cache and isinstance(pil_img, PILImageFile):
             filename_no_ext = os.path.splitext(os.path.basename(pil_img.filename))[0]
-            cached_mask_filename = '{}.png'.format(filename_no_ext)
-            cached_mask_file_path = os.path.join(self.superpixel_mask_cache_path, cached_mask_filename)
+            cached_mask_key = '{}.png'.format(filename_no_ext)
 
-            # Check if we can find the mask from the superpixel the mask cache
-            if os.path.exists(cached_mask_file_path):
-                try:
-                    mask = image_utils.load_img(cached_mask_file_path, grayscale=True)
+            try:
+                mask = self.superpixel_mask_cache.get_image_from_cache(cached_mask_key, grayscale=True)
+                if mask is not None:
                     return mask
-                except Exception as e:
-                    self.logger.warn('Caught exception during superpixel caching (read): {}'.format(e.message))
+            except Exception as e:
+                self.logger.warn('Caught exception during superpixel caching (read): {}'.format(e.message))
 
         # Convert from the PIL image to numpy array
         np_img = image_utils.img_to_array(pil_img)
@@ -1884,9 +1911,10 @@ class SegmentationDataGenerator(DataGenerator):
         mask = image_utils.array_to_img(np_mask, scale=False)
 
         # If using caching save the mask
-        if self.superpixel_mask_cache_path is not None and cached_mask_file_path is not None:
+        if self.using_superpixel_mask_cache and cached_mask_key is not None:
             try:
-                self._pil_save_image_to_cache(mask, cached_img_path=cached_mask_file_path, save_format='PNG')
+                # All superpixel masks are always saved in PNG to avoid any compression artifacts
+                self.superpixel_mask_cache.set_image_to_cache(key=cached_mask_key, img=mask, save_format='PNG')
             except Exception as e:
                 self.logger.warn('Caught exception during superpixel caching (write): {}'.format(e.message))
 

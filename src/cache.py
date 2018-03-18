@@ -216,7 +216,9 @@ class MemoryMappedImageCache(object):
                 if self.memory_map_update_mode == MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE:
                     self.update_mmap_fp()
 
-    def get_image_from_cache(self, key):
+    def get_image_from_cache(self, key, grayscale=False, load_to_memory=False):
+        img = None
+
         # If the image is in cache
         if self.index is not None and key in self.index:
             try:
@@ -226,8 +228,6 @@ class MemoryMappedImageCache(object):
                 # Fix the filename of the PIL Image to match the key when reading from binary blob,
                 # otherwise the filename will be empty/None
                 img.filename = key
-
-                return img
             except IOError as e:
                 Logger.instance().warn('Failed to read from image mapped file: {}'.format(e.message))
                 return None
@@ -235,11 +235,22 @@ class MemoryMappedImageCache(object):
         elif self.secondary_file_cache_index is not None and key in self.secondary_file_cache_index:
             try:
                 img = Image.open(os.path.join(self.secondary_file_cache_path, key))
-                return img
             except IOError as e:
                 Logger.instance().warn('ERROR: Failed to read from secondary file cache: {}'.format(e.message))
                 os.remove(os.path.join(self.secondary_file_cache_path, key))
                 self.secondary_file_cache_index.remove(key)
                 return None
-        else:
+
+        # If there is no image return none
+        if img is None:
             return None
+
+        # If we are supposed to load the image to memory
+        if load_to_memory:
+            img.load()
+
+        # If this is a grayscale image and the mode is not 'L' -> convert
+        if grayscale and img.mode != 'L':
+            img = img.convert('L')
+
+        return img
