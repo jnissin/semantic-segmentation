@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": "categories/materials-minc.csv",
     "path_to_data_set_information_file": "data/final/data-set-information.json",
-    "path_to_labeled_photos": "data/final/labeled/segments/photos",
-    "path_to_labeled_masks": "data/final/labeled/segments/masks",
-    "path_to_unlabeled_photos": "data/final/unlabeled",
+    "path_to_labeled_photos": "data/final/labeled/segments/photos_mmi/",
+    "path_to_labeled_masks": "data/final/labeled/segments/masks_mmi/",
+    "path_to_unlabeled_photos": "data/final/unlabeled_mmi/",
 
     "log_folder_path": "model-data/{model_folder}/logs/",
     "log_file_path": "{log_folder_path}/log.txt",
@@ -33,7 +33,7 @@
     "div2_constraint": 4,
     "num_crop_reattempts": 5,
     "resized_image_cache_path": "/tmp/semantic-segmentation/segmentation/resized/",
-    "initial_resized_image_cache_tar_file_path": null,
+    "initial_resized_image_cache_tar_file_path": "data/final/labeled/segments/segments_resize_mmi_cache.tar",
 
     "num_labeled_per_batch": 10,
     "num_unlabeled_per_batch": 10,
@@ -72,9 +72,9 @@
     },
 
     "superpixel_params": {
-      "unlabeled_cost_coefficient_function": "lambda x: 1.5 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/24000.0)**2)), 1.0) ), 1.0 )",
+      "unlabeled_cost_coefficient_function": "lambda x: 2.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/24000.0)**2)), 1.0) ), 1.0 )",
       "label_generation_function_name": "felzenszwalb",
-      "superpixel_mask_cache_path": "data/final/unlabeled_fzw_masks/"
+      "superpixel_mask_cache_path": "data/final/unlabeled_fzw_masks_mmi/"
     },
 
     "use_data_augmentation": true,
