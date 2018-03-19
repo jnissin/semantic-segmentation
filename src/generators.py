@@ -549,7 +549,7 @@ class DataGenerator(object):
             return img
 
         # If we are supposed to use caching
-        if not bypass_cache and self.using_resized_image_cache and isinstance(img, PILImageFile):
+        if not bypass_cache and self.using_resized_image_cache:
             resized_img_cache_key = self._pil_get_cache_key_for_target_resize_shape(img=img,
                                                                                     target_shape=target_shape,
                                                                                     interp=interp,
@@ -571,11 +571,15 @@ class DataGenerator(object):
                         img.close()
                         del img
 
+                        self.logger.log('Resize cache hit with: {}'.format(resized_img_cache_key))
+
                         return resized_img
                 except Exception as e:
                     self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
             else:
                 resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
+
+                self.logger.log('Resize cache miss with: {}'.format(resized_img_cache_key))
 
                 try:
                     self._pil_save_resized_img_to_cache(img=resized_img, cache_key=resized_img_cache_key, img_type=img_type)
@@ -1854,12 +1858,18 @@ class SegmentationDataGenerator(DataGenerator):
         # Attempt to find the mask from cache
         cached_mask_key = None
 
-        if self.using_superpixel_mask_cache and isinstance(pil_img, PILImageFile):
+        if self.using_superpixel_mask_cache:
             filename_no_ext = os.path.splitext(os.path.basename(pil_img.filename))[0]
             cached_mask_key = '{}.png'.format(filename_no_ext)
 
             try:
                 mask = self.superpixel_mask_cache.get_image_from_cache(cached_mask_key, grayscale=True)
+
+                if mask is not None:
+                    self.logger.log('Superpixel mask cache hit with: {}'.format(cached_mask_key))
+                else:
+                    self.logger.log('Superpixel mask cache miss with: {}'.format(cached_mask_key))
+
                 if mask is not None:
                     return mask
             except Exception as e:
