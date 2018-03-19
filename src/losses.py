@@ -132,7 +132,7 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     #y_true_unlabeled = K.tf.squeeze(y_true_unlabeled, axis=-1)
 
     # Take softmax of the unlabeled predictions
-    y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled, dim=-1)
+    y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled_fp16, dim=-1)
 
     # Calculate the gradients for the softmax output using a convolution with a Sobel mask
     #S_x = K.tf.tile(K.tf.constant([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], shape=[3, 3, 1, 1], dtype=K.tf.float32), [1, 1, num_classes, 1])
