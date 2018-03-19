@@ -113,11 +113,15 @@ def _to_tensor(x, dtype):
 ##############################################
 
 def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, scale_factor):
+    # FP16
+    y_true_unlabeled = K.tf.cast(y_true_unlabeled, dtype=K.tf.float16)
+    y_pred_unlabeled_fp16 = K.tf.cast(y_pred_unlabeled, dtype=K.tf.float16)
+
     # Calculate the softmax of the predictions
-    epsilon = _to_tensor(_EPSILON, y_pred_unlabeled.dtype.base_dtype)
+    epsilon = _to_tensor(_EPSILON, y_pred_unlabeled_fp16.dtype.base_dtype)
 
     # Extract the number of classes (last dimension of predictions)
-    num_classes = K.tf.stop_gradient(K.tf.shape(y_pred_unlabeled)[-1])
+    num_classes = K.tf.stop_gradient(K.tf.shape(y_pred_unlabeled_fp16)[-1])
 
     # Scale by scale factor
     #scaled_size = K.tf.stop_gradient(K.tf.cast(K.tf.cast(K.tf.shape(y_pred_unlabeled)[1:-1], dtype=K.tf.float32) * scale_factor, dtype=K.tf.int32))
@@ -134,15 +138,15 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     #S_x = K.tf.tile(K.tf.constant([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]], shape=[3, 3, 1, 1], dtype=K.tf.float32), [1, 1, num_classes, 1])
     #S_y = K.tf.transpose(S_x, [1, 0, 2, 3])
 
-    S_x = K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=K.tf.float32), [1, 1, num_classes, 1])
+    S_x = K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=K.tf.float16), [1, 1, num_classes, 1])
     S_y = K.tf.transpose(S_x, [1, 0, 2, 3])
     G_x = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_x, strides=[1, 1, 1, 1], padding='SAME')
     G_y = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_y, strides=[1, 1, 1, 1], padding='SAME')
 
     # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), BxHxWxC
     # Note: clip by epsilon to avoid NaN values due to: (small grad value)^2
-    G_x = K.tf.clip_by_value(G_x, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
-    G_y = K.tf.clip_by_value(G_y, clip_value_min=epsilon, clip_value_max=K.tf.float32.max)
+    G_x = K.tf.clip_by_value(G_x, clip_value_min=epsilon, clip_value_max=K.tf.float16.max)
+    G_y = K.tf.clip_by_value(G_y, clip_value_min=epsilon, clip_value_max=K.tf.float16.max)
 
     # Calculate the classwise gradient magnitudes, BxHxWxC
     G_mag = K.tf.sqrt(K.tf.add(K.tf.square(G_x), K.tf.square(G_y)))
@@ -155,7 +159,7 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
 
     # Take the mean over the batch and spatial dimensions
     # Note: this also takes into account the zero borders in the mean (shouldn't matter a lot)
-    L_sp = K.tf.reduce_mean(G_sp)
+    L_sp = K.tf.cast(K.tf.reduce_mean(G_sp), dtype=K.tf.float32)
 
     return L_sp
 
@@ -176,7 +180,6 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel
 
     # Ensure the y_true_unlabeled are binary masks with borders denoted by 0s and everything else as 1s
     y_true_unlabeled = K.tf.stop_gradient(K.tf.clip_by_value(y_true_unlabeled, clip_value_min=0, clip_value_max=1))
-    y_true_unlabeled = K.tf.cast(y_true_unlabeled, dtype=K.tf.float32)
 
     L_sp = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
                                                   y_pred_unlabeled=y_pred_unlabeled,
