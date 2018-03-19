@@ -235,14 +235,14 @@ class MemoryMappedImageCache(object):
                 # otherwise the filename will be empty/None
                 img.filename = key
             except IOError as e:
-                Logger.instance().warn('Failed to read from image mapped file: {}'.format(e.message))
+                Logger.instance().warn('Failed to read image: {} from memory mapped file, error: {}'.format(key, e.message))
                 return None
         # If the image is in secondary file cache
         elif self.secondary_file_cache_index is not None and key in self.secondary_file_cache_index:
             try:
                 img = Image.open(os.path.join(self.secondary_file_cache_path, key))
             except IOError as e:
-                Logger.instance().warn('ERROR: Failed to read from secondary file cache: {}'.format(e.message))
+                Logger.instance().warn('Failed to read image: from secondary file cache, error: {}'.format(key, e.message))
                 os.remove(os.path.join(self.secondary_file_cache_path, key))
                 self.secondary_file_cache_index.remove(key)
                 return None
