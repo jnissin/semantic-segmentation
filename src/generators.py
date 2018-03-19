@@ -1313,12 +1313,13 @@ class SegmentationDataGenerator(DataGenerator):
                                                                         crop_shape=crop_shape,
                                                                         resize_shape=resize_shape,
                                                                         validate_crops=False,
-                                                                        dummy_mask=self.superpixel_segmentation_function is SuperpixelSegmentationFunctionType.NONE)
+                                                                        dummy_mask=self.superpixel_segmentation_function is SuperpixelSegmentationFunctionType.NONE,
+                                                                        bypass_cache=True)
 
         return pil_photo, pil_mask
 
-    def process_segmentation_photo_mask_pair(self, step_idx, pil_photo, pil_mask, photo_cval, mask_cval, material_sample=None, crop_shape=None, resize_shape=None, validate_crops=True, dummy_mask=False):
-        # type: (int, PILImage, PILImage, np.ndarray, np.ndarray, MaterialSample, tuple, tuple, bool, str, str) -> (PILImage, PILImage)
+    def process_segmentation_photo_mask_pair(self, step_idx, pil_photo, pil_mask, photo_cval, mask_cval, material_sample=None, crop_shape=None, resize_shape=None, validate_crops=True, dummy_mask=False, bypass_cache=False):
+        # type: (int, PILImage, PILImage, np.ndarray, np.ndarray, MaterialSample, tuple, tuple, bool, bool) -> (PILImage, PILImage)
 
         """
         Applies crop and data augmentation to two numpy arrays representing the photo and
@@ -1348,8 +1349,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
-            pil_mask = self._pil_get_resized_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK)
+            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=bypass_cache)
+            pil_mask = self._pil_get_resized_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK, bypass_cache=bypass_cache or dummy_mask)
 
         # Drop any unnecessary channels from the mask image we only use the red or L (luma for grayscale)
         if len(pil_mask.getbands()) > 1:
@@ -1856,12 +1857,10 @@ class SegmentationDataGenerator(DataGenerator):
             return PImage.new('L', pil_img.size, 0)
 
         # Attempt to find the mask from cache
-        cached_mask_key = None
+        filename_no_ext = os.path.splitext(os.path.basename(pil_img.filename))[0]
+        cached_mask_key = '{}.png'.format(filename_no_ext)
 
         if self.using_superpixel_mask_cache:
-            filename_no_ext = os.path.splitext(os.path.basename(pil_img.filename))[0]
-            cached_mask_key = '{}.png'.format(filename_no_ext)
-
             try:
                 mask = self.superpixel_mask_cache.get_image_from_cache(cached_mask_key, grayscale=True)
 
@@ -1901,6 +1900,10 @@ class SegmentationDataGenerator(DataGenerator):
         np_mask = np.expand_dims(np_mask, -1)
         np_mask = np_mask.astype(dtype=np.uint8)
         mask = image_utils.array_to_img(np_mask, scale=False)
+
+        # Set filename attribute for possible resize caching
+        if not hasattr(mask, 'filename'):
+            setattr(mask, 'filename', cached_mask_key)
 
         # If using caching save the mask
         if self.using_superpixel_mask_cache and cached_mask_key is not None:
