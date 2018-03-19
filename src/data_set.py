@@ -220,7 +220,9 @@ class ImageFile(object):
 
         # Fix possibly missing filename as it's used for key in caching
         if img is not None:
-            if img.filename is None or img.filename == '':
+            if not hasattr(img, 'filename'):
+                setattr(img, 'filename', self.file_name)
+            elif img.filename is None or img.filename == '':
                 img.filename = self.file_name
 
         return img
