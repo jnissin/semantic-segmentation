@@ -113,10 +113,11 @@ def _to_tensor(x, dtype):
 ##############################################
 
 def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, scale_factor):
-    y_pred_unlabeled = K.tf.cast(y_pred_unlabeled, dtype=K.tf.half)
+    dtype = K.tf.half
+    y_pred_unlabeled = K.tf.cast(y_pred_unlabeled, dtype=dtype)
 
     # Calculate the softmax of the predictions
-    epsilon = _to_tensor(_EPSILON, y_pred_unlabeled.dtype.base_dtype)
+    epsilon = _to_tensor(_EPSILON, dtype=dtype)
 
     # Extract the number of classes (last dimension of predictions)
     num_classes = K.tf.stop_gradient(K.tf.shape(y_pred_unlabeled)[-1])
@@ -137,15 +138,15 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     #S_y = K.tf.transpose(S_x, [1, 0, 2, 3])
     #G_x = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_x, strides=[1, 1, 1, 1], padding='SAME')
     #G_y = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_y, strides=[1, 1, 1, 1], padding='SAME')
-    S_x = K.tf.ones(shape=[3, 3, num_classes, num_classes], dtype=K.tf.half)
-    S_y = K.tf.ones(shape=[3, 3, num_classes, num_classes], dtype=K.tf.half)
+    S_x = K.tf.ones(shape=[3, 3, num_classes, num_classes], dtype=dtype)
+    S_y = K.tf.ones(shape=[3, 3, num_classes, num_classes], dtype=dtype)
     G_x = K.tf.nn.conv2d(y_pred_unlabeled_softmax, S_x, strides=[1, 1, 1, 1], padding='SAME')
     G_y = K.tf.nn.conv2d(y_pred_unlabeled_softmax, S_y, strides=[1, 1, 1, 1], padding='SAME')
 
     # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), BxHxWxC
     # Note: clip by epsilon to avoid NaN values due to: (small grad value)^2
-    G_x = K.tf.clip_by_value(G_x, clip_value_min=epsilon, clip_value_max=G_x.dtype.max)
-    G_y = K.tf.clip_by_value(G_y, clip_value_min=epsilon, clip_value_max=G_y.dtype.max)
+    G_x = K.tf.clip_by_value(G_x, clip_value_min=epsilon, clip_value_max=dtype.max)
+    G_y = K.tf.clip_by_value(G_y, clip_value_min=epsilon, clip_value_max=dtype.max)
 
     # Calculate the classwise gradient magnitudes, BxHxWxC
     G_mag = K.tf.sqrt(K.tf.add(K.tf.square(G_x), K.tf.square(G_y)))
@@ -154,7 +155,7 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     G_mag_dot = K.tf.norm(G_mag, axis=-1)
 
     # Get the superpixel gradient magnitudes for each image
-    G_sp = G_mag_dot * K.tf.cast(y_true_unlabeled, dtype=G_mag_dot.dtype)
+    G_sp = G_mag_dot * K.tf.cast(y_true_unlabeled, dtype=dtype)
 
     # Take the mean over the batch and spatial dimensions
     # Note: this also takes into account the zero borders in the mean (shouldn't matter a lot)

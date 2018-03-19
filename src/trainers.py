@@ -1074,7 +1074,8 @@ class TrainerBase:
     def _get_compile_kwargs(self):
         if settings.PROFILE:
             return {'options': self.profiling_run_options, 'run_metadata': self.profiling_run_metadata}
-        return {}
+        else:
+            return {'options': K.tf.RunOptions(report_tensor_allocations_upon_oom=True)}
 
     def _get_latest_weights_file_path(self, weights_directory_path, include_early_stop=False):
         # Try to find weights from the checkpoint path
