@@ -61,7 +61,13 @@ class MemoryMappedImageCache(object):
             self.update_secondary_file_cache_index()
 
     def __contains__(self, key):
-        return key in self.index
+        if self.index is not None and key in self.index:
+            return True
+
+        if self.secondary_file_cache_index is not None and key in self.secondary_file_cache_index:
+            return True
+
+        return False
 
     @property
     def data_file_path(self):
