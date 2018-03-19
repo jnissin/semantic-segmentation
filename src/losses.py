@@ -113,15 +113,11 @@ def _to_tensor(x, dtype):
 ##############################################
 
 def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, scale_factor):
-    # FP16
-    y_true_unlabeled = K.tf.cast(y_true_unlabeled, dtype=K.tf.half)
-    y_pred_unlabeled_fp16 = K.tf.cast(y_pred_unlabeled, dtype=K.tf.half)
-
     # Calculate the softmax of the predictions
-    epsilon = _to_tensor(_EPSILON, y_pred_unlabeled_fp16.dtype.base_dtype)
+    epsilon = _to_tensor(_EPSILON, y_pred_unlabeled.dtype.base_dtype)
 
     # Extract the number of classes (last dimension of predictions)
-    num_classes = K.tf.stop_gradient(K.tf.shape(y_pred_unlabeled_fp16)[-1])
+    num_classes = K.tf.stop_gradient(K.tf.shape(y_pred_unlabeled)[-1])
 
     # Scale by scale factor
     #scaled_size = K.tf.stop_gradient(K.tf.cast(K.tf.cast(K.tf.shape(y_pred_unlabeled)[1:-1], dtype=K.tf.float32) * scale_factor, dtype=K.tf.int32))
@@ -132,13 +128,13 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     #y_true_unlabeled = K.tf.squeeze(y_true_unlabeled, axis=-1)
 
     # Take softmax of the unlabeled predictions
-    y_pred_unlabeled_softmax = K.tf.to_bfloat16(K.tf.nn.softmax(y_pred_unlabeled_fp16, dim=-1))
+    y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled, dim=-1)
 
     # Calculate the gradients for the softmax output using a convolution with a Sobel mask
-    S_x = K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=K.tf.bfloat16), [1, 1, num_classes, 1])
+    S_x = K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=K.tf.float32), [1, 1, num_classes, 1])
     S_y = K.tf.transpose(S_x, [1, 0, 2, 3])
-    G_x = K.tf.cast(K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_x, strides=[1, 1, 1, 1], padding='SAME'), K.tf.half)
-    G_y = K.tf.cast(K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_y, strides=[1, 1, 1, 1], padding='SAME'), K.tf.half)
+    G_x = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_x, strides=[1, 1, 1, 1], padding='SAME')
+    G_y = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_y, strides=[1, 1, 1, 1], padding='SAME')
 
     # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), BxHxWxC
     # Note: clip by epsilon to avoid NaN values due to: (small grad value)^2
@@ -152,11 +148,11 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     G_mag_dot = K.tf.norm(G_mag, axis=-1)
 
     # Get the superpixel gradient magnitudes for each image
-    G_sp = G_mag_dot * y_true_unlabeled
+    G_sp = G_mag_dot * K.tf.cast(y_true_unlabeled, K.tf.float32)
 
     # Take the mean over the batch and spatial dimensions
     # Note: this also takes into account the zero borders in the mean (shouldn't matter a lot)
-    L_sp = K.tf.cast(K.tf.reduce_mean(G_sp), dtype=K.tf.float32)
+    L_sp = K.tf.reduce_mean(G_sp)
 
     return L_sp
 

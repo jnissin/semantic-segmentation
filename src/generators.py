@@ -569,15 +569,11 @@ class DataGenerator(object):
                         img.close()
                         del img
 
-                        self.logger.log('Resize cache hit with: {}'.format(resized_img_cache_key))
-
                         return resized_img
                 except Exception as e:
                     self.logger.warn('Caught exception during resized image caching (read): {}'.format(e.message))
             else:
                 resized_img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
-
-                self.logger.log('Resize cache miss with: {}'.format(resized_img_cache_key))
 
                 try:
                     self._pil_save_resized_img_to_cache(img=resized_img, cache_key=resized_img_cache_key, img_type=img_type)
@@ -1861,11 +1857,6 @@ class SegmentationDataGenerator(DataGenerator):
         if self.using_superpixel_mask_cache:
             try:
                 mask = self.superpixel_mask_cache.get_image_from_cache(cached_mask_key, grayscale=True)
-
-                if mask is not None:
-                    self.logger.log('Superpixel mask cache hit with: {}'.format(cached_mask_key))
-                else:
-                    self.logger.log('Superpixel mask cache miss with: {}'.format(cached_mask_key))
 
                 if mask is not None:
                     return mask
