@@ -6,14 +6,12 @@ import os
 import numpy as np
 
 from cache import MemoryMappedImageCache, MemoryMapUpdateMode
-from io import BytesIO
 
 from enum import Enum
 from abc import ABCMeta, abstractmethod, abstractproperty
 
 from PIL import Image as PImage
 from PIL.Image import Image as PILImage
-from PIL.ImageFile import ImageFile as PILImageFile
 
 from utils import dataset_utils
 from utils import image_utils
@@ -1829,7 +1827,7 @@ class SegmentationDataGenerator(DataGenerator):
 
             if os.path.exists(self.superpixel_mask_cache_path):
                 self.logger.log('Loading existing superpixel mask cache from: {}'.format(self.superpixel_mask_cache_path))
-                self._superpixel_mask_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
+                self._superpixel_mask_cache = MemoryMappedImageCache(self.superpixel_mask_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
                 self.logger.log('Loaded superpixel mask cache with {} images, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self._superpixel_mask_cache.size, memory_map_update_mode, read_only, write_to_secondary_file_cache))
             else:
                 self.logger.log('Creating new superpixel mask cache: {}, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self.superpixel_mask_cache_path, memory_map_update_mode, read_only, write_to_secondary_file_cache))
