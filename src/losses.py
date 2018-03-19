@@ -124,8 +124,8 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     #y_pred_unlabeled = K.tf.image.resize_images(images=y_pred_unlabeled, size=scaled_size, method=K.tf.image.ResizeMethod.BILINEAR)
     #y_true_unlabeled = K.tf.image.resize_images(images=y_true_unlabeled, size=scaled_size, method=K.tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
-    y_true_unlabeled = K.tf.expand_dims(y_true_unlabeled, axis=-1)
-    y_true_unlabeled = K.tf.squeeze(y_true_unlabeled, axis=-1)
+    #y_true_unlabeled = K.tf.expand_dims(y_true_unlabeled, axis=-1)
+    #y_true_unlabeled = K.tf.squeeze(y_true_unlabeled, axis=-1)
 
     # Take softmax of the unlabeled predictions
     y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled, dim=-1)
@@ -178,11 +178,9 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel
     y_true_unlabeled = K.tf.stop_gradient(K.tf.clip_by_value(y_true_unlabeled, clip_value_min=0, clip_value_max=1))
     y_true_unlabeled = K.tf.cast(y_true_unlabeled, dtype=K.tf.float32)
 
-    L_sp_1x = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
-                                                     y_pred_unlabeled=y_pred_unlabeled,
-                                                     scale_factor=1.0)
-
-    L_sp = L_sp_1x
+    L_sp = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
+                                                  y_pred_unlabeled=y_pred_unlabeled,
+                                                  scale_factor=1.0)
 
     """
     L_sp_05x = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
