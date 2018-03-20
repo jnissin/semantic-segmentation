@@ -676,7 +676,7 @@ class TrainerBase:
             log_folder_path = os.path.dirname(log_folder_path) if os.path.isfile(log_folder_path) else log_folder_path
 
             # Remove duplicate slashes due to joins
-            log_folder_path.replace('//', '/')
+            log_folder_path = log_folder_path.replace('//', '/')
 
             # If the log folder path already exists create a different path to avoid overwriting logs
             if os.path.exists(log_folder_path):
