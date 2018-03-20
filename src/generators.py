@@ -1681,7 +1681,7 @@ class SegmentationDataGenerator(DataGenerator):
         b_size = len(labeled_batch) + len(unlabeled_batch)
         num_unlabeled = np.ones(b_size) * len(unlabeled_batch)
         X = np.ones((b_size, 480, 480, 3), dtype=np.float32)
-        Y = np.ones((b_size, 480, 480, 1), dtype=np.float32)
+        Y = np.ones((b_size, 480, 480), dtype=np.float32)
         W = Y
         X_teacher = X
 
