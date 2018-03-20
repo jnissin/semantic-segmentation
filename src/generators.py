@@ -1693,7 +1693,6 @@ class SegmentationDataGenerator(DataGenerator):
         logits_output = np.expand_dims(np.copy(Y), -1)
         logits_output[len(labeled_batch):] = 0
         dummy_output = np.zeros(shape=[b_size], dtype=np.int32)
-        logits_output = Y
         batch_output_data = [dummy_output, logits_output]
 
         return batch_input_data, batch_output_data
