@@ -1185,6 +1185,8 @@ class ExtendedModel(Model):
         try:
             if validation and self.validation_enqueuer_pre_created:
                 enqueuer = self.validation_enqueuer
+                enqueuer.continue_run()
+                output_generator = enqueuer.get()
             else:
                 if workers > 0:
                     enqueuer = None

@@ -228,7 +228,7 @@ class TrainerBase:
         self.logger.log('Using Keras version: {}'.format(keras.__version__))
         self.logger.log('Using Tensorflow version: {}'.format(K.tf.__version__))
 
-        self.logger.log('Patching keras TF backend get_session function to enable XLA')
+        self.logger.log('Patching keras TF backend get_session function')
         tensorflow_backend.get_session = get_tf_session
 
         # Create a copy of the config file for future reference
@@ -675,13 +675,15 @@ class TrainerBase:
             log_folder_path = self._get_config_value('log_folder_path').format(model_folder=self.model_folder_name)
             log_folder_path = os.path.dirname(log_folder_path) if os.path.isfile(log_folder_path) else log_folder_path
 
+            # Remove duplicate slashes due to joins
+            log_folder_path.replace('//', '/')
+
             # If the log folder path already exists create a different path to avoid overwriting logs
             if os.path.exists(log_folder_path):
                 log_folder_path = '{}-{:%Y-%m-%d-%H:%M}'.format(os.path.dirname(log_folder_path), datetime.datetime.now())
                 print 'Log directory path already exists. Avoiding overwriting by attempting to switch to a new log path: {}'.format(log_folder_path)
 
-            # Remove duplicate slashes due to joins
-            self._log_folder_path = log_folder_path.replace('//', '/')
+            self._log_folder_path = log_folder_path
 
         return self._log_folder_path
 
