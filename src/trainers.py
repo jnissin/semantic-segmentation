@@ -20,6 +20,7 @@ import keras.backend as K
 from keras.optimizers import Optimizer
 from keras.callbacks import ModelCheckpoint, TensorBoard, CSVLogger, ReduceLROnPlateau, EarlyStopping
 from keras.utils import plot_model
+from keras.backend import tensorflow_backend
 
 from keras_extensions.extended_optimizers import SGD, Adam
 from keras_extensions.extended_model import ExtendedModel
@@ -71,6 +72,75 @@ class TimeLiner:
     def save(self, f_name):
         with open(f_name, 'w') as f:
             json.dump(self._timeline_dict, f)
+
+
+#############################################
+# KERAS SESSION PATCH
+#############################################
+
+def get_tf_session():
+    """Returns the TF session to be used by the backend.
+
+    If a default TensorFlow session is available, we will return it.
+
+    Else, we will return the global Keras session.
+
+    If no global Keras session exists at this point:
+    we will create a new global session.
+
+    Note that you can manually set the global session
+    via `K.set_session(sess)`.
+
+    # Returns
+        A TensorFlow session.
+    """
+    import tensorflow as tf
+    from tensorflow.python.client import device_lib
+
+    default_session = tf.get_default_session()
+
+    if default_session is not None:
+        session = default_session
+    else:
+        if tensorflow_backend._SESSION is None:
+            if not os.environ.get('OMP_NUM_THREADS'):
+                config = K.tf.ConfigProto(allow_soft_placement=True)
+            else:
+                num_thread = int(os.environ.get('OMP_NUM_THREADS'))
+                config = tf.ConfigProto(intra_op_parallelism_threads=num_thread,
+                                        allow_soft_placement=True)
+
+            if settings.USE_XLA:
+                Logger.instance().log('Enabling XLA for Tensorflow')
+                config.graph_options.optimizer_options.global_jit_level = tf.OptimizerOptions.ON_1
+            tensorflow_backend._SESSION = tf.Session(config=config)
+        session = tensorflow_backend._SESSION
+    if not tensorflow_backend._MANUAL_VAR_INIT:
+        with session.graph.as_default():
+            variables = tf.global_variables()
+            candidate_vars = []
+            for v in variables:
+                if not getattr(v, '_keras_initialized', False):
+                    candidate_vars.append(v)
+            if candidate_vars:
+                # This step is expensive, so we only run it on variables
+                # not already marked as initialized.
+                is_initialized = session.run(
+                    [tf.is_variable_initialized(v) for v in candidate_vars])
+                uninitialized_vars = []
+                for flag, v in zip(is_initialized, candidate_vars):
+                    if not flag:
+                        uninitialized_vars.append(v)
+                    v._keras_initialized = True
+                if uninitialized_vars:
+                    session.run(tf.variables_initializer(uninitialized_vars))
+    # hack for list_devices() function.
+    # list_devices() function is not available under tensorflow r1.3.
+    if not hasattr(session, 'list_devices'):
+        session.list_devices = lambda: device_lib.list_local_devices()
+    return session
+
+
 
 
 #############################################
@@ -157,6 +227,9 @@ class TrainerBase:
         self.logger.log('############################################################\n\n')
         self.logger.log('Using Keras version: {}'.format(keras.__version__))
         self.logger.log('Using Tensorflow version: {}'.format(K.tf.__version__))
+
+        self.logger.log('Patching keras TF backend get_session function to enable XLA')
+        tensorflow_backend.get_session = get_tf_session
 
         # Create a copy of the config file for future reference
         copy_config_file_path = os.path.join(self.logger.log_folder_path, os.path.basename(config_file_path))

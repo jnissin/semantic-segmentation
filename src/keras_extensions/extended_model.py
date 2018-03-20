@@ -635,10 +635,10 @@ class ExtendedModel(Model):
 
                         # Custom code: Added by Joonas Nissinen
                         # Process the extra parameters to custom metrics
-                        is_hidden_from_progbar = getattr(weighted_metric_fn, 'hide_from_progbar', False)
-                        is_excluded_from_callbacks = getattr(weighted_metric_fn, 'exclude_from_callbacks', False)
-                        is_streaming = getattr(weighted_metric_fn, 'streaming', False)
-                        is_cfm = getattr(weighted_metric_fn, 'cfm', False)
+                        is_hidden_from_progbar = getattr(metric_fn, 'hide_from_progbar', False)
+                        is_excluded_from_callbacks = getattr(metric_fn, 'exclude_from_callbacks', False)
+                        is_streaming = getattr(metric_fn, 'streaming', False)
+                        is_cfm = getattr(metric_fn, 'cfm', False)
 
                         if is_hidden_from_progbar:
                             self.metrics_hidden_from_progbar.add(metric_name)
@@ -655,6 +655,12 @@ class ExtendedModel(Model):
 
                 handle_metrics(output_metrics)
                 handle_metrics(output_weighted_metrics, weights=weights)
+
+        # Log the special metrics
+        self.logger.log('Metrics hidden from progbar: {}'.format(self.metrics_hidden_from_progbar))
+        self.logger.log('Metrics excluded from callbacks: {}'.format(self.metrics_excluded_from_callbacks))
+        self.logger.log('Metrics streaming: {}'.format(self.metrics_streaming))
+        self.logger.log('Metrics cfm: {}'.format(self.metrics_cfm))
 
         # Prepare gradient updates and state updates.
         self.total_loss = total_loss
@@ -815,7 +821,7 @@ class ExtendedModel(Model):
         if do_validation:
             self._make_test_function()
 
-        is_sequence = isinstance(generator, Sequence)
+        is_sequence = isinstance(generator, Sequence) or isinstance(self.training_enqueuer, Sequence)
         if not is_sequence and use_multiprocessing and workers > 1:
             warnings.warn(
                 UserWarning('Using a generator with `use_multiprocessing=True`'
@@ -1150,7 +1156,7 @@ class ExtendedModel(Model):
         wait_time = 0.01
         all_outs = []
         batch_sizes = []
-        is_sequence = isinstance(generator, Sequence)
+        is_sequence = isinstance(generator, Sequence) or (validation and isinstance(self.validation_enqueuer, Sequence))
 
         if not is_sequence and use_multiprocessing and workers > 1:
             warnings.warn(
