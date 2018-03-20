@@ -29,7 +29,7 @@ class MemoryMappedImageCache(object):
         self.read_only = read_only
         self.max_mmap_file_size = long(max_mmap_file_size)
         self.memory_map_update_mode = memory_map_update_mode
-        self.file_mode = "rb" if read_only else "ab+"
+        self.file_mode = "rb" if read_only or write_to_secondary_file_cache else "ab+"
         self.data_fp = None
         self.data_mm_fp = None
         self.index = None
