@@ -1680,10 +1680,10 @@ class SegmentationDataGenerator(DataGenerator):
         # TODO: REMOVE ME
         if unlabeled_batch is not None:
             b_size = len(labeled_batch) + len(unlabeled_batch)
-            num_unlabeled = np.ones(b_size) * len(unlabeled_batch)
+            num_unlabeled = np.ones(b_size, dtype=np.int32) * len(unlabeled_batch)
         else:
             b_size = len(labeled_batch)
-            num_unlabeled = np.ones(b_size)
+            num_unlabeled = np.zeros(b_size, dtype=np.int32)
 
         X = np.ones((b_size, 480, 480, 3), dtype=np.float32)
         Y = np.ones((b_size, 480, 480), dtype=np.float32)
