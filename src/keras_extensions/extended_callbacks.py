@@ -5,7 +5,18 @@ class ExtendedBaseLogger(Callback):
     """Callback that accumulates epoch averages of metrics.
 
     This callback is automatically applied to every Keras model.
+
+    # Arguments
+        stateful_metrics: Iterable of string names of metrics that
+            should *not* be averaged over an epoch.
+            Metrics in this list will be logged as-is in `on_epoch_end`.
+            All others will be averaged in `on_epoch_end`.
     """
+    def __init__(self, stateful_metrics=None):
+        if stateful_metrics:
+            self.stateful_metrics = set(stateful_metrics)
+        else:
+            self.stateful_metrics = set()
 
     def _is_streaming_metric(self, metric_name):
         if metric_name is not None and self.model is not None:
@@ -24,11 +35,11 @@ class ExtendedBaseLogger(Callback):
     def get_metric_value(self, k):
         if k in self.totals:
             # Streaming metrics are already averaged - return the value
-            if self._is_streaming_metric(k):
+            if self._is_streaming_metric(k) or k in self.stateful_metrics:
                 return self.totals[k]
-
             # Non-streaming metrics should be divided by the number of seen samples
-            return self.totals[k] / self.seen
+            else:
+                return self.totals[k] / self.seen
 
         return None
 
@@ -42,7 +53,8 @@ class ExtendedBaseLogger(Callback):
         self.seen += batch_size
 
         for k, v in logs.items():
-            if self._is_streaming_metric(k):
+            if self._is_streaming_metric(k) or k in self.stateful_metrics:
+                self.totals[k] = v
                 self.totals[k] = v
             else:
                 if k in self.totals:
@@ -52,7 +64,6 @@ class ExtendedBaseLogger(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         if logs is not None:
-
             for k in self.params['metrics']:
                 if k in self.totals:
                     logs[k] = self.get_metric_value(k)
@@ -86,9 +97,10 @@ class ExtendedProgbarLogger(ProgbarLogger):
 
         return filtered_logs
 
-    def __init__(self, count_mode='samples'):
+    def __init__(self, count_mode='samples',
+                 stateful_metrics=None):
         self.log_item_key_to_metric_index = None
-        super(ExtendedProgbarLogger, self).__init__(count_mode=count_mode)
+        super(ExtendedProgbarLogger, self).__init__(count_mode=count_mode, stateful_metrics=stateful_metrics)
 
     def on_train_begin(self, logs=None):
         super(ExtendedProgbarLogger, self).on_train_begin(logs=self._filter_log_items(logs))

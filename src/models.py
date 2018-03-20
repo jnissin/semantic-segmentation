@@ -384,141 +384,136 @@ class ModelBase(object):
         if h5py is None:
             raise ImportError('`load_weights` requires h5py.')
 
-        f = h5py.File(filepath, mode='r')
+        with h5py.File(filepath, mode='r') as f:
 
-        if 'layer_names' not in f.attrs and 'model_weights' in f:
-            f = f['model_weights']
+            if 'layer_names' not in f.attrs and 'model_weights' in f:
+                f = f['model_weights']
 
-        ##########################
-        # Load weights
-        ##########################
+            ##########################
+            # Load weights
+            ##########################
 
-        if 'keras_version' in f.attrs:
-            original_keras_version = f.attrs['keras_version'].decode('utf8')
-        else:
-            original_keras_version = '1'
-        if 'backend' in f.attrs:
-            original_backend = f.attrs['backend'].decode('utf8')
-        else:
-            original_backend = None
+            if 'keras_version' in f.attrs:
+                original_keras_version = f.attrs['keras_version'].decode('utf8')
+            else:
+                original_keras_version = '1'
+            if 'backend' in f.attrs:
+                original_backend = f.attrs['backend'].decode('utf8')
+            else:
+                original_backend = None
 
-        # Get trainable weights from source HDF5 file and target model
-        source_model_trainable_layer_names = get_trainable_layer_names_from_hdf5(f)
-        target_model_trainable_layers = get_trainable_layers_from_model(self.model)
+            # Get trainable weights from source HDF5 file and target model
+            source_model_trainable_layer_names = get_trainable_layer_names_from_hdf5(f)
+            target_model_trainable_layers = get_trainable_layers_from_model(self.model)
 
-        # Transform layer indices from possibly negative to positive range [0, N_TRAINABLE]
-        source_num_trainable_layers = len(source_model_trainable_layer_names)
-        from_layer_index = normalize_layer_index(from_layer_index, source_num_trainable_layers)
-        to_layer_index = normalize_layer_index(to_layer_index, source_num_trainable_layers)
-        freeze_from_layer_index = normalize_layer_index(freeze_from_layer_index, source_num_trainable_layers)
-        freeze_to_layer_index = normalize_layer_index(freeze_to_layer_index, source_num_trainable_layers)
-        scale_lr_from_layer_index = normalize_layer_index(scale_lr_from_layer_index, source_num_trainable_layers)
-        scale_lr_to_layer_index = normalize_layer_index(scale_lr_to_layer_index, source_num_trainable_layers)
-        freezing_layers = freeze_from_layer_index is not None and freeze_to_layer_index is not None
-        scaling_lr_layers = scale_lr_from_layer_index is not None and scale_lr_to_layer_index is not None
+            # Transform layer indices from possibly negative to positive range [0, N_TRAINABLE]
+            source_num_trainable_layers = len(source_model_trainable_layer_names)
+            from_layer_index = normalize_layer_index(from_layer_index, source_num_trainable_layers)
+            to_layer_index = normalize_layer_index(to_layer_index, source_num_trainable_layers)
+            freeze_from_layer_index = normalize_layer_index(freeze_from_layer_index, source_num_trainable_layers)
+            freeze_to_layer_index = normalize_layer_index(freeze_to_layer_index, source_num_trainable_layers)
+            scale_lr_from_layer_index = normalize_layer_index(scale_lr_from_layer_index, source_num_trainable_layers)
+            scale_lr_to_layer_index = normalize_layer_index(scale_lr_to_layer_index, source_num_trainable_layers)
+            freezing_layers = freeze_from_layer_index is not None and freeze_to_layer_index is not None
+            scaling_lr_layers = scale_lr_from_layer_index is not None and scale_lr_to_layer_index is not None
 
-        # Select the corresponding layers from the source and target
-        transfer_source_layer_names = source_model_trainable_layer_names[from_layer_index:to_layer_index]
-        transfer_target_layers = target_model_trainable_layers[from_layer_index:to_layer_index]
+            # Select the corresponding layers from the source and target
+            transfer_source_layer_names = source_model_trainable_layer_names[from_layer_index:to_layer_index]
+            transfer_target_layers = target_model_trainable_layers[from_layer_index:to_layer_index]
 
-        # Sanity check
-        if len(transfer_source_layer_names) != len(transfer_target_layers):
-            raise ValueError('Mismatch between number of target and source layers: {} vs {}'.format(len(transfer_target_layers), len(transfer_source_layer_names)))
+            # Sanity check
+            if len(transfer_source_layer_names) != len(transfer_target_layers):
+                raise ValueError('Mismatch between number of target and source layers: {} vs {}'.format(len(transfer_target_layers), len(transfer_source_layer_names)))
 
-        if transfer_target_layers[0].name != transfer_source_layer_names[0] or transfer_target_layers[-1].name != transfer_source_layer_names[-1]:
-            Logger.instance().warn('Mismatch in first/last transferred layer names between target and source models: first: {} vs {}, last: {} vs {}'
-                                   .format(transfer_target_layers[0].name, transfer_source_layer_names[0], transfer_target_layers[-1].name, transfer_source_layer_names[-1]))
+            if transfer_target_layers[0].name != transfer_source_layer_names[0] or transfer_target_layers[-1].name != transfer_source_layer_names[-1]:
+                Logger.instance().warn('Mismatch in first/last transferred layer names between target and source models: first: {} vs {}, last: {} vs {}'
+                                       .format(transfer_target_layers[0].name, transfer_source_layer_names[0], transfer_target_layers[-1].name, transfer_source_layer_names[-1]))
 
-        # Extract info for return value
-        last_transferred_layer_name = transfer_source_layer_names[-1]
-        num_transferred_layers = len(transfer_source_layer_names)
+            # Extract info for return value
+            last_transferred_layer_name = transfer_source_layer_names[-1]
+            num_transferred_layers = len(transfer_source_layer_names)
 
-        # We batch weight value assignments in a single backend call
-        # which provides a speedup in TensorFlow.
-        weight_value_tuples = []
+            # We batch weight value assignments in a single backend call
+            # which provides a speedup in TensorFlow.
+            weight_value_tuples = []
 
-        for k, name in enumerate(transfer_source_layer_names):
-            g = f[name]
-            weight_names = [n.decode('utf8') for n in g.attrs['weight_names']]
-            weight_values = [g[weight_name] for weight_name in weight_names]
-            layer = transfer_target_layers[k]
-            symbolic_weights = layer.weights
-            weight_values = preprocess_weights_for_loading(layer,
-                                                           weight_values,
-                                                           original_keras_version,
-                                                           original_backend)
+            for k, name in enumerate(transfer_source_layer_names):
+                g = f[name]
+                weight_names = [n.decode('utf8') for n in g.attrs['weight_names']]
+                weight_values = [g[weight_name] for weight_name in weight_names]
+                layer = transfer_target_layers[k]
+                symbolic_weights = layer.weights
+                weight_values = preprocess_weights_for_loading(layer,
+                                                               weight_values,
+                                                               original_keras_version,
+                                                               original_backend)
 
-            if len(weight_values) != len(symbolic_weights):
-                raise ValueError('Layer #' + str(k) +
-                                 ' (named "' + layer.name +
-                                 '" in the current model) was found to '
-                                 'correspond to layer ' + name +
-                                 ' in the save file. '
-                                 'However the new layer ' + layer.name +
-                                 ' expects ' + str(len(symbolic_weights)) +
-                                 ' weights, but the saved weights have ' +
-                                 str(len(weight_values)) +
-                                 ' elements.')
-            weight_value_tuples += zip(symbolic_weights, weight_values)
+                if len(weight_values) != len(symbolic_weights):
+                    raise ValueError('Layer #' + str(k) +
+                                     ' (named "' + layer.name +
+                                     '" in the current model) was found to '
+                                     'correspond to layer ' + name +
+                                     ' in the save file. '
+                                     'However the new layer ' + layer.name +
+                                     ' expects ' + str(len(symbolic_weights)) +
+                                     ' weights, but the saved weights have ' +
+                                     str(len(weight_values)) +
+                                     ' elements.')
+                weight_value_tuples += zip(symbolic_weights, weight_values)
 
-        K.batch_set_value(weight_value_tuples)
+            K.batch_set_value(weight_value_tuples)
 
-        ##############################
-        # Freezing
-        ##############################
+            ##############################
+            # Freezing
+            ##############################
 
-        num_frozen_layers = 0
-        last_frozen_layer_name = None
+            num_frozen_layers = 0
+            last_frozen_layer_name = None
 
-        if freezing_layers:
-            freeze_target_layers = target_model_trainable_layers[freeze_from_layer_index:freeze_to_layer_index]
-            last_frozen_layer_name = freeze_target_layers[-1].name
-            num_frozen_layers = len(freeze_target_layers)
+            if freezing_layers:
+                freeze_target_layers = target_model_trainable_layers[freeze_from_layer_index:freeze_to_layer_index]
+                last_frozen_layer_name = freeze_target_layers[-1].name
+                num_frozen_layers = len(freeze_target_layers)
 
-            for layer in freeze_target_layers:
-                layer.trainable = False
+                for layer in freeze_target_layers:
+                    layer.trainable = False
 
-        ##############################
-        # LR scaling
-        ##############################
+            ##############################
+            # LR scaling
+            ##############################
 
-        lr_scalers = dict()
+            lr_scalers = dict()
 
-        if scaling_lr_layers:
-            # The learning rate scalers must be mapped from layer indices to trainable weights indices which
-            # are used in the optimizer
-            scale_lr_target_layers = target_model_trainable_layers[scale_lr_from_layer_index:scale_lr_to_layer_index]
+            if scaling_lr_layers:
+                # The learning rate scalers must be mapped from layer indices to trainable weights indices which
+                # are used in the optimizer
+                scale_lr_target_layers = target_model_trainable_layers[scale_lr_from_layer_index:scale_lr_to_layer_index]
 
-            scale_lr_from_trainable_weight = 0
-            for i in range(0, scale_lr_from_layer_index):
-                scale_lr_from_trainable_weight += len(target_model_trainable_layers[i].trainable_weights)
+                scale_lr_from_trainable_weight = 0
+                for i in range(0, scale_lr_from_layer_index):
+                    scale_lr_from_trainable_weight += len(target_model_trainable_layers[i].trainable_weights)
 
-            scale_lr_to_trainable_weight = scale_lr_from_trainable_weight
-            for layer in scale_lr_target_layers:
-                scale_lr_to_trainable_weight += len(layer.trainable_weights)
+                scale_lr_to_trainable_weight = scale_lr_from_trainable_weight
+                for layer in scale_lr_target_layers:
+                    scale_lr_to_trainable_weight += len(layer.trainable_weights)
 
-            # Create a dictionary
-            for i in range(scale_lr_from_trainable_weight, scale_lr_to_trainable_weight):
-                lr_scalers[i] = scale_lr_factor
+                # Create a dictionary
+                for i in range(scale_lr_from_trainable_weight, scale_lr_to_trainable_weight):
+                    lr_scalers[i] = scale_lr_factor
 
-        ##############################
-        # Close the H5PY file
-        ##############################
+            ###############################
+            # Return params
+            ###############################
 
-        if hasattr(f, 'close'):
-            f.close()
+            info = WeightTransferInformation(num_transferred_layers=num_transferred_layers,
+                                             last_transferred_layer_name=last_transferred_layer_name,
+                                             num_frozen_layers=num_frozen_layers,
+                                             last_frozen_layer_name=last_frozen_layer_name,
+                                             lr_scalers=lr_scalers)
 
-        ###############################
-        # Return params
-        ###############################
+            return info
 
-        info = WeightTransferInformation(num_transferred_layers=num_transferred_layers,
-                                         last_transferred_layer_name=last_transferred_layer_name,
-                                         num_frozen_layers=num_frozen_layers,
-                                         last_frozen_layer_name=last_frozen_layer_name,
-                                         lr_scalers=lr_scalers)
 
-        return info
 
     def load_optimizer_weights(self, weights_file_path):
 

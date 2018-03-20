@@ -16,6 +16,7 @@ class SGD(Optimizer):
         momentum: float >= 0. Parameter updates momentum.
         decay: float >= 0. Learning rate decay over each update.
         nesterov: boolean. Whether to apply Nesterov momentum.
+        lr_scalers: dictionary for lr scaling (layer idx -> lr scaling factor).
     """
 
     def __init__(self, lr=0.01, momentum=0., decay=0.,
@@ -86,13 +87,18 @@ class Adam(Optimizer):
         beta_2: float, 0 < beta < 1. Generally close to 1.
         epsilon: float >= 0. Fuzz factor.
         decay: float >= 0. Learning rate decay over each update.
+        lr_scalers: dictionary for lr scaling (layer idx -> lr scaling factor).
+        amsgrad: boolean. Whether to apply the AMSGrad variant of this
+            algorithm from the paper "On the Convergence of Adam and
+            Beyond".
 
     # References
         - [Adam - A Method for Stochastic Optimization](http://arxiv.org/abs/1412.6980v8)
+        - [On the Convergence of Adam and Beyond](https://openreview.net/forum?id=ryQu7f-RZ)
     """
 
     def __init__(self, lr=0.001, beta_1=0.9, beta_2=0.999,
-                 epsilon=1e-8, decay=0., lr_scalers={}, **kwargs):
+                 epsilon=1e-8, decay=0., lr_scalers={}, amsgrad=False, **kwargs):
         super(Adam, self).__init__(**kwargs)
         with K.name_scope(self.__class__.__name__):
             self.iterations = K.variable(0, name='iterations')
@@ -100,8 +106,11 @@ class Adam(Optimizer):
             self.beta_1 = K.variable(beta_1, name='beta_1')
             self.beta_2 = K.variable(beta_2, name='beta_2')
             self.decay = K.variable(decay, name='decay')
+        if epsilon is None:
+            epsilon = K.epsilon()
         self.epsilon = epsilon
         self.initial_decay = decay
+        self.amsgrad = amsgrad
         self.lr_scalers = lr_scalers
 
     @interfaces.legacy_get_updates_support
@@ -111,16 +120,22 @@ class Adam(Optimizer):
 
         lr = self.lr
         if self.initial_decay > 0:
-            lr *= (1. / (1. + self.decay * self.iterations))
+            lr *= (1. / (1. + self.decay * K.cast(self.iterations,
+                                                  K.dtype(self.decay))))
 
-        t = self.iterations + 1
+        t = K.cast(self.iterations, K.floatx()) + 1
         lr_t_orig = lr * (K.sqrt(1. - K.pow(self.beta_2, t)) / (1. - K.pow(self.beta_1, t)))
 
-        ms = [K.zeros(K.get_variable_shape(p), dtype=K.dtype(p)) for p in params]
-        vs = [K.zeros(K.get_variable_shape(p), dtype=K.dtype(p)) for p in params]
-        self.weights = [self.iterations] + ms + vs
+        ms = [K.zeros(K.int_shape(p), dtype=K.dtype(p)) for p in params]
+        vs = [K.zeros(K.int_shape(p), dtype=K.dtype(p)) for p in params]
+        if self.amsgrad:
+            vhats = [K.zeros(K.int_shape(p), dtype=K.dtype(p)) for p in params]
+        else:
+            vhats = [K.zeros(1) for _ in params]
+        self.weights = [self.iterations] + ms + vs + vhats
 
-        for ii, (p, g, m, v) in enumerate(zip(params, grads, ms, vs)):
+        for ii, (p, g, m, v, vhat) in enumerate(zip(params, grads, ms, vs, vhats)):
+
             lr_t = lr_t_orig
 
             if ii in self.lr_scalers:
@@ -128,11 +143,15 @@ class Adam(Optimizer):
 
             m_t = (self.beta_1 * m) + (1. - self.beta_1) * g
             v_t = (self.beta_2 * v) + (1. - self.beta_2) * K.square(g)
-            p_t = p - lr_t * m_t / (K.sqrt(v_t) + self.epsilon)
+            if self.amsgrad:
+                vhat_t = K.maximum(vhat, v_t)
+                p_t = p - lr_t * m_t / (K.sqrt(vhat_t) + self.epsilon)
+                self.updates.append(K.update(vhat, vhat_t))
+            else:
+                p_t = p - lr_t * m_t / (K.sqrt(v_t) + self.epsilon)
 
             self.updates.append(K.update(m, m_t))
             self.updates.append(K.update(v, v_t))
-
             new_p = p_t
 
             # Apply constraints.
@@ -148,6 +167,7 @@ class Adam(Optimizer):
                   'beta_2': float(K.get_value(self.beta_2)),
                   'decay': float(K.get_value(self.decay)),
                   'epsilon': self.epsilon,
+                  'amsgrad': self.amsgrad,
                   'lr_scalers': self.lr_scalers}
         base_config = super(Adam, self).get_config()
         return dict(list(base_config.items()) + list(config.items()))

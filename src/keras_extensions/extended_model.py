@@ -12,8 +12,9 @@ import warnings
 import numpy as np
 
 from keras.engine.training import Model
-from keras.engine.training import GeneratorEnqueuer
 from keras.engine.training import _standardize_input_data
+
+from keras.engine.topology import Layer
 
 from keras import backend as K
 from keras import callbacks as cbks
@@ -25,7 +26,7 @@ from keras import metrics as metrics_module
 from keras.engine.training import _collect_metrics, _weighted_masked_objective
 
 from utils.data_utils import Sequence
-from utils.data_utils import OrderedEnqueuer
+from utils.data_utils import OrderedEnqueuer, GeneratorEnqueuer, SequenceEnqueuer
 import extended_callbacks as extended_cbks
 
 from ..logger import Logger
@@ -181,12 +182,12 @@ class ExtendedModel(Model):
                                                     shuffle=shuffle,
                                                     initial_epoch=initial_epoch,
                                                     max_epoch=epochs,
-                                                    random_seed=random_seed)
+                                                    seed=random_seed)
             else:
                 training_enqueuer = GeneratorEnqueuer(generator,
                                                       use_multiprocessing=use_multiprocessing,
                                                       wait_time=wait_time,
-                                                      random_seed=random_seed)
+                                                      seed=random_seed)
 
             training_enqueuer.start(workers=workers, max_queue_size=max_queue_size)
         except Exception as e:
@@ -216,12 +217,12 @@ class ExtendedModel(Model):
                                                       shuffle=False,
                                                       initial_epoch=0,
                                                       max_epoch=None,
-                                                      random_seed=random_seed)
+                                                      seed=random_seed)
             else:
                 validation_enqueuer = GeneratorEnqueuer(generator,
                                                         use_multiprocessing=use_multiprocessing,
                                                         wait_time=wait_time,
-                                                        random_seed=random_seed)
+                                                        seed=random_seed)
 
             validation_enqueuer.start(workers=workers, max_queue_size=max_queue_size, start_paused=True)
         except Exception as e:
@@ -232,7 +233,7 @@ class ExtendedModel(Model):
 
         return validation_enqueuer
 
-    def compile(self, optimizer, loss, metrics=None, loss_weights=None,
+    def compile(self, optimizer, loss=None, metrics=None, loss_weights=None,
                 sample_weight_mode=None, weighted_metrics=None,
                 target_tensors=None, **kwargs):
         """Configures the model for training.
@@ -497,10 +498,13 @@ class ExtendedModel(Model):
         self.weighted_metrics = weighted_metrics
         self.metrics_names = ['loss']
         self.metrics_tensors = []
+
+        # Custom code: Added by Joonas Nissinen
         self.metrics_hidden_from_progbar = set()
         self.metrics_excluded_from_callbacks = set()
         self.metrics_streaming = set()
         self.metrics_cfm = set()
+        # End of custom code
 
         # Compute total loss.
         total_loss = None
@@ -540,25 +544,8 @@ class ExtendedModel(Model):
         # contains tuples (metrics for output, names of metrics).
         nested_metrics = _collect_metrics(metrics, self.output_names)
         nested_weighted_metrics = _collect_metrics(weighted_metrics, self.output_names)
-
-        def append_metric(layer_index, metric_name, metric_tensor, is_hidden_from_progbar, is_excluded_from_callbacks, is_streaming, is_cfm):
-            """Helper function used in loop below."""
-            if len(self.output_names) > 1:
-                metric_name = self.output_names[layer_index] + '_' + metric_name
-            self.metrics_names.append(metric_name)
-            self.metrics_tensors.append(metric_tensor)
-
-            if is_hidden_from_progbar:
-                self.metrics_hidden_from_progbar.add(metric_name)
-
-            if is_excluded_from_callbacks:
-                self.metrics_excluded_from_callbacks.add(metric_name)
-
-            if is_streaming:
-                self.metrics_streaming.add(metric_name)
-
-            if is_cfm:
-                self.metrics_cfm.add(metric_name)
+        self.metrics_updates = []
+        self.stateful_metric_names = []
 
         with K.name_scope('metrics'):
             for i in range(len(self.outputs)):
@@ -575,51 +562,96 @@ class ExtendedModel(Model):
                     metric_name_prefix = 'weighted_' if weights is not None else ''
 
                     for metric in metrics:
-                        if metric == 'accuracy' or metric == 'acc':
-                            # custom handling of accuracy
+                        metric_fn = None
+
+                        if metric in ('accuracy', 'acc', 'crossentropy', 'ce'):
+                            # custom handling of accuracy/crossentropy
                             # (because of class mode duality)
-                            output_shape = self.internal_output_shapes[i]
+                            output_shape = self._internal_output_shapes[i]
                             if (output_shape[-1] == 1 or
                                self.loss_functions[i] == losses.binary_crossentropy):
-                                # case: binary accuracy
-                                acc_fn = metrics_module.binary_accuracy
+                                # case: binary accuracy/crossentropy
+                                if metric in ('accuracy', 'acc'):
+                                    metric_fn = metrics_module.binary_accuracy
+                                elif metric in ('crossentropy', 'ce'):
+                                    metric_fn = metrics_module.binary_crossentropy
                             elif self.loss_functions[i] == losses.sparse_categorical_crossentropy:
-                                # case: categorical accuracy with sparse targets
-                                acc_fn = metrics_module.sparse_categorical_accuracy
+                                # case: categorical accuracy/crossentropy with sparse targets
+                                if metric in ('accuracy', 'acc'):
+                                    metric_fn = metrics_module.sparse_categorical_accuracy
+                                elif metric in ('crossentropy', 'ce'):
+                                    metric_fn = metrics_module.sparse_categorical_crossentropy
                             else:
-                                acc_fn = metrics_module.categorical_accuracy
-
-                            is_hidden_from_progbar = getattr(acc_fn, 'hide_from_progbar', False)
-                            is_excluded_from_callbacks = getattr(acc_fn, 'exclude_from_callbacks', False)
-                            is_streaming = getattr(acc_fn, 'streaming', False)
-                            is_cfm = getattr(acc_fn, 'cfm', False)
-                            weighted_metric_fn = _weighted_masked_objective(acc_fn)
-                            metric_name = metric_name_prefix + 'acc'
+                                # case: categorical accuracy/crossentropy
+                                if metric in ('accuracy', 'acc'):
+                                    metric_fn = metrics_module.categorical_accuracy
+                                elif metric in ('crossentropy', 'ce'):
+                                    metric_fn = metrics_module.categorical_crossentropy
+                            if metric in ('accuracy', 'acc'):
+                                    suffix = 'acc'
+                            elif metric in ('crossentropy', 'ce'):
+                                    suffix = 'ce'
+                            weighted_metric_fn = _weighted_masked_objective(metric_fn)
+                            metric_name = metric_name_prefix + suffix
                         else:
                             metric_fn = metrics_module.get(metric)
-                            is_hidden_from_progbar = getattr(metric_fn, 'hide_from_progbar', False)
-                            is_excluded_from_callbacks = getattr(metric_fn, 'exclude_from_callbacks', False)
-                            is_streaming = getattr(metric_fn, 'streaming', False)
-                            is_cfm = getattr(metric_fn, 'cfm', False)
 
                             # Streaming metrics and CFMs skip the weighted_masked_objective function
-                            if is_streaming or is_cfm:
+                            if getattr(metric_fn, 'streaming', False) or getattr(metric_fn, 'cfm', False):
                                 weighted_metric_fn = lambda y_true, y_pred, weights, mask: metric_fn(y_true, y_pred)
                             else:
                                 weighted_metric_fn = _weighted_masked_objective(metric_fn)
 
-                            metric_name = metric_name_prefix + metric_fn.__name__
+                            # Get metric name as string
+                            if hasattr(metric_fn, 'name'):
+                                metric_name = metric_fn.name
+                            else:
+                                metric_name = metric_fn.__name__
+                            metric_name = metric_name_prefix + metric_name
 
                         with K.name_scope(metric_name):
-                            metric_result = weighted_metric_fn(y_true, y_pred, weights=weights, mask=masks[i])
+                            metric_result = weighted_metric_fn(y_true, y_pred,
+                                                               weights=weights,
+                                                               mask=masks[i])
 
-                        append_metric(i,
-                                      metric_name,
-                                      metric_result,
-                                      is_hidden_from_progbar,
-                                      is_excluded_from_callbacks,
-                                      is_streaming,
-                                      is_cfm)
+                        # Append to self.metrics_names, self.metric_tensors,
+                        # self.stateful_metric_names
+                        if len(self.output_names) > 1:
+                            metric_name = self.output_names[i] + '_' + metric_name
+                        # Dedupe name
+                        j = 1
+                        base_metric_name = metric_name
+                        while metric_name in self.metrics_names:
+                            metric_name = base_metric_name + '_' + str(j)
+                            j += 1
+                        self.metrics_names.append(metric_name)
+                        self.metrics_tensors.append(metric_result)
+
+                        # Keep track of state updates created by
+                        # stateful metrics (i.e. metrics layers).
+                        if isinstance(metric_fn, Layer):
+                            self.stateful_metric_names.append(metric_name)
+                            self.metrics_updates += metric_fn.updates
+
+                        # Custom code: Added by Joonas Nissinen
+                        # Process the extra parameters to custom metrics
+                        is_hidden_from_progbar = getattr(weighted_metric_fn, 'hide_from_progbar', False)
+                        is_excluded_from_callbacks = getattr(weighted_metric_fn, 'exclude_from_callbacks', False)
+                        is_streaming = getattr(weighted_metric_fn, 'streaming', False)
+                        is_cfm = getattr(weighted_metric_fn, 'cfm', False)
+
+                        if is_hidden_from_progbar:
+                            self.metrics_hidden_from_progbar.add(metric_name)
+
+                        if is_excluded_from_callbacks:
+                            self.metrics_excluded_from_callbacks.add(metric_name)
+
+                        if is_streaming:
+                            self.metrics_streaming.add(metric_name)
+
+                        if is_cfm:
+                            self.metrics_cfm.add(metric_name)
+                        # End of custom code
 
                 handle_metrics(output_metrics)
                 handle_metrics(output_weighted_metrics, weights=weights)
@@ -672,8 +704,9 @@ class ExtendedModel(Model):
         return outputs
 
     @interfaces.legacy_generator_methods_support
-    def fit_generator(self, generator,
-                      steps_per_epoch,
+    def fit_generator(self,
+                      generator,
+                      steps_per_epoch=None,
                       epochs=1,
                       verbose=1,
                       callbacks=None,
@@ -782,6 +815,22 @@ class ExtendedModel(Model):
         if do_validation:
             self._make_test_function()
 
+        is_sequence = isinstance(generator, Sequence)
+        if not is_sequence and use_multiprocessing and workers > 1:
+            warnings.warn(
+                UserWarning('Using a generator with `use_multiprocessing=True`'
+                            ' and multiple workers may duplicate your data.'
+                            ' Please consider using the`keras.utils.Sequence'
+                            ' class.'))
+        if steps_per_epoch is None:
+            if is_sequence:
+                steps_per_epoch = len(generator)
+            else:
+                raise ValueError('`steps_per_epoch=None` is only valid for a'
+                                 ' generator based on the `keras.utils.Sequence`'
+                                 ' class. Please specify `steps_per_epoch` or use'
+                                 ' the `keras.utils.Sequence` class.')
+
         # python 2 has 'next', 3 has '__next__'
         # avoid any explicit version checks
         val_gen = (hasattr(validation_data, 'next') or
@@ -793,16 +842,25 @@ class ExtendedModel(Model):
                              '`validation_steps`.')
 
         # Prepare display labels.
-        out_labels = self._get_deduped_metrics_names()
+        out_labels = self.metrics_names
         callback_metrics = out_labels + ['val_' + n for n in out_labels]
 
         # prepare callbacks
         self.history = cbks.History()
         baselogger = extended_cbks.ExtendedBaseLogger()
         callbacks = [baselogger] + (callbacks or []) + [self.history]
+
+        # prepare callbacks
+        self.history = cbks.History()
+        _callbacks = [extended_cbks.ExtendedBaseLogger(
+            stateful_metrics=self.stateful_metric_names)]
         if verbose:
-            callbacks += [extended_cbks.ExtendedProgbarLogger(count_mode='steps')]
-        callbacks = cbks.CallbackList(callbacks)
+            _callbacks.append(
+                extended_cbks.ExtendedProgbarLogger(
+                    count_mode='steps',
+                    stateful_metrics=self.stateful_metric_names))
+        _callbacks += (callbacks or []) + [self.history]
+        callbacks = cbks.CallbackList(_callbacks)
 
         # it's possible to callback a different model than self:
         if hasattr(self, 'callback_model') and self.callback_model:
@@ -819,69 +877,71 @@ class ExtendedModel(Model):
         })
         callbacks.on_train_begin()
 
-        if do_validation and not val_gen:
-            if len(validation_data) == 2:
-                val_x, val_y = validation_data
-                val_sample_weight = None
-            elif len(validation_data) == 3:
-                val_x, val_y, val_sample_weight = validation_data
-            else:
-                raise ValueError('`validation_data` should be a tuple '
-                                 '`(val_x, val_y, val_sample_weight)` '
-                                 'or `(val_x, val_y)`. Found: ' +
-                                 str(validation_data))
-            val_x, val_y, val_sample_weights = self._standardize_user_data(
-                val_x, val_y, val_sample_weight)
-            val_data = val_x + val_y + val_sample_weights
-            if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
-                val_data += [0.]
-            for cbk in callbacks:
-                cbk.validation_data = val_data
-
-        if not self.training_enqueuer_pre_created and generator is None:
-            raise ValueError('Invalid generator passed - must either pass a valid generator or pre create the enqueuer')
-
         enqueuer = None
+        val_enqueuer = None
 
         try:
-            if not self.training_enqueuer_pre_created:
-                is_sequence = isinstance(generator, Sequence)
-
-                if not is_sequence and use_multiprocessing and workers > 1:
-                    warnings.warn(
-                        UserWarning('Using a generator with `use_multiprocessing=True`'
-                                    ' and multiple workers may duplicate your data.'
-                                    ' Please consider using the`keras.utils.Sequence'
-                                    ' class.'))
-
-                enqueuer = None
-
-                if is_sequence:
-                    enqueuer = OrderedEnqueuer(generator,
-                                               use_multiprocessing=use_multiprocessing,
-                                               shuffle=shuffle,
-                                               initial_epoch=initial_epoch,
-                                               max_epoch=epochs,
-                                               random_seed=random_seed)
+            if do_validation and not val_gen:
+                # Prepare data for validation
+                if len(validation_data) == 2:
+                    val_x, val_y = validation_data
+                    val_sample_weight = None
+                elif len(validation_data) == 3:
+                    val_x, val_y, val_sample_weight = validation_data
                 else:
-                    enqueuer = GeneratorEnqueuer(generator,
-                                                 use_multiprocessing=use_multiprocessing,
-                                                 wait_time=wait_time,
-                                                 random_seed=random_seed)
-                enqueuer.start(workers=workers, max_queue_size=max_queue_size)
-            else:
-                enqueuer = self.training_enqueuer
+                    raise ValueError('`validation_data` should be a tuple '
+                                     '`(val_x, val_y, val_sample_weight)` '
+                                     'or `(val_x, val_y)`. Found: ' +
+                                     str(validation_data))
+                val_x, val_y, val_sample_weights = self._standardize_user_data(
+                    val_x, val_y, val_sample_weight)
+                val_data = val_x + val_y + val_sample_weights
+                if self.uses_learning_phase and not isinstance(K.learning_phase(), int):
+                    val_data += [0.]
+                for cbk in callbacks:
+                    cbk.validation_data = val_data
 
-            enqueuer.continue_run()
-            output_generator = enqueuer.get()
+            # Custom code: added by Joonas Nissinen
+            if not self.training_enqueuer_pre_created and generator is None:
+                raise ValueError('Invalid generator passed - must either pass a valid generator or pre create the enqueuer')
+
+            if self.training_enqueuer_pre_created:
+                enqueuer = self.training_enqueuer
+                enqueuer.continue_run()
+                output_generator = enqueuer.get()
+            # End of custom code
+            else:
+                if workers > 0:
+                    if is_sequence:
+                        enqueuer = OrderedEnqueuer(generator,
+                                                   use_multiprocessing=use_multiprocessing,
+                                                   shuffle=shuffle,
+                                                   initial_epoch=initial_epoch,
+                                                   max_epoch=epochs,
+                                                   seed=random_seed)
+                    else:
+                        enqueuer = GeneratorEnqueuer(generator,
+                                                     use_multiprocessing=use_multiprocessing,
+                                                     wait_time=wait_time,
+                                                     seed=random_seed)
+                    enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+                    enqueuer.continue_run()
+                    output_generator = enqueuer.get()
+                else:
+                    if is_sequence:
+                        output_generator = iter(generator)
+                    else:
+                        output_generator = generator
 
             callback_model.stop_training = False
+            # Construct epoch logs.
+            epoch_logs = {}
             while epoch < epochs:
 
                 # Reset any necessary values from the metrics at the beginning of an epoch
                 self.reset_metrics()
-
                 epoch_s_time = time.time()
+
                 callbacks.on_epoch_begin(epoch)
                 steps_done = 0
                 batch_index = 0
@@ -953,7 +1013,6 @@ class ExtendedModel(Model):
                         self.logger.debug_log('Trainer on_batch_end took: {}s'.format(time.time() - s_time))
 
                     # Construct epoch logs.
-                    epoch_logs = {}
                     batch_index += 1
                     steps_done += 1
 
@@ -1025,8 +1084,12 @@ class ExtendedModel(Model):
                 if callback_model.stop_training:
                     break
         finally:
-            if enqueuer is not None:
-                enqueuer.stop()
+            try:
+                if enqueuer is not None:
+                    enqueuer.stop()
+            finally:
+                if val_enqueuer is not None:
+                    val_enqueuer.stop()
 
         # Extended functionality: notify trainer
         if trainer is not None:
@@ -1036,7 +1099,9 @@ class ExtendedModel(Model):
         return self.history
 
     @interfaces.legacy_generator_methods_support
-    def evaluate_generator(self, generator, steps,
+    def evaluate_generator(self,
+                           generator,
+                           steps=None,
                            max_queue_size=10,
                            workers=1,
                            use_multiprocessing=False,
@@ -1085,40 +1150,55 @@ class ExtendedModel(Model):
         wait_time = 0.01
         all_outs = []
         batch_sizes = []
+        is_sequence = isinstance(generator, Sequence)
 
-        if not self.training_enqueuer_pre_created and generator is None:
+        if not is_sequence and use_multiprocessing and workers > 1:
+            warnings.warn(
+                UserWarning('Using a generator with `use_multiprocessing=True`'
+                            ' and multiple workers may duplicate your data.'
+                            ' Please consider using the`keras.utils.Sequence'
+                            ' class.'))
+        if steps is None:
+            if is_sequence:
+                steps = len(generator)
+            else:
+                raise ValueError('`steps=None` is only valid for a generator'
+                                 ' based on the `keras.utils.Sequence` class.'
+                                 ' Please specify `steps` or use the'
+                                 ' `keras.utils.Sequence` class.')
+
+        if validation and not self.validation_enqueuer_pre_created and generator is None:
             raise ValueError('Invalid generator passed - must either pass a valid generator or pre create the enqueuer')
 
         enqueuer = None
 
         try:
-            if not self.validation_enqueuer_pre_created or not validation:
-                is_sequence = isinstance(generator, Sequence)
-                if not is_sequence and use_multiprocessing and workers > 1:
-                    warnings.warn(
-                        UserWarning('Using a generator with `use_multiprocessing=True`'
-                                    ' and multiple workers may duplicate your data.'
-                                    ' Please consider using the`keras.utils.Sequence'
-                                    ' class.'))
-                enqueuer = None
-
-                if is_sequence:
-                    enqueuer = OrderedEnqueuer(generator,
-                                               use_multiprocessing=use_multiprocessing,
-                                               max_epoch=1,
-                                               random_seed=random_seed)
-                else:
-                    enqueuer = GeneratorEnqueuer(generator,
-                                                 use_multiprocessing=use_multiprocessing,
-                                                 wait_time=wait_time,
-                                                 random_seed=random_seed)
-                enqueuer.start(workers=workers, max_queue_size=max_queue_size)
-                self.logger.log('Created a new validation enqueuer')
-            else:
+            if validation and self.validation_enqueuer_pre_created:
                 enqueuer = self.validation_enqueuer
+            else:
+                if workers > 0:
+                    enqueuer = None
 
-            enqueuer.continue_run()
-            output_generator = enqueuer.get()
+                    if is_sequence:
+                        enqueuer = OrderedEnqueuer(generator,
+                                                   use_multiprocessing=use_multiprocessing,
+                                                   max_epoch=1,
+                                                   seed=random_seed)
+                    else:
+                        enqueuer = GeneratorEnqueuer(generator,
+                                                     use_multiprocessing=use_multiprocessing,
+                                                     wait_time=wait_time,
+                                                     seed=random_seed)
+
+                    enqueuer.start(workers=workers, max_queue_size=max_queue_size)
+                    enqueuer.continue_run()
+                    output_generator = enqueuer.get()
+                else:
+                    if is_sequence:
+                        output_generator = iter(generator)
+                    else:
+                        output_generator = generator
+
             eval_s_time = time.time()
 
             # Reset metrics before evaluation run
@@ -1167,6 +1247,7 @@ class ExtendedModel(Model):
         except Exception as e:
             if enqueuer is not None:
                 enqueuer.stop()
+                enqueuer = None
             raise e
         finally:
             if validation and self.validation_enqueuer_pre_created:
