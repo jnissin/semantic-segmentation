@@ -872,7 +872,7 @@ class TrainerBase:
 
     def _populate_path_template(self, path, *args, **kwargs):
         # type: (str) -> str
-        return path.format(model_folder=self.model_folder_name, log_folder_path=self.log_folder_path, **kwargs)
+        return path.format(model_folder=self.model_folder_name, log_folder_path=self.log_folder_path, **kwargs).replace('//', '/')
 
     def _get_data_augmentation_parameters(self):
         self.logger.log('Parsing data augmentation parameters')
