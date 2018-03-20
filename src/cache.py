@@ -229,10 +229,10 @@ class MemoryMappedImageCache(object):
         if self.index is not None and key in self.index:
             try:
                 bytes = self.index[key]
-                num_bytes = bytes[1] - bytes[0]
-                self.data_mm_fp.seek(bytes[0])
-                img = Image.open(BytesIO(self.data_mm_fp.read(num_bytes)))
-                #img = Image.open(BytesIO(self.data_mm_fp[bytes[0]:bytes[1]]))
+                #num_bytes = bytes[1] - bytes[0]
+                #self.data_mm_fp.seek(bytes[0])
+                #img = Image.open(BytesIO(self.data_mm_fp.read(num_bytes)))
+                img = Image.open(BytesIO(self.data_mm_fp[bytes[0]:bytes[1]]))
 
                 # Fix the filename of the PIL Image to match the key when reading from binary blob,
                 # otherwise the filename will be empty/None
