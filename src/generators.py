@@ -1678,8 +1678,13 @@ class SegmentationDataGenerator(DataGenerator):
         super(SegmentationDataGenerator, self).get_data_batch(step_idx, labeled_batch, unlabeled_batch)
 
         # TODO: REMOVE ME
-        b_size = len(labeled_batch) + len(unlabeled_batch)
-        num_unlabeled = np.ones(b_size) * len(unlabeled_batch)
+        if unlabeled_batch is not None:
+            b_size = len(labeled_batch) + len(unlabeled_batch)
+            num_unlabeled = np.ones(b_size) * len(unlabeled_batch)
+        else:
+            b_size = len(labeled_batch)
+            num_unlabeled = np.ones(b_size)
+
         X = np.ones((b_size, 480, 480, 3), dtype=np.float32)
         Y = np.ones((b_size, 480, 480), dtype=np.float32)
         W = np.ones((b_size, 480, 480), dtype=np.float32)
