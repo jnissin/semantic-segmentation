@@ -680,7 +680,8 @@ class TrainerBase:
                 log_folder_path = '{}-{:%Y-%m-%d-%H:%M}'.format(os.path.dirname(log_folder_path), datetime.datetime.now())
                 print 'Log directory path already exists. Avoiding overwriting by attempting to switch to a new log path: {}'.format(log_folder_path)
 
-            self._log_folder_path = log_folder_path
+            # Remove duplicate slashes due to joins
+            self._log_folder_path = log_folder_path.replace('//', '/')
 
         return self._log_folder_path
 
