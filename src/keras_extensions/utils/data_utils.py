@@ -24,6 +24,7 @@ except ImportError:
 
 from src.logger import Logger
 from src import settings
+from src.utils.multiprocessing_utils import MultiprocessingManager
 
 
 ###############################################
@@ -207,7 +208,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         global _SEQUENCE_COUNTER
         if _SEQUENCE_COUNTER is None:
             try:
-                _SEQUENCE_COUNTER = multiprocessing.Value('i', 0)
+                self.uid = MultiprocessingManager.instance().get_new_client_uuid()
             except OSError:
                 # In this case the OS does not allow us to use
                 # multiprocessing. We resort to an int
@@ -217,11 +218,6 @@ class OrderedEnqueuer(SequenceEnqueuer):
         if isinstance(_SEQUENCE_COUNTER, int):
             self.uid = _SEQUENCE_COUNTER
             _SEQUENCE_COUNTER += 1
-        else:
-            # Doing Multiprocessing.Value += x is not process-safe.
-            with _SEQUENCE_COUNTER.get_lock():
-                self.uid = _SEQUENCE_COUNTER.value
-                _SEQUENCE_COUNTER.value += 1
 
         self.shuffle = shuffle
         self.workers = 0

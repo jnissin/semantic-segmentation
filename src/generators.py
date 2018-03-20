@@ -17,6 +17,7 @@ from utils import dataset_utils
 from utils import image_utils
 from utils.image_utils import ImageInterpolationType, ImageTransform, img_to_array
 from utils.dataset_utils import MaterialClassInformation, MaterialSample, MINCSample, BoundingBox
+from utils.multiprocessing_utils import MultiprocessingManager
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet, ImageFile, ImageSet
 from iterators import DataSetIterator, BasicDataSetIterator, MaterialSampleDataSetIterator
 from logger import Logger
@@ -39,10 +40,10 @@ def pickle_method(instance, name, *args, **kwargs):
 
 def _get_next_uuid():
     # type: () -> int
-    global _UUID_COUNTER
-    uuid = _UUID_COUNTER
-    _UUID_COUNTER += 1
-    return uuid
+    #global _UUID_COUNTER
+    #uuid = _UUID_COUNTER
+    #_UUID_COUNTER += 1
+    return MultiprocessingManager.instance().get_new_client_uuid()
 
 
 #######################################

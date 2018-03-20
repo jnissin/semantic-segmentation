@@ -397,7 +397,7 @@ class ExtendedModel(Model):
             if i in skip_target_indices:
                 self.targets.append(None)
             else:
-                shape = self.internal_output_shapes[i]
+                shape = self._internal_output_shapes[i]
                 name = self.output_names[i]
                 if target_tensors is not None:
                     target = target_tensors[i]
