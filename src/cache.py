@@ -116,9 +116,9 @@ class MemoryMappedImageCache(object):
         try:
             self.data_fp.flush()
             if self.read_only or self.write_to_secondary_file_cache:
-                self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size, prot=mmap.PROT_READ)
+                self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size, prot=mmap.PROT_READ, flags=mmap.MAP_SHARED)
             else:
-                self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size)
+                self.data_mm_fp = mmap.mmap(self.data_fp.fileno(), length=self.max_mmap_file_size, flags=mmap.MAP_SHARED)
         except IOError as e:
             Logger.instance().warn('Could not open memory mapped data file: {}'.format(e.message))
 
