@@ -94,7 +94,7 @@ class MemoryMappedImageCache(object):
             self.data_fp.close()
             self.data_fp = None
 
-        self.data_fp = open(self.data_file_path, self.file_mode)
+        self.data_fp = open(self.data_file_path, self.file_mode, buffering=1500000000)
         return self.data_fp
 
     def update_fp(self):
