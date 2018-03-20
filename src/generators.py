@@ -1677,6 +1677,27 @@ class SegmentationDataGenerator(DataGenerator):
 
         super(SegmentationDataGenerator, self).get_data_batch(step_idx, labeled_batch, unlabeled_batch)
 
+
+        # TODO: REMOVE ME
+        b_size = len(labeled_batch) + len(unlabeled_batch)
+        num_unlabeled = len(unlabeled_batch)
+        X = np.ones((b_size, 480, 480, 3), dtype=np.float32)
+        Y = np.ones((b_size, 480, 480, 1), dtype=np.float32)
+        W = Y
+        X_teacher = X
+
+        if self.generate_mean_teacher_data:
+            batch_input_data = [X, Y, W, num_unlabeled, X_teacher]
+        else:
+            batch_input_data = [X, Y, W, num_unlabeled]
+
+        dummy_output = np.zeros(shape=[b_size], dtype=np.int32)
+        logits_output = Y
+        batch_output_data = [dummy_output, logits_output]
+
+        return batch_input_data, batch_output_data
+        # END OF TODO: REMOVE ME
+
         crop_shape = self.get_batch_crop_shape()
         resize_shape = self.get_batch_resize_shape()
         num_unlabeled_samples_in_batch = len(unlabeled_batch) if unlabeled_batch is not None else 0
