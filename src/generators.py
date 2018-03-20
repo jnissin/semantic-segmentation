@@ -1682,7 +1682,7 @@ class SegmentationDataGenerator(DataGenerator):
         num_unlabeled = np.ones(b_size) * len(unlabeled_batch)
         X = np.ones((b_size, 480, 480, 3), dtype=np.float32)
         Y = np.ones((b_size, 480, 480), dtype=np.float32)
-        W = Y
+        W = np.ones((b_size, 480, 480), dtype=np.float32)
         X_teacher = X
 
         if self.generate_mean_teacher_data:
@@ -1690,6 +1690,8 @@ class SegmentationDataGenerator(DataGenerator):
         else:
             batch_input_data = [X, Y, W, num_unlabeled]
 
+        logits_output = np.expand_dims(np.copy(Y), -1)
+        logits_output[len(labeled_batch):] = 0
         dummy_output = np.zeros(shape=[b_size], dtype=np.int32)
         logits_output = Y
         batch_output_data = [dummy_output, logits_output]
