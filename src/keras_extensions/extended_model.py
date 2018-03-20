@@ -821,16 +821,18 @@ class ExtendedModel(Model):
         if do_validation:
             self._make_test_function()
 
-        is_sequence = isinstance(generator, Sequence) or isinstance(self.training_enqueuer, Sequence)
-        if not is_sequence and use_multiprocessing and workers > 1:
+        is_sequence_or_pre_created_enq = isinstance(generator, Sequence) or isinstance(self.training_enqueuer, SequenceEnqueuer)
+        if not is_sequence_or_pre_created_enq and use_multiprocessing and workers > 1:
             warnings.warn(
                 UserWarning('Using a generator with `use_multiprocessing=True`'
                             ' and multiple workers may duplicate your data.'
                             ' Please consider using the`keras.utils.Sequence'
                             ' class.'))
         if steps_per_epoch is None:
-            if is_sequence:
+            if isinstance(generator, Sequence):
                 steps_per_epoch = len(generator)
+            elif isinstance(self.training_enqueuer, OrderedEnqueuer):
+                steps_per_epoch = self.training_enqueuer.steps_per_epoch
             else:
                 raise ValueError('`steps_per_epoch=None` is only valid for a'
                                  ' generator based on the `keras.utils.Sequence`'
@@ -918,7 +920,7 @@ class ExtendedModel(Model):
             # End of custom code
             else:
                 if workers > 0:
-                    if is_sequence:
+                    if isinstance(generator, Sequence):
                         enqueuer = OrderedEnqueuer(generator,
                                                    use_multiprocessing=use_multiprocessing,
                                                    shuffle=shuffle,
@@ -934,7 +936,7 @@ class ExtendedModel(Model):
                     enqueuer.continue_run()
                     output_generator = enqueuer.get()
                 else:
-                    if is_sequence:
+                    if isinstance(generator, Sequence):
                         output_generator = iter(generator)
                     else:
                         output_generator = generator
@@ -1156,17 +1158,19 @@ class ExtendedModel(Model):
         wait_time = 0.01
         all_outs = []
         batch_sizes = []
-        is_sequence = isinstance(generator, Sequence) or (validation and isinstance(self.validation_enqueuer, Sequence))
+        is_sequence_or_pre_created_enq = isinstance(generator, Sequence) or (validation and isinstance(self.validation_enqueuer, SequenceEnqueuer))
 
-        if not is_sequence and use_multiprocessing and workers > 1:
+        if not is_sequence_or_pre_created_enq and use_multiprocessing and workers > 1:
             warnings.warn(
                 UserWarning('Using a generator with `use_multiprocessing=True`'
                             ' and multiple workers may duplicate your data.'
                             ' Please consider using the`keras.utils.Sequence'
                             ' class.'))
         if steps is None:
-            if is_sequence:
+            if isinstance(generator, Sequence):
                 steps = len(generator)
+            elif isinstance(self.validation_enqueuer, OrderedEnqueuer):
+                steps = self.validation_enqueuer.steps_per_epoch
             else:
                 raise ValueError('`steps=None` is only valid for a generator'
                                  ' based on the `keras.utils.Sequence` class.'
@@ -1185,7 +1189,7 @@ class ExtendedModel(Model):
                 if workers > 0:
                     enqueuer = None
 
-                    if is_sequence:
+                    if isinstance(generator, Sequence):
                         enqueuer = OrderedEnqueuer(generator,
                                                    use_multiprocessing=use_multiprocessing,
                                                    max_epoch=1,
@@ -1200,7 +1204,7 @@ class ExtendedModel(Model):
                     enqueuer.continue_run()
                     output_generator = enqueuer.get()
                 else:
-                    if is_sequence:
+                    if isinstance(generator, Sequence):
                         output_generator = iter(generator)
                     else:
                         output_generator = generator

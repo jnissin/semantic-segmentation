@@ -232,6 +232,7 @@ class OrderedEnqueuer(SequenceEnqueuer):
         self.pause_sleep_time = 1.00
         self.last_queue_size_report_time = 0.0
         self.seed = seed
+        self.steps_per_epoch = len(self.sequence)
 
         if seed is not None:
             random.seed(seed)
