@@ -126,6 +126,7 @@ def main():
         raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
 
     history = _TRAINER.train()
+    sys.exit(0)
 
 
 if __name__ == "__main__":
