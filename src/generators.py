@@ -1677,32 +1677,6 @@ class SegmentationDataGenerator(DataGenerator):
 
         super(SegmentationDataGenerator, self).get_data_batch(step_idx, labeled_batch, unlabeled_batch)
 
-        # TODO: REMOVE ME
-        if unlabeled_batch is not None:
-            b_size = len(labeled_batch) + len(unlabeled_batch)
-            num_unlabeled = np.ones(b_size, dtype=np.int32) * len(unlabeled_batch)
-        else:
-            b_size = len(labeled_batch)
-            num_unlabeled = np.zeros(b_size, dtype=np.int32)
-
-        X = np.ones((b_size, 480, 480, 3), dtype=np.float32)
-        Y = np.ones((b_size, 480, 480), dtype=np.float32)
-        W = np.ones((b_size, 480, 480), dtype=np.float32)
-        X_teacher = X
-
-        if self.generate_mean_teacher_data:
-            batch_input_data = [X, Y, W, num_unlabeled, X_teacher]
-        else:
-            batch_input_data = [X, Y, W, num_unlabeled]
-
-        logits_output = np.expand_dims(np.copy(Y), -1)
-        logits_output[len(labeled_batch):] = 0
-        dummy_output = np.zeros(shape=[b_size], dtype=np.int32)
-        batch_output_data = [dummy_output, logits_output]
-
-        return batch_input_data, batch_output_data
-        # END OF TODO: REMOVE ME
-
         crop_shape = self.get_batch_crop_shape()
         resize_shape = self.get_batch_resize_shape()
         num_unlabeled_samples_in_batch = len(unlabeled_batch) if unlabeled_batch is not None else 0
