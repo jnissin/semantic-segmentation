@@ -1823,11 +1823,11 @@ class SegmentationDataGenerator(DataGenerator):
             write_to_secondary_file_cache = True
 
             if os.path.exists(self.superpixel_mask_cache_path):
-                self.logger.log('Loading existing superpixel mask cache from: {}'.format(self.superpixel_mask_cache_path))
+                self.logger.debug_log('Loading existing superpixel mask cache from: {}'.format(self.superpixel_mask_cache_path))
                 self._superpixel_mask_cache = MemoryMappedImageCache(self.superpixel_mask_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
-                self.logger.log('Loaded superpixel mask cache with {} images, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self._superpixel_mask_cache.size, memory_map_update_mode, read_only, write_to_secondary_file_cache))
+                self.logger.debug_log('Loaded superpixel mask cache with {} images, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self._superpixel_mask_cache.size, memory_map_update_mode, read_only, write_to_secondary_file_cache))
             else:
-                self.logger.log('Creating new superpixel mask cache: {}, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self.superpixel_mask_cache_path, memory_map_update_mode, read_only, write_to_secondary_file_cache))
+                self.logger.debug_log('Creating new superpixel mask cache: {}, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self.superpixel_mask_cache_path, memory_map_update_mode, read_only, write_to_secondary_file_cache))
                 self._superpixel_mask_cache = MemoryMappedImageCache(self.superpixel_mask_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
 
         return self._superpixel_mask_cache
