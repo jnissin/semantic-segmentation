@@ -1679,11 +1679,8 @@ class MeanTeacherTrainerBase(TrainerBase):
                 self.logger.warn('Out of bounds EMA coefficient value when updating teacher weights: {}'.format(a))
 
             # Perform the EMA weight update: theta'_t = a * theta'_t-1 + (1 - a) * theta_t
-            #t_weights = self.teacher_model.get_weights()
-            #s_weights = self.model.get_weights()
-
-            t_weights = [layer.weights for layer in self.teacher_model.layers]
-            s_weights = [layer.weights for layer in self.model.layers]
+            t_weights = self.teacher_model.get_weights()
+            s_weights = self.model.get_weights()
 
             if len(t_weights) != len(s_weights):
                 raise ValueError('The weight arrays are not of the same length for the student and teacher: {} vs {}'
