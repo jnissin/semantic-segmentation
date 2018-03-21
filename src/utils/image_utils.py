@@ -535,8 +535,13 @@ def pil_transform_image(img, transform, resample, cval=None):
         cval = np.round(cval).astype(dtype=np.int32)
         cval = tuple(cval)
 
-        background = PImage.new(mode, img.size, cval)
-        background.paste(img, mask=img.split()[3])
+        try:
+            background = PImage.new(mode=mode, size=img.size, color=cval)
+            background.paste(img, mask=img.split()[3])
+        except TypeError as e:
+            print 'ERROR: Could not create new PIL image PImage.new(mode={}, size={}, cval={}), error: {}'.format(mode, img.size, cval, e.message)
+            raise e
+
         img = background
 
     return img
@@ -757,8 +762,12 @@ def pil_pad_image(img, v_pad_before, v_pad_after, h_pad_before, h_pad_after, cva
     else:
         cval = 0
 
-    padded_img = PImage.new(mode=mode, size=(width, height), color=cval)
-    padded_img.paste(img, box=(h_pad_before, v_pad_before))
+    try:
+        padded_img = PImage.new(mode=mode, size=(width, height), color=cval)
+        padded_img.paste(img, box=(h_pad_before, v_pad_before))
+    except TypeError as e:
+        print 'ERROR: Could not create new PIL image PImage.new(mode={}, size={}, color={}), error: {}'.format(mode, (width, height), cval, e.message)
+        raise e
 
     return padded_img
 
