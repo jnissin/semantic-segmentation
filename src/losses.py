@@ -136,7 +136,7 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     # Calculate the gradients for the softmax output using a convolution with a Sobel mask
     S_x = K.tf.get_variable("S_x",
                             dtype=dtype,
-                            initializer=K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=dtype), [1, 1, num_classes, 1]),
+                            initializer=K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=dtype), [1, 1, 24, 1]),
                             trainable=False)
 
     S_y = K.tf.get_variable("S_y",
