@@ -1159,7 +1159,7 @@ class TrainerBase:
             if tf_major_version > 1 or (tf_major_version == 1 and tf_minor_version > 4):
                 return {'options': K.tf.RunOptions(report_tensor_allocations_upon_oom=True)}
 
-        return None
+        return {}
 
     def _get_latest_weights_file_path(self, weights_directory_path, include_early_stop=False):
         # Try to find weights from the checkpoint path
