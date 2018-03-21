@@ -23,13 +23,6 @@ class ModelLambdaLossType(Enum):
 
 
 ##############################################
-# GLOBALS
-##############################################
-
-_EPSILON = 10e-7
-
-
-##############################################
 # UTILITY FUNCTIONS
 ##############################################
 
@@ -117,7 +110,7 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     y_pred_unlabeled = K.tf.cast(y_pred_unlabeled, dtype=dtype)
 
     # Calculate the softmax of the predictions
-    epsilon = _to_tensor(_EPSILON, dtype=dtype)
+    epsilon = _to_tensor(settings.EPSILON, dtype=dtype)
 
     # Extract the number of classes (last dimension of predictions)
     num_classes = K.tf.stop_gradient(K.tf.shape(y_pred_unlabeled)[-1])
@@ -581,7 +574,7 @@ def segmentation_mean_teacher_superpixel_lambda_loss(args):
 
 def _classification_weighted_categorical_crossentropy_loss(y_true, y_pred, class_weights):
     # Calculate cross-entropy loss
-    epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
+    epsilon = _to_tensor(settings.EPSILON, y_pred.dtype.base_dtype)
     softmax = K.tf.nn.softmax(y_pred)
     softmax = K.tf.clip_by_value(softmax, epsilon, 1.0)
     xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)
@@ -592,7 +585,7 @@ def _classification_weighted_categorical_crossentropy_loss(y_true, y_pred, class
 
 def _classification_weighted_categorical_crossentropy_loss_internal(class_weights):
     def loss(y_true, y_pred):
-        epsilon = _to_tensor(_EPSILON, y_pred.dtype.base_dtype)
+        epsilon = _to_tensor(settings.EPSILON, y_pred.dtype.base_dtype)
         softmax = K.tf.nn.softmax(y_pred)
         softmax = K.tf.clip_by_value(softmax, epsilon, 1.0)
         xent = K.tf.multiply(y_true * K.tf.log(softmax), class_weights)

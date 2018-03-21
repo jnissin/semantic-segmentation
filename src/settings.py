@@ -3,6 +3,8 @@
 """
 This file is used to store project-wide global values.
 """
+EPSILON = 10e-7
+
 VALIDATION_DATA_GENERATOR_WORKERS = 2
 TRAINING_DATA_GENERATOR_WORKERS = 5
 DATA_GENERATION_THREADS_PER_PROCESS = 1
