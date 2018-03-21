@@ -134,16 +134,8 @@ def _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled, y_pred_unlabeled, s
     y_pred_unlabeled_softmax = K.tf.nn.softmax(y_pred_unlabeled, dim=-1)
 
     # Calculate the gradients for the softmax output using a convolution with a Sobel mask
-    S_x = K.tf.get_variable("S_x",
-                            dtype=dtype,
-                            initializer=K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=dtype), [1, 1, 24, 1]),
-                            trainable=False)
-
-    S_y = K.tf.get_variable("S_y",
-                            dtype=dtype,
-                            initializer=K.tf.transpose(S_x, [1, 0, 2, 3]),
-                            trainable=False)
-
+    S_x = K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=dtype), [1, 1, num_classes, 1])
+    S_y = K.tf.transpose(S_x, [1, 0, 2, 3])
     G_x = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_x, strides=[1, 1, 1, 1], padding='SAME')
     G_y = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_y, strides=[1, 1, 1, 1], padding='SAME')
 
@@ -572,7 +564,7 @@ def segmentation_mean_teacher_superpixel_lambda_loss(args):
     """
     Superpixel consistency cost - only for unlabeled
     """
-    superpixel_consistency_cost = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel_consistency_cost_coefficient) #K.tf.cond(superpixel_consistency_cost_coefficient > 0.0, lambda: _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel_consistency_cost_coefficient), lambda: 0.0)
+    superpixel_consistency_cost = K.tf.cond(superpixel_consistency_cost_coefficient > 0.0, lambda: _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel_consistency_cost_coefficient), lambda: 0.0)
 
     # Total cost
     total_costs = K.tf.add(K.tf.add(classification_costs, mt_consistency_costs), superpixel_consistency_cost)
