@@ -26,7 +26,7 @@ class ModelLambdaLossType(Enum):
 # UTILITY FUNCTIONS
 ##############################################
 
-def _tf_filter_nans(t, replace=10e-7):
+def _tf_filter_nans(t, replace):
     """
     Filter NaNs from a tensor 't' and replace with value epsilon
 
@@ -40,7 +40,7 @@ def _tf_filter_nans(t, replace=10e-7):
     return K.tf.where(K.tf.is_nan(t), K.tf.ones_like(t) * replace, t)
 
 
-def _tf_filter_infs(t, replace=10e-7):
+def _tf_filter_infs(t, replace):
     """
     Filter infs from a tensor 't' and replace with value replace
 
@@ -54,7 +54,7 @@ def _tf_filter_infs(t, replace=10e-7):
     return K.tf.where(K.tf.is_inf(t), K.tf.ones_like(t) * replace, t)
 
 
-def _tf_filter_infinite(t, replace=10e-7):
+def _tf_filter_infinite(t, replace):
     """
     Filters infs, ninfs and NaNs from tensor t and replaces with the given value.
 
