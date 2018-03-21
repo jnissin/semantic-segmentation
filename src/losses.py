@@ -199,6 +199,92 @@ def _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel
     return K.tf.multiply(superpixel_consistency_cost_coefficient, L_sp)
 
 
+def _tf_unlabeled_superpixel_cost_internal_sm(y_true_unlabeled, y_pred_unlabeled_sm, scale_factor):
+    dtype = K.tf.float32
+    y_pred_unlabeled_sm = K.tf.cast(y_pred_unlabeled_sm, dtype=dtype)
+
+    # Calculate the softmax of the predictions
+    epsilon = _to_tensor(_EPSILON, dtype=dtype)
+
+    # Extract the number of classes (last dimension of predictions)
+    num_classes = K.tf.stop_gradient(K.tf.shape(y_pred_unlabeled_sm)[-1])
+
+    # Scale by scale factor
+    #scaled_size = K.tf.stop_gradient(K.tf.cast(K.tf.cast(K.tf.shape(y_pred_unlabeled)[1:-1], dtype=K.tf.float32) * scale_factor, dtype=K.tf.int32))
+    #y_pred_unlabeled = K.tf.image.resize_images(images=y_pred_unlabeled, size=scaled_size, method=K.tf.image.ResizeMethod.BILINEAR)
+    #y_true_unlabeled = K.tf.image.resize_images(images=y_true_unlabeled, size=scaled_size, method=K.tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+
+    #y_true_unlabeled = K.tf.expand_dims(y_true_unlabeled, axis=-1)
+    #y_true_unlabeled = K.tf.squeeze(y_true_unlabeled, axis=-1)
+
+    # Take softmax of the unlabeled predictions
+    y_pred_unlabeled_softmax = y_pred_unlabeled_sm
+
+    # Calculate the gradients for the softmax output using a convolution with a Sobel mask
+    S_x = K.tf.tile(K.tf.constant([[1, 2, 1], [0, 0, 0], [-1, -2, -1]], shape=[3, 3, 1, 1], dtype=dtype), [1, 1, num_classes, 1])
+    S_y = K.tf.transpose(S_x, [1, 0, 2, 3])
+    G_x = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_x, strides=[1, 1, 1, 1], padding='SAME')
+    G_y = K.tf.nn.depthwise_conv2d(y_pred_unlabeled_softmax, S_y, strides=[1, 1, 1, 1], padding='SAME')
+
+    # Calculate the gradient magnitude: sqrt(Gx^2 + Gy^2), BxHxWxC
+    # Note: clip by epsilon to avoid NaN values due to: (small grad value)^2
+    G_x = K.tf.clip_by_value(G_x, clip_value_min=epsilon, clip_value_max=dtype.max)
+    G_y = K.tf.clip_by_value(G_y, clip_value_min=epsilon, clip_value_max=dtype.max)
+
+    # Calculate the classwise gradient magnitudes, BxHxWxC
+    G_mag = K.tf.sqrt(K.tf.add(K.tf.square(G_x), K.tf.square(G_y)))
+
+    # Take the vector length of each magnitude vector, BxHxW
+    G_mag_dot = K.tf.norm(G_mag, axis=-1)
+
+    # Get the superpixel gradient magnitudes for each image
+    G_sp = G_mag_dot * K.tf.cast(y_true_unlabeled, dtype=dtype)
+
+    # Take the mean over the batch and spatial dimensions
+    # Note: this also takes into account the zero borders in the mean (shouldn't matter a lot)
+    L_sp = K.tf.to_float(K.tf.reduce_mean(G_sp))
+
+    return L_sp
+
+
+def _tf_unlabeled_superpixel_cost_sm(y_true_unlabeled, y_pred_unlabeled_sm, superpixel_consistency_cost_coefficient):
+    """
+    Calculates loss for a batch of unlabeled images. The function assumes that the
+    ground truth labels are superpixel segmentations with superpixel areas marked as
+    1 and superpixel borders marked as 0.
+
+    # Arguments
+        :param y_true_unlabeled: ground truth labels (index encoded) (dtype=int32)
+        :param y_pred_unlabeled: predicted labels (index encoded) (dtype=int32)
+        :param superpixel_consistency_cost_coefficient: supepixel consistency cost coefficient (dtype=float32)
+    # Returns
+        :return: the mean (pixel-level) unlabelled superpixel loss for the batch
+    """
+
+    # Ensure the y_true_unlabeled are binary masks with borders denoted by 0s and everything else as 1s
+    y_true_unlabeled = K.tf.stop_gradient(K.tf.clip_by_value(y_true_unlabeled, clip_value_min=0, clip_value_max=1))
+
+    L_sp = _tf_unlabeled_superpixel_cost_internal_sm(y_true_unlabeled=y_true_unlabeled,
+                                                     y_pred_unlabeled_sm=y_pred_unlabeled_sm,
+                                                     scale_factor=1.0)
+
+    """
+    L_sp_05x = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
+                                                      y_pred_unlabeled=y_pred_unlabeled,
+                                                      num_classes=num_classes,
+                                                      scale_factor=0.5)
+
+    L_sp_025x = _tf_unlabeled_superpixel_cost_internal(y_true_unlabeled=y_true_unlabeled,
+                                                       y_pred_unlabeled=y_pred_unlabeled,
+                                                       num_classes=num_classes,
+                                                       scale_factor=0.25)
+
+    L_sp = K.tf.div(K.tf.add(K.tf.add(L_sp_1x, L_sp_05x),L_sp_025x), 3.0)
+    """
+
+    # Take the mean over the batch and spatial dimensions and multiply by the superpixel consistency coefficient
+    return K.tf.multiply(superpixel_consistency_cost_coefficient, L_sp)
+
 def _tf_segmentation_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_coefficient):
     """
     Calculates the consistency cost between mean teacher and student model
@@ -221,6 +307,16 @@ def _tf_segmentation_mean_teacher_consistency_cost(y_pred, mt_pred, consistency_
     # Take the mean over the batch and spatial dimensions and multiply by the consistency coefficient
     return K.tf.multiply(consistency_coefficient, K.tf.reduce_mean(mse_softmax))
 
+
+def _tf_segmentation_mean_teacher_consistency_cost_sm(y_pred_sm, mt_pred, consistency_coefficient):
+    student_softmax = y_pred_sm
+    teacher_softmax = K.tf.nn.softmax(mt_pred, dim=-1)
+
+    # Calculate the MSE between the softmax predictions
+    mse_softmax = K.tf.reduce_mean(K.tf.square(K.tf.subtract(teacher_softmax, student_softmax)), axis=-1)
+
+    # Take the mean over the batch and spatial dimensions and multiply by the consistency coefficient
+    return K.tf.multiply(consistency_coefficient, K.tf.reduce_mean(mse_softmax))
 
 ##############################################
 # MISCELLANEOUS LOSS FUNCTIONS
@@ -556,15 +652,18 @@ def segmentation_mean_teacher_superpixel_lambda_loss(args):
     """
     classification_costs = _segmentation_sparse_weighted_pixelwise_crossentropy_loss(y_true=y_true_labeled, y_pred=y_pred_labeled, weights=weights_labeled)
 
+    y_pred_sm = K.tf.nn.softmax(y_pred, dim=-1)
+    y_pred_unlabeled_sm = y_pred_sm[num_labeled:]
+
     """
     Mean Teacher consistency costs - for labeled and unlabeled
     """
-    mt_consistency_costs = K.tf.cond(mt_consistency_coefficient > 0.0, lambda: _tf_segmentation_mean_teacher_consistency_cost(y_pred, mt_predictions, mt_consistency_coefficient), lambda: 0.0)
+    mt_consistency_costs = K.tf.cond(mt_consistency_coefficient > 0.0, lambda: _tf_segmentation_mean_teacher_consistency_cost_sm(y_pred_sm, mt_predictions, mt_consistency_coefficient), lambda: 0.0)
 
     """
     Superpixel consistency cost - only for unlabeled
     """
-    superpixel_consistency_cost = K.tf.cond(superpixel_consistency_cost_coefficient > 0.0, lambda: _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel_consistency_cost_coefficient), lambda: 0.0)
+    superpixel_consistency_cost = K.tf.cond(superpixel_consistency_cost_coefficient > 0.0, lambda: _tf_unlabeled_superpixel_cost_sm(y_true_unlabeled, y_pred_unlabeled_sm, superpixel_consistency_cost_coefficient), lambda: 0.0)
 
     # Total cost
     total_costs = K.tf.add(K.tf.add(classification_costs, mt_consistency_costs), superpixel_consistency_cost)
