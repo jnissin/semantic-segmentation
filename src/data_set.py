@@ -176,19 +176,20 @@ class ImageFile(object):
             raise ValueError('Number of channels must be 1, 3 or 4')
 
         img = None
+        color_channels_to_mode = {1: 'L', 3: 'RGB', 4: 'RGBA'}
 
         if self.type == ImageFileType.FILE_PATH:
             img = Image.open(self.file_path)
         elif self.type == ImageFileType.MMI_CACHE:
             try:
-                img = self.mmi_cache.get_image_from_cache(self._image_key)
+                img = self.mmi_cache.get_image_from_cache(self._image_key, mode=color_channels_to_mode[color_channels])
 
                 if img is None:
                     raise ValueError('Image with key: {} could not be found from cache: {}'.format(self._image_key, self.mmi_cache.cache_path))
             except IOError as e:
                 # Attempt to reopen the MMI cache and read again
                 self.reopen_mmi_cache_handles()
-                img = self.mmi_cache.get_image_from_cache(self._image_key)
+                img = self.mmi_cache.get_image_from_cache(self._image_key, mode=color_channels_to_mode[color_channels])
 
                 if img is None:
                     raise ValueError('Image with key: {} could not be found from cache: {}'.format(self._image_key, self.mmi_cache.cache_path))
@@ -203,15 +204,9 @@ class ImageFile(object):
         else:
             raise ValueError('Cannot open ImageFileType: {}'.format(self.type))
 
-        if color_channels == 1:
-            if img.mode != 'L':
-                img = img.convert('L')
-        elif color_channels == 3:
-            if img.mode != 'RGB':
-                img = img.convert('RGB')
-        elif color_channels == 4:
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
+        # If the image is not in the right mode -> convert
+        if img.mode != color_channels_to_mode[color_channels]:
+            img = img.convert(color_channels_to_mode[color_channels])
 
         if target_size is not None:
             hw_tuple = (target_size[1], target_size[0])

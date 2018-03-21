@@ -563,7 +563,7 @@ class DataGenerator(object):
 
             if resized_img_cache_key in self.resized_image_cache:
                 try:
-                    resized_img = self.resized_image_cache.get_image_from_cache(resized_img_cache_key)
+                    resized_img = self.resized_image_cache.get_image_from_cache(resized_img_cache_key, mode=img.mode)
 
                     if resized_img is not None:
                         # Remove the old image resource
@@ -1857,7 +1857,7 @@ class SegmentationDataGenerator(DataGenerator):
 
         if self.using_superpixel_mask_cache:
             try:
-                mask = self.superpixel_mask_cache.get_image_from_cache(cached_mask_key, grayscale=True)
+                mask = self.superpixel_mask_cache.get_image_from_cache(cached_mask_key, mode='L')
 
                 if mask is not None:
                     return mask

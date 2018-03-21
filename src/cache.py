@@ -222,16 +222,13 @@ class MemoryMappedImageCache(object):
                 if self.memory_map_update_mode == MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE:
                     self.update_mmap_fp()
 
-    def get_image_from_cache(self, key, grayscale=False, load_to_memory=False):
+    def get_image_from_cache(self, key, mode=None, load_to_memory=False):
         img = None
 
         # If the image is in cache
         if self.index is not None and key in self.index:
             try:
                 bytes = self.index[key]
-                #num_bytes = bytes[1] - bytes[0]
-                #self.data_mm_fp.seek(bytes[0])
-                #img = Image.open(BytesIO(self.data_mm_fp.read(num_bytes)))
                 img = Image.open(BytesIO(self.data_mm_fp[bytes[0]:bytes[1]]))
 
                 # Fix the filename of the PIL Image to match the key when reading from binary blob,
@@ -258,8 +255,9 @@ class MemoryMappedImageCache(object):
         if load_to_memory:
             img.load()
 
-        # If this is a grayscale image and the mode is not 'L' -> convert
-        if grayscale and img.mode != 'L':
-            img = img.convert('L')
+        # If this image is not in the desired format: convert it
+        if mode is not None:
+            if mode != img.mode:
+                img = img.convert(mode)
 
         return img
