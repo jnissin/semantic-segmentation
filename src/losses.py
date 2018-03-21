@@ -572,7 +572,7 @@ def segmentation_mean_teacher_superpixel_lambda_loss(args):
     """
     Superpixel consistency cost - only for unlabeled
     """
-    superpixel_consistency_cost = K.tf.cond(superpixel_consistency_cost_coefficient > 0.0, lambda: _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel_consistency_cost_coefficient), lambda: 0.0)
+    superpixel_consistency_cost = _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel_consistency_cost_coefficient) #K.tf.cond(superpixel_consistency_cost_coefficient > 0.0, lambda: _tf_unlabeled_superpixel_cost(y_true_unlabeled, y_pred_unlabeled, superpixel_consistency_cost_coefficient), lambda: 0.0)
 
     # Total cost
     total_costs = K.tf.add(K.tf.add(classification_costs, mt_consistency_costs), superpixel_consistency_cost)
