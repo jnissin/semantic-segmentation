@@ -1,9 +1,9 @@
 {
     "path_to_material_class_file": null,
     "path_to_data_set_information_file": null,
-    "path_to_labeled_photos": "data/final/labeled/patches/photos/",
+    "path_to_labeled_photos": "data/final/labeled/patches/photos_mmi/",
     "path_to_labeled_masks": null,
-    "path_to_unlabeled_photos": "data/final/unlabeled/",
+    "path_to_unlabeled_photos": "data/final/unlabeled_mmi/",
 
     "log_folder_path": "model-data/{model_folder}/logs/",
     "log_file_path": "{log_folder_path}/log.txt",
@@ -33,7 +33,7 @@
     "div2_constraint": 1,
     "num_crop_reattempts": 0,
     "resized_image_cache_path": "/tmp/semantic-segmentation/classification/resized/",
-    "initial_resized_image_cache_tar_file_path": "data/final/labeled/patches/patch_resize_cache.tar",
+    "initial_resized_image_cache_tar_file_path": "data/final/labeled/patches/patch_resize_mmi_cache.tar",
 
     "num_labeled_per_batch": 10,
     "num_unlabeled_per_batch": 10,
