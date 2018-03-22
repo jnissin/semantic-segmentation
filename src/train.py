@@ -7,6 +7,7 @@ import multiprocessing
 import os
 import resource
 import time
+import psutil
 
 import settings
 
@@ -33,6 +34,12 @@ def signal_handler(s, f):
         else:
             print 'No trainer present, exiting'
 
+        print 'Killing child processes'
+        parent = psutil.Process(_MAIN_PROCESS_PID)
+        for child in parent.children(recursive=True):  # or parent.children() for recursive=False
+            child.kill()
+
+        print 'Killing parent - good bye'
         sys.exit(0)
     else:
         # Wait for the parent process to join and then exit

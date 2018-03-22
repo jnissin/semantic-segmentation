@@ -87,8 +87,8 @@ class ExtendedModel(Model):
                     callback_model = self
 
                 callback_model.stop_training = True
-        except (AttributeError, ValueError):
-            pass
+        except (AttributeError, ValueError) as e:
+            self.logger.warn('Caught error in clean_up_processes: {}'.format(e.message))
 
     def set_pre_created_training_enqueuer(self, enqueuer):
         # type: (SequenceEnqueuer) -> None
