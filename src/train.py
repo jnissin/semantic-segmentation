@@ -17,7 +17,7 @@ _EARLY_EXIT_SIGNAL_HANDLER_CALLED = multiprocessing.Value('i', 0)
 _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
 _MAIN_PROCESS_PID = multiprocessing.Value('i', -1)
 _TRAINER = None
-_CHILD_PROCESS_EXIT_WAIT_TIME = 60
+_CHILD_PROCESS_EXIT_WAIT_TIME = 10
 _EXIT_HANDLING_COMPLETE = False
 
 
@@ -27,7 +27,7 @@ def on_child_terminate(proc):
 
 def signal_handler(s, f):
 
-    global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED, _TRAINER, _EXIT_HANDLING_COMPLETE
+    global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED, _TRAINER, _EXIT_HANDLING_COMPLETE, _CHILD_PROCESS_EXIT_WAIT_TIME
     process_pid = multiprocessing.current_process().pid
     print 'Received signal: {} in process {} - main process pid: {}'.format(s, process_pid, _MAIN_PROCESS_PID.value)
 
@@ -46,13 +46,13 @@ def signal_handler(s, f):
         # send SIGTERM
         for p in procs:
             p.terminate()
-        gone, alive = psutil.wait_procs(procs, timeout=10, callback=on_child_terminate)
+        gone, alive = psutil.wait_procs(procs, timeout=_CHILD_PROCESS_EXIT_WAIT_TIME, callback=on_child_terminate)
         if alive:
             # send SIGKILL
             for p in alive:
                 print("process {} survived SIGTERM; trying SIGKILL" % p)
                 p.kill()
-            gone, alive = psutil.wait_procs(alive, timeout=10, callback=on_child_terminate)
+            gone, alive = psutil.wait_procs(alive, timeout=_CHILD_PROCESS_EXIT_WAIT_TIME, callback=on_child_terminate)
             if alive:
                 # give up
                 for p in alive:
@@ -61,13 +61,13 @@ def signal_handler(s, f):
         print 'Exiting - good bye'
         sys.exit(0)
     else:
-        # Wait for the parent process to join and then exit
-        print 'Not the main process - waiting for parent process to join before exiting'
-        #.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
-        #time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
-
-    if _EXIT_HANDLING_COMPLETE:
-        os._exit(0)
+        if _EXIT_HANDLING_COMPLETE:
+            os._exit(0)
+        else:
+            # Wait for the parent process to join and then exit
+            print 'Not the main process - waiting for parent process to join before exiting'
+            #.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
+            #time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
 
 
 def main():
