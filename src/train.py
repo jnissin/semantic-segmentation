@@ -36,10 +36,9 @@ def signal_handler(s, f):
         sys.exit(0)
     else:
         # Wait for the parent process to join and then exit
-        print 'Not the main process - waiting {} seconds the for parent process to join before exiting'\
-            .format(_CHILD_PROCESS_EXIT_WAIT_TIME)
-        time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
-        sys.exit(0)
+        print 'Not the main process - waiting for parent process to join before exiting'#.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        #time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        #sys.exit(0)
 
 
 def main():
