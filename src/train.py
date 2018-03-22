@@ -59,7 +59,7 @@ def signal_handler(s, f):
                     print("process {} survived SIGKILL; giving up" % p)
 
         print 'Exiting - good bye'
-        sys.exit(0)
+        # sys.exit(0)
     else:
         if _EXIT_HANDLING_COMPLETE:
             os._exit(0)
