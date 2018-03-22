@@ -70,12 +70,6 @@ class ExtendedModel(Model):
     def stop_training_loop(self):
         self.fit_generator_stopped = True
 
-        if self.training_enqueuer is not None:
-            self.training_enqueuer.stop()
-
-        if self.validation_enqueuer is not None:
-            self.validation_enqueuer.stop()
-
     def clean_up_processes(self):
         # This can sometimes throw some NoneType errors when stopping training - catch them
         try:
@@ -1001,7 +995,7 @@ class ExtendedModel(Model):
 
                     # Extended functionality: stop if early stopping has been initiated
                     if self.fit_generator_stopped:
-                        return self.history
+                        break
 
                     s_time = time.time()
 
