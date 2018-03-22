@@ -71,7 +71,7 @@
       }
     },
 
-    "__superpixel_params": {
+    "superpixel_params": {
       "unlabeled_cost_coefficient_function": "lambda x: 2.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/48000.0)**2)), 1.0) ), 1.0 )",
       "label_generation_function_name": "felzenszwalb",
       "superpixel_mask_cache_path": "data/final/unlabeled_fzw_masks_mmi/"
