@@ -31,6 +31,9 @@ def signal_handler(s, f):
     process_pid = multiprocessing.current_process().pid
     print 'Received signal: {} in process {} - main process pid: {}'.format(s, process_pid, _MAIN_PROCESS_PID.value)
 
+    if _EXIT_HANDLING_COMPLETE:
+        os._exit(0)
+
     if _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value == 0 and (process_pid == _MAIN_PROCESS_PID.value or _MAIN_PROCESS_PID.value == -1):
         _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value = 1
 
@@ -58,16 +61,14 @@ def signal_handler(s, f):
                 for p in alive:
                     print("process {} survived SIGKILL; giving up" % p)
 
-        print 'Exiting - good bye'
+        print 'Killing myself - good bye'
+        psutil.Process().kill()
         # sys.exit(0)
     else:
-        if _EXIT_HANDLING_COMPLETE:
-            os._exit(0)
-        else:
-            # Wait for the parent process to join and then exit
-            print 'Not the main process - waiting for parent process to join before exiting'
-            #.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
-            #time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        # Wait for the parent process to join and then exit
+        print 'Not the main process - waiting for parent process to join before exiting'
+        #.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        #time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
 
 
 def main():
