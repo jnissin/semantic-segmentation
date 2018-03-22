@@ -353,6 +353,10 @@ class OrderedEnqueuer(SequenceEnqueuer):
         # Arguments
             timeout: maximum time to wait on `thread.join()`
         """
+        # If we have already stopped/are stopping
+        if self.stop_signal.is_set():
+            return
+
         self.stop_signal.set()
 
         with self.queue.mutex:

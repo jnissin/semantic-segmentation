@@ -70,6 +70,12 @@ class ExtendedModel(Model):
     def stop_training_loop(self):
         self.fit_generator_stopped = True
 
+        if self.training_enqueuer is not None:
+            self.training_enqueuer.stop()
+
+        if self.validation_enqueuer is not None:
+            self.validation_enqueuer.stop()
+
     def clean_up_processes(self):
         # This can sometimes throw some NoneType errors when stopping training - catch them
         try:
@@ -1095,9 +1101,15 @@ class ExtendedModel(Model):
             try:
                 if enqueuer is not None:
                     enqueuer.stop()
+
+                if self.training_enqueuer is not None:
+                    self.training_enqueuer.stop()
             finally:
                 if val_enqueuer is not None:
                     val_enqueuer.stop()
+
+                if self.validation_enqueuer is not None:
+                    self.validation_enqueuer.stop()
 
         # Extended functionality: notify trainer
         if trainer is not None:
