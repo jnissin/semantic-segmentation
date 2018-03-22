@@ -6,6 +6,7 @@ import sys
 import multiprocessing
 import os
 import resource
+import time
 
 import settings
 
@@ -15,6 +16,7 @@ _EARLY_EXIT_SIGNAL_HANDLER_CALLED = multiprocessing.Value('i', 0)
 _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIGQUIT]
 _MAIN_PROCESS_PID = multiprocessing.Value('i', -1)
 _TRAINER = None
+_CHILD_PROCESS_EXIT_WAIT_TIME = 60
 
 
 def signal_handler(s, f):
@@ -33,7 +35,11 @@ def signal_handler(s, f):
 
         sys.exit(0)
     else:
-        print 'Not the main process - waiting for parent process to join'
+        # Wait for the parent process to join and then exit
+        print 'Not the main process - waiting {} seconds the for parent process to join before exiting'\
+            .format(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        sys.exit(0)
 
 
 def main():
