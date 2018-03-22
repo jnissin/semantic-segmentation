@@ -18,11 +18,12 @@ _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIG
 _MAIN_PROCESS_PID = multiprocessing.Value('i', -1)
 _TRAINER = None
 _CHILD_PROCESS_EXIT_WAIT_TIME = 60
+_EXIT_HANDLING_COMPLETE = False
 
 
 def signal_handler(s, f):
 
-    global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED, _TRAINER
+    global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED, _TRAINER, _EXIT_HANDLING_COMPLETE
     process_pid = multiprocessing.current_process().pid
     print 'Received signal: {} in process {} - main process pid: {}'.format(s, process_pid, _MAIN_PROCESS_PID.value)
 
@@ -34,6 +35,8 @@ def signal_handler(s, f):
         else:
             print 'No trainer present, exiting'
 
+        _EXIT_HANDLING_COMPLETE = True
+
         print 'Killing child processes'
         parent = psutil.Process(_MAIN_PROCESS_PID)
         for child in parent.children(recursive=True):  # or parent.children() for recursive=False
@@ -43,9 +46,12 @@ def signal_handler(s, f):
         sys.exit(0)
     else:
         # Wait for the parent process to join and then exit
-        print 'Not the main process - waiting for parent process to join before exiting'#.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        print 'Not the main process - waiting for parent process to join before exiting'
+        #.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
         #time.sleep(_CHILD_PROCESS_EXIT_WAIT_TIME)
-        #sys.exit(0)
+
+    if _EXIT_HANDLING_COMPLETE:
+        os._exit(0)
 
 
 def main():
