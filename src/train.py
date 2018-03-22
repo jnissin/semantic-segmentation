@@ -21,6 +21,10 @@ _CHILD_PROCESS_EXIT_WAIT_TIME = 60
 _EXIT_HANDLING_COMPLETE = False
 
 
+def on_child_terminate(proc):
+    print("process {} terminated with exit code {}".format(proc, proc.returncode))
+
+
 def signal_handler(s, f):
 
     global _MAIN_PROCESS_PID, _EARLY_EXIT_SIGNAL_HANDLER_CALLED, _TRAINER, _EXIT_HANDLING_COMPLETE
@@ -37,12 +41,24 @@ def signal_handler(s, f):
 
         _EXIT_HANDLING_COMPLETE = True
 
-        print 'Killing child processes'
-        parent = psutil.Process(_MAIN_PROCESS_PID)
-        for child in parent.children(recursive=True):  # or parent.children() for recursive=False
-            child.kill()
+        # Kill all the children
+        procs = psutil.Process().children()
+        # send SIGTERM
+        for p in procs:
+            p.terminate()
+        gone, alive = psutil.wait_procs(procs, timeout=10, callback=on_child_terminate)
+        if alive:
+            # send SIGKILL
+            for p in alive:
+                print("process {} survived SIGTERM; trying SIGKILL" % p)
+                p.kill()
+            gone, alive = psutil.wait_procs(alive, timeout=10, callback=on_child_terminate)
+            if alive:
+                # give up
+                for p in alive:
+                    print("process {} survived SIGKILL; giving up" % p)
 
-        print 'Killing parent - good bye'
+        print 'Exiting - good bye'
         sys.exit(0)
     else:
         # Wait for the parent process to join and then exit
