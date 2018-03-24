@@ -47,8 +47,6 @@ class MemoryMappedImageCache(object):
         if not os.path.exists(self.data_file_path) or not os.path.exists(self.index_file_path):
             self.index = dict()
             self.data_fp = self.open_file()
-            self.data_fp.write('0xDEADBEEF')
-            self.data_fp.flush()
         # If we are loading an existing cache
         else:
             # Open the memory mapped file and load the index file
@@ -91,6 +89,14 @@ class MemoryMappedImageCache(object):
 
     def open_file(self):
         if self.data_fp is not None:
+            self.data_fp.close()
+            self.data_fp = None
+
+        # If we are creating a new cache with a new data.bin file
+        if not os.path.exists(self.data_file_path):
+            self.data_fp = open(self.data_file_path, 'ab+')
+            self.data_fp.write('0xDEADBEEF')
+            self.data_fp.flush()
             self.data_fp.close()
             self.data_fp = None
 

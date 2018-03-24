@@ -51,6 +51,20 @@ def get_distinct_colors(n, seed=None):
 # IMAGE PREPROCESSING FUNCTIONS
 ###################################################
 
+def interpolation_string_to_interpolation_type(interp):
+    # type: (str) -> ImageInterpolationType
+    try:
+        interp_str_to_type = {'nearest': ImageInterpolationType.NEAREST,
+                              'bilinear': ImageInterpolationType.BILINEAR,
+                              'bicubic': ImageInterpolationType.BICUBIC,
+                              'lanczos': ImageInterpolationType.LANCZOS}
+    except KeyError as e:
+        print 'ERROR: Invalid interpolation string: {}'.format(interp)
+        raise e
+
+    return interp_str_to_type[interp.lower()]
+
+
 def array_to_img(x, data_format=None, scale=True):
     """Converts a 3D Numpy array to a PIL Image instance.
 
@@ -517,6 +531,11 @@ def pil_create_transform(offset, translate, theta, scale):
 def pil_transform_image(img, transform, resample, cval=None):
     # type: (PImage.Image, SimilarityTransform, int, tuple) -> PImage.Image
 
+    interp = resample
+
+    if isinstance(resample, ImageInterpolationType):
+        interp = resample.value
+
     # Get the affine transformation matrix
     matrix = inv(transform.params).ravel()
 
@@ -528,7 +547,7 @@ def pil_transform_image(img, transform, resample, cval=None):
     if non_black_cval:
         img.putalpha(255)
 
-    img = img.transform(size=img.size, method=PImage.AFFINE, data=matrix, resample=resample)
+    img = img.transform(size=img.size, method=PImage.AFFINE, data=matrix, resample=interp)
 
     # Replace out-of-bounds values with the cval - if cval is None default is black
     if non_black_cval:

@@ -53,10 +53,12 @@ def signal_handler(s, f):
     # Allow multiprocessing.Pool worker processes to be terminated prior to early exit signal.
     # This happens automagically with if the Pool decides to recycle processes.
     if _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value == 0 and (process_pid != _MAIN_PROCESS_PID.value):
+        print 'Exiting process: {}'.format(process_pid)
         os._exit(0)
 
     # If the exit handling is complete and we receive a singal - exit
     if _EXIT_HANDLING_COMPLETE:
+        print 'Exit handling has been finished - exiting'
         os._exit(0)
 
     if _EARLY_EXIT_SIGNAL_HANDLER_CALLED.value == 0 and (process_pid == _MAIN_PROCESS_PID.value or _MAIN_PROCESS_PID.value == -1):
@@ -65,11 +67,12 @@ def signal_handler(s, f):
         if _TRAINER is not None:
             _TRAINER.handle_early_exit()
         else:
-            print 'No trainer present, exiting'
+            print 'No trainer present - exiting'
 
         _EXIT_HANDLING_COMPLETE = True
 
         # Kill all the children
+        print 'Killing child processes - wait time: {}s'.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
         kill_child_processes()
 
         # Kill yourself

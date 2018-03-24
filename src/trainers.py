@@ -282,10 +282,13 @@ class TrainerBase:
         self._compile_model()
 
     def _init_caches(self):
-        if self.resized_image_cache_path and self.initial_resized_image_cache_tar_file_path:
-            # Create the initial resized image cache if the directory doesn't exist - otherwise skip
-            created = general_utils.create_path_if_not_existing(self.resized_image_cache_path)
+        if self.resized_image_cache_path is None:
+            return
 
+        # Create the initial resized image cache if the directory doesn't exist - otherwise skip
+        created = general_utils.create_path_if_not_existing(self.resized_image_cache_path)
+
+        if self.initial_resized_image_cache_tar_file_path is not None:
             if created:
                 tar = None
 

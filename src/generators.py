@@ -442,7 +442,7 @@ class DataGenerator(object):
             memory_map_update_mode = MemoryMapUpdateMode.UPDATE_ON_EVERY_WRITE
             write_to_secondary_file_cache = True
 
-            if os.path.exists(self.resized_image_cache_path):
+            if os.path.exists(os.path.join(self.resized_image_cache_path, 'data.bin')):
                 self.logger.log('Loading existing resized image cache from: {}'.format(self.resized_image_cache_path))
                 self._resized_image_cache = MemoryMappedImageCache(self.resized_image_cache_path, memory_map_update_mode=memory_map_update_mode, read_only=read_only, write_to_secondary_file_cache=write_to_secondary_file_cache)
                 self.logger.log('Loaded image cache with {} images, memory_map_update_mode: {}, read_only: {}, write_to_secondary_file_cache: {}'.format(self._resized_image_cache.size, memory_map_update_mode, read_only, write_to_secondary_file_cache))
@@ -852,8 +852,8 @@ class DataGenerator(object):
 
         return images, transform
 
-    def _get_mean_teacher_data_from_image_batch(self, X, dtype=np.float32):
-        # type: (list[PILImage], dtype) -> np.ndarray
+    def _get_mean_teacher_data_from_image_batch(self, X, interp, dtype=np.float32):
+        # type: (list[PILImage], ImageInterpolationType, dtype) -> np.ndarray
 
         if not self.generate_mean_teacher_data:
             raise ValueError('Request to get mean teacher data when generate_mean_teacher_data is False')
@@ -871,7 +871,7 @@ class DataGenerator(object):
         # * Intensity shifts
         # * Gaussian noise
         if settings.DATA_GENERATION_THREADS_PER_PROCESS < 2:
-            X_teacher = [self._apply_mean_teacher_noise_to_image(img=img) for img in X]
+            X_teacher = [self._apply_mean_teacher_noise_to_image(img=img, interp=interp) for img in X]
         else:
             X_teacher = Parallel(n_jobs=settings.DATA_GENERATION_THREADS_PER_PROCESS, backend='threading')(
                 delayed(pickle_method)(self, '_apply_mean_teacher_noise_to_image', img=img) for img in X)
@@ -891,8 +891,8 @@ class DataGenerator(object):
 
         return X_teacher
 
-    def _apply_mean_teacher_noise_to_image(self, img):
-        # type: (PILImage) -> PILImage
+    def _apply_mean_teacher_noise_to_image(self, img, interp):
+        # type: (PILImage, ImageInterpolationType) -> PILImage
 
         noise_params = self.data_augmentation_params.mean_teacher_noise_params
         teacher_img = img.copy()
@@ -933,7 +933,7 @@ class DataGenerator(object):
         scale = 1.0
 
         transform = image_utils.pil_create_transform(offset=offset, translate=(translate_x, translate_y), theta=theta, scale=scale)
-        teacher_img = image_utils.pil_transform_image(teacher_img, transform=transform, resample=image_utils.ImageInterpolationType.BILINEAR.value, cval=self.photo_cval)
+        teacher_img = image_utils.pil_transform_image(teacher_img, transform=transform, resample=interp.value, cval=self.photo_cval)
 
         return teacher_img
 
@@ -1054,6 +1054,26 @@ class SegmentationDataGenerator(DataGenerator):
     def unlabeled_data_set(self, data_set):
         # type: (UnlabeledImageDataSet) -> None
         SegmentationDataGenerator.UUID_TO_UNLABELED_DATA_SET[self.uuid] = data_set
+
+    @property
+    def photo_resize_interpolation_type(self):
+        # type: () -> ImageInterpolationType
+        return image_utils.interpolation_string_to_interpolation_type(settings.SEGMENTATION_PHOTO_RESIZE_INTERPOLATION_TYPE)
+
+    @property
+    def photo_transform_interpolation_type(self):
+        # type: () -> ImageInterpolationType
+        return image_utils.interpolation_string_to_interpolation_type(settings.SEGMENTATION_PHOTO_TRANSFORM_INTERPOLATION_TYPE)
+
+    @property
+    def mask_resize_interpolation_type(self):
+        # type: () -> ImageInterpolationType
+        return image_utils.interpolation_string_to_interpolation_type(settings.SEGMENTATION_MASK_RESIZE_INTERPOLATION_TYPE)
+
+    @property
+    def mask_transform_interpolation_type(self):
+        # type: () -> ImageInterpolationType
+        return image_utils.interpolation_string_to_interpolation_type(settings.SEGMENTATION_MASK_TRANSFORM_INTERPOLATION_TYPE)
 
     def get_all_photos(self):
         # type: () -> list[ImageFile]
@@ -1238,7 +1258,7 @@ class SegmentationDataGenerator(DataGenerator):
         # Resize the photo to match the mask size if necessary, since
         # the original photos are sometimes huge
         if pil_photo.size != pil_mask.size:
-            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=(pil_mask.height, pil_mask.width), cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=(pil_mask.height, pil_mask.width), cval=self.photo_cval, interp=self.photo_resize_interpolation_type, img_type=ImageType.PHOTO)
 
         if pil_photo.size != pil_mask.size:
             raise ValueError('Non-matching photo and mask dimensions after resize: {} != {}'.format(pil_photo.size, pil_mask.size))
@@ -1344,8 +1364,8 @@ class SegmentationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo and the mask to a constant size
         if resize_shape is not None:
-            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=bypass_cache)
-            pil_mask = self._pil_get_resized_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=ImageInterpolationType.NEAREST, img_type=ImageType.MASK, bypass_cache=bypass_cache or dummy_mask)
+            pil_photo = self._pil_get_resized_image(pil_photo, resize_shape=resize_shape, cval=photo_cval, interp=self.photo_resize_interpolation_type, img_type=ImageType.PHOTO, bypass_cache=bypass_cache)
+            pil_mask = self._pil_get_resized_image(pil_mask, resize_shape=resize_shape, cval=mask_cval, interp=self.mask_resize_interpolation_type, img_type=ImageType.MASK, bypass_cache=bypass_cache or dummy_mask)
 
         # Drop any unnecessary channels from the mask image we only use the red or L (luma for grayscale)
         if len(pil_mask.getbands()) > 1:
@@ -1384,7 +1404,7 @@ class SegmentationDataGenerator(DataGenerator):
                 images, transform = self._pil_apply_data_augmentation_to_images(images=[pil_photo, pil_mask],
                                                                                 cvals=[photo_cval, mask_cval],
                                                                                 random_seed=self.random_seed + step_idx,
-                                                                                interpolations=[ImageInterpolationType.BILINEAR, ImageInterpolationType.NEAREST],
+                                                                                interpolations=[self.photo_transform_interpolation_type, self.mask_transform_interpolation_type],
                                                                                 override_channel_shift_ranges=[self.data_augmentation_params.channel_shift_range, None],
                                                                                 override_gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range, None])
                 # Unpack the images
@@ -1393,7 +1413,7 @@ class SegmentationDataGenerator(DataGenerator):
                 images, transform = self._pil_apply_data_augmentation_to_images(images=[pil_photo],
                                                                                 cvals=[photo_cval],
                                                                                 random_seed=self.random_seed + step_idx,
-                                                                                interpolations=[ImageInterpolationType.BILINEAR],
+                                                                                interpolations=[self.photo_transform_interpolation_type],
                                                                                 override_channel_shift_ranges=[self.data_augmentation_params.channel_shift_range],
                                                                                 override_gamma_adjust_ranges=[self.data_augmentation_params.gamma_adjust_range])
                 # Unpack the image
@@ -1483,8 +1503,8 @@ class SegmentationDataGenerator(DataGenerator):
                     break
 
         # Make sure both photo and mask satisfy the div2 constraint
-        pil_photo = self._pil_fit_image_to_div2_constraint(img=pil_photo, cval=photo_cval, interp=ImageInterpolationType.BILINEAR)
-        pil_mask = self._pil_fit_image_to_div2_constraint(img=pil_mask, cval=mask_cval, interp=ImageInterpolationType.NEAREST)
+        pil_photo = self._pil_fit_image_to_div2_constraint(img=pil_photo, cval=photo_cval, interp=self.photo_resize_interpolation_type)
+        pil_mask = self._pil_fit_image_to_div2_constraint(img=pil_mask, cval=mask_cval, interp=self.mask_resize_interpolation_type)
 
         return pil_photo, pil_mask
 
@@ -1701,7 +1721,7 @@ class SegmentationDataGenerator(DataGenerator):
 
         if self.generate_mean_teacher_data:
             stime_t_data = time.time()
-            X_teacher = self._get_mean_teacher_data_from_image_batch(X, dtype=np.float32)
+            X_teacher = self._get_mean_teacher_data_from_image_batch(X, self.photo_transform_interpolation_type, dtype=np.float32)
             self.logger.debug_log('Mean Teacher data generation took: {}s'.format(time.time()-stime_t_data))
 
         # Process all the information into numpy arrays
@@ -2107,6 +2127,16 @@ class ClassificationDataGenerator(DataGenerator):
         # type: (UnlabeledImageDataSet) -> None
         ClassificationDataGenerator.UUID_TO_UNLABELED_DATA_SET[self.uuid] = data_set
 
+    @property
+    def photo_resize_interpolation_type(self):
+        # type: () -> ImageInterpolationType
+        return image_utils.interpolation_string_to_interpolation_type(settings.CLASSIFICATION_PHOTO_RESIZE_INTERPOLATION_TYPE)
+
+    @property
+    def photo_transform_interpolation_type(self):
+        # type: () -> ImageInterpolationType
+        return image_utils.interpolation_string_to_interpolation_type(settings.CLASSIFICATION_PHOTO_TRANSFORM_INTERPOLATION_TYPE)
+
     def get_all_photos(self):
         photos = []
         photos += self.labeled_data_set.photo_image_set.image_files
@@ -2184,7 +2214,7 @@ class ClassificationDataGenerator(DataGenerator):
         # Note: only applied to inputs ground truth must be the same
         if self.generate_mean_teacher_data:
             stime_t_data = time.time()
-            X_teacher = self._get_mean_teacher_data_from_image_batch(X, dtype=np.float32)
+            X_teacher = self._get_mean_teacher_data_from_image_batch(X, self.photo_transform_interpolation_type, dtype=np.float32)
             self.logger.debug_log('Mean Teacher data generation took: {}s'.format(time.time()-stime_t_data))
 
         X = [img_to_array(img) for img in X]
@@ -2286,19 +2316,19 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=self.photo_resize_interpolation_type, img_type=ImageType.PHOTO)
 
         # Apply data augmentation
         if self._should_apply_augmentation(step_index):
             images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                     cvals=[self.photo_cval],
                                                                     random_seed=self.random_seed+step_index,
-                                                                    interpolations=[ImageInterpolationType.BILINEAR])
+                                                                    interpolations=[self.photo_transform_interpolation_type])
 
             img, = images
 
         # Make sure the image dimensions satisfy the div2_constraint
-        img = self._pil_fit_image_to_div2_constraint(img, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR)
+        img = self._pil_fit_image_to_div2_constraint(img, cval=self.photo_cval, interp=self.photo_resize_interpolation_type)
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -2328,7 +2358,7 @@ class ClassificationDataGenerator(DataGenerator):
 
         # Check whether we need to resize the photo to a constant size
         if resize_shape is not None:
-            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+            img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=self.photo_resize_interpolation_type, img_type=ImageType.PHOTO)
 
         img_height = img.height
         img_width = img.width
@@ -2345,7 +2375,7 @@ class ClassificationDataGenerator(DataGenerator):
             images, transform = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                             cvals=[self.photo_cval],
                                                                             random_seed=self.random_seed+step_index,
-                                                                            interpolations=[ImageInterpolationType.BILINEAR],
+                                                                            interpolations=[self.photo_transform_interpolation_type],
                                                                             transform_origin=np.array([crop_center_y, crop_center_x]))
 
             img, = images
@@ -2363,7 +2393,7 @@ class ClassificationDataGenerator(DataGenerator):
                 img = img_file.get_image(self.num_color_channels)
 
                 if resize_shape is not None:
-                    img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO)
+                    img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=self.photo_resize_interpolation_type, img_type=ImageType.PHOTO)
             else:
                 crop_center_y = crop_center_y_new
                 crop_center_x = crop_center_x_new
@@ -2405,7 +2435,7 @@ class ClassificationDataGenerator(DataGenerator):
                 (crop_size_x, crop_size_y)))
 
         img = image_utils.pil_crop_image_with_fill(img, x1=x_0, y1=y_0, x2=x_1, y2=y_1, cval=self.photo_cval)
-        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR)
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=self.photo_resize_interpolation_type)
 
         # Construct label vector (one-hot)
         custom_label = self.labeled_data_set.minc_label_to_custom_label[minc_sample.minc_label]
@@ -2462,7 +2492,7 @@ class ClassificationDataGenerator(DataGenerator):
             if num_target_pixels > num_img_pixels and apply_augmentation:
                 resize_after_augmentation = True
             elif num_target_pixels != num_img_pixels:
-                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
+                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=self.photo_resize_interpolation_type, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # Check whether any of the image dimensions is smaller than the crop,
         # if so pad with the assigned fill colors
@@ -2477,19 +2507,19 @@ class ClassificationDataGenerator(DataGenerator):
             images, _ = self._pil_apply_data_augmentation_to_images(images=[img],
                                                                     cvals=[self.photo_cval],
                                                                     random_seed=self.random_seed+step_index,
-                                                                    interpolations=[ImageInterpolationType.BILINEAR])
+                                                                    interpolations=[self.photo_transform_interpolation_type])
             img, = images
 
             # Apply possibly postponed resize after augmentation. Only bypass cache if augmentation was applied since image is dirty
             if resize_after_augmentation:
-                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR, img_type=ImageType.PHOTO, bypass_cache=True)
+                img = self._pil_get_resized_image(img, resize_shape=resize_shape, cval=self.photo_cval, interp=self.photo_resize_interpolation_type, img_type=ImageType.PHOTO, bypass_cache=True)
 
         # If a crop size is given: take a random crop of the image
         if crop_shape is not None:
             y1x1, y2x2 = self._get_random_crop_area(img_width=img.width, img_height=img.height, crop_width=crop_shape[1], crop_height=crop_shape[0])
             img = image_utils.pil_crop_image(img, x1=y1x1[1], y1=y1x1[0], x2=y2x2[1], y2=y2x2[0])
 
-        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=ImageInterpolationType.BILINEAR)
+        img = self._pil_fit_image_to_div2_constraint(img=img, cval=self.photo_cval, interp=self.photo_resize_interpolation_type)
 
         # Create a dummy label vector (one-hot) all zeros
         y = self.dummy_label_vector
