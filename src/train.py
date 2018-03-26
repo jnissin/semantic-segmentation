@@ -18,7 +18,7 @@ _EARLY_EXIT_SIGNALS = [signal.SIGINT, signal.SIGTERM, signal.SIGABRT, signal.SIG
 _MAIN_PROCESS_PID = multiprocessing.Value('i', -1)
 _TRAINER = None
 _CHILD_PROCESS_EXIT_WAIT_TIME = 10
-_EXIT_HANDLING_COMPLETE = False
+_EXIT_HANDLING_COMPLETE = multiprocessing.Value('i', 0)
 
 
 def on_child_terminate(proc):
@@ -52,7 +52,7 @@ def signal_handler(s, f):
         os._exit(0)
 
     # If the exit handling is complete and we receive a singal - exit
-    if _EXIT_HANDLING_COMPLETE:
+    if _EXIT_HANDLING_COMPLETE.value == 1:
         print 'Exit handling has been finished - exiting'
         os._exit(0)
 
@@ -64,10 +64,10 @@ def signal_handler(s, f):
         else:
             print 'No trainer present - exiting'
 
-        _EXIT_HANDLING_COMPLETE = True
+        _EXIT_HANDLING_COMPLETE.value = 1
 
         # Kill all the children
-        print 'Killing child processes - wait time: {}s'.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        print 'Killing child processes'.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
         kill_child_processes()
 
         # Kill yourself
