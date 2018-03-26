@@ -29,19 +29,14 @@ def kill_child_processes():
     procs = psutil.Process().children()
 
     # send SIGTERM
+    #for p in procs:
+    #    p.terminate()
+    #gone, alive = psutil.wait_procs(procs, timeout=_CHILD_PROCESS_EXIT_WAIT_TIME, callback=on_child_terminate)
+    #if alive:
+    # send SIGKILL
     for p in procs:
-        p.terminate()
-    gone, alive = psutil.wait_procs(procs, timeout=_CHILD_PROCESS_EXIT_WAIT_TIME, callback=on_child_terminate)
-    if alive:
-        # send SIGKILL
-        for p in alive:
-            print("process {} survived SIGTERM; trying SIGKILL" % p)
-            p.kill()
-        gone, alive = psutil.wait_procs(alive, timeout=_CHILD_PROCESS_EXIT_WAIT_TIME, callback=on_child_terminate)
-        if alive:
-            # give up
-            for p in alive:
-                print("process {} survived SIGKILL; giving up" % p)
+        print("process {} receiving SIGKILL" % p)
+        p.kill()
 
 
 def signal_handler(s, f):
