@@ -36,7 +36,7 @@ def kill_child_processes():
     # send SIGKILL
     for p in procs:
         print("process {} receiving SIGKILL" % p)
-        p.kill()
+        os.kill(p.pid, signal.SIGKILL)
 
 
 def signal_handler(s, f):
@@ -67,8 +67,8 @@ def signal_handler(s, f):
         _EXIT_HANDLING_COMPLETE.value = 1
 
         # Kill all the children
-        #print 'Killing child processes'.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
-        #kill_child_processes()
+        print 'Killing child processes'.format(_CHILD_PROCESS_EXIT_WAIT_TIME)
+        kill_child_processes()
 
         # Kill yourself
         print 'Killing myself - good bye'
