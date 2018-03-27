@@ -331,7 +331,7 @@ class TrainerBase:
                 self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_photos'), self.classification_tmp_labeled_photos_path)
                 self._copy_dataset_to_tmp(self._get_config_value('path_to_unlabeled_photos'), self.classification_tmp_unlabeled_photos_path)
             # If segmentation supervised trainer, copy: photos, masks
-            elif self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED or self.trainer_type == TrainerType.SEGMENTATION_SEMI_SUPERVISED_MEAN_TEACHER:
+            elif self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED or self.trainer_type == TrainerType.SEGMENTATION_SUPERVISED_MEAN_TEACHER:
                 self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_photos'), self.segmentation_tmp_labeled_photos_path)
                 self._copy_dataset_to_tmp(self._get_config_value('path_to_labeled_masks'), self.segmentation_tmp_labeled_masks_path)
             # If segmentation semi-supervised mean teacher trainer, copy: photos, masks, unlabeled
