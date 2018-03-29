@@ -1793,7 +1793,8 @@ class MeanTeacherTrainerBase(TrainerBase):
                 file_name_format = os.path.basename(self.model_checkpoint_file_path)
                 teacher_model_checkpoint_file_path = os.path.join(os.path.join(self.model_checkpoint_directory, 'teacher/'), file_name_format)
 
-            file_path = self._populate_path_template(teacher_model_checkpoint_file_path, epoch=epoch_index, val_loss=val_loss) + file_extension
+            # Note: keras changed their epoch indexing scheme to start from one -> thus epoch_index+1
+            file_path = self._populate_path_template(teacher_model_checkpoint_file_path, epoch=epoch_index+1, val_loss=val_loss) + file_extension
 
             # Make sure the directory exists
             general_utils.create_path_if_not_existing(file_path)
