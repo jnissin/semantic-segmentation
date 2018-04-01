@@ -1,0 +1,156 @@
+{
+    "path_to_material_class_file": "categories/materials-minc.csv",
+    "path_to_data_set_information_file": "data/final/data-set-information.json",
+    "path_to_labeled_photos": "data/final/labeled/segments/photos_mmi/",
+    "path_to_labeled_masks": "data/final/labeled/segments/masks_mmi/",
+    "path_to_unlabeled_photos": "data/final/unlabeled_mmi/",
+
+    "log_folder_path": "model-data/{model_folder}/logs/",
+    "log_file_path": "{log_folder_path}/log.txt",
+    "log_to_stdout": true,
+
+    "keras_tensorboard_log_path": "{log_folder_path}/tensorboard/",
+    "keras_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+    "keras_csv_log_file_path": "{log_folder_path}/per-epoch-data.csv",
+    "optimizer_checkpoint_file_path": "model-data/{model_folder}/checkpoints/optimizer/optimizer-checkpoint.json",
+
+    "keras_model_checkpoint": {
+      "checkpoint_file_path": "model-data/{model_folder}/checkpoints/weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "monitor": "val_loss",
+      "verbose": 1,
+      "save_best_only": false,
+      "save_weights_only": false,
+      "mode": "auto",
+      "period": 1
+    },
+
+    "loss_function": "dummy",
+
+    "num_epochs": 100,
+    "input_shape": [null, null, 3],
+    "crop_shape": [480, 480],
+    "resize_shape": [[1408, null], null, [512, null]],
+    "div2_constraint": 4,
+    "num_crop_reattempts": 5,
+    "resized_image_cache_path": "/tmp/semantic-segmentation/segmentation/resized/",
+    "initial_resized_image_cache_tar_file_path": "data/final/labeled/segments/segments_resize_mmi_cache.tar",
+
+    "num_labeled_per_batch": 5,
+    "num_unlabeled_per_batch": 0,
+    "validation_num_labeled_per_batch": 10,
+    "validation_crop_shape": null,
+    "validation_resize_shape": [1024, 1024],
+
+    "num_color_channels": 3,
+    "random_seed": 14874,
+
+    "optimizer": {
+      "name": "adam",
+      "learning_rate": 5e-4,
+      "momentum": 0.9,
+      "decay": 0.0
+    },
+
+    "mean_teacher_params": {
+      "teacher_model_checkpoint_file_path": "model-data/{model_folder}/checkpoints/teacher/teacher_weights.{epoch:02d}-{val_loss:.2f}.hdf5",
+      "ema_smoothing_coefficient_function": "lambda x: 0.99 if x < 24000 else 0.999",
+      "consistency_cost_coefficient_function": "lambda x: 276.552 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/24000.0)**2)), 1.0) ), 1.0 )",
+      "transfer_weights": true,
+      "transfer_weights_options": {
+        "transfer_model_name": "enet-naive-upsampling-enhanced-encoder-only",
+        "transfer_model_input_shape": [336, 336, 3],
+        "transfer_model_num_classes": 24,
+        "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-enhanced-encoder-only/semi-supervised-mt/checkpoints/teacher/teacher_weights.72-0.90.hdf5",
+        "from_layer_index": 0,
+        "to_layer_index": -1,
+        "freeze_from_layer_index": null,
+        "freeze_to_layer_index": null,
+        "scale_lr_from_layer_index": null,
+        "scale_lr_to_layer_index": null,
+        "scale_lr_factor": null
+      }
+    },
+
+    "superpixel_params": {
+      "unlabeled_cost_coefficient_function": "lambda x: 2.0 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/48000.0)**2)), 1.0) ), 1.0 )",
+      "label_generation_function_name": "felzenszwalb",
+      "superpixel_mask_cache_path": "data/final/unlabeled_fzw_masks_mmi/"
+    },
+
+    "use_data_augmentation": true,
+    "use_material_samples": true,
+    "use_selective_attention": false,
+    "use_adaptive_sampling": false,
+    "material_sample_iteration_mode": "UNIFORM_MEAN",
+
+    "data_augmentation_params": {
+      "augmentation_probability_function": "lambda x: 0.8 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/24000.0)**2)), 1.0) ), 1.0 )",
+      "rotation_range": 50.0,
+      "zoom_range": 0.15,
+      "width_shift_range": 0.05,
+      "height_shift_range": 0.05,
+      "channel_shift_range": 0.05,
+      "horizontal_flip": true,
+      "vertical_flip": false,
+      "gaussian_noise_stddev_function": "lambda x: 0.03 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/24000.0)**2)), 1.0) ), 1.0 ) if x < (12926*95) else 0.01",
+      "gamma_adjust_range": 0.5,
+      "mean_teacher_noise_params": {
+        "gaussian_noise_stddev": 0.05,
+        "translate_range": null,
+        "rotation_range": null,
+        "horizontal_flip_probability": null,
+        "vertical_flip_probability": null,
+        "channel_shift_range": 0.10,
+        "gamma_adjust_range": 0.20
+      }
+    },
+
+    "__reduce_lr_on_plateau": {
+      "factor": 0.1,
+      "verbose": 1,
+      "patience": 2,
+      "epsilon": 0.0001,
+      "cooldown": 2,
+      "min_lr": 0,
+      "monitor": "val_loss"
+    },
+
+    "__early_stopping": {
+      "monitor": "val_loss",
+      "min_delta": 0,
+      "patience": 2,
+      "verbose": 0,
+      "mode": "auto"
+    },
+
+    "transfer_weights": true,
+
+    "transfer_weights_options": {
+      "transfer_model_name": "enet-naive-upsampling-enhanced-encoder-only",
+      "transfer_model_input_shape": [336, 336, 3],
+      "transfer_model_num_classes": 24,
+      "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-enhanced-encoder-only/semi-supervised-mt/checkpoints/weights.72-0.98.hdf5",
+      "from_layer_index": 0,
+      "to_layer_index": -1,
+      "freeze_from_layer_index": null,
+      "freeze_to_layer_index": null,
+      "scale_lr_from_layer_index": null,
+      "scale_lr_to_layer_index": null,
+      "scale_lr_factor": null
+    },
+
+    "stepwise_learning_rate_scheduler": {
+      "lr_schedule": "lambda x: 5e-4 * min( np.exp( min(-5.0 * (1.0 - ((float(x)/24000.0)**2)), 1.0) ), 1.0 )",
+      "b2_schedule": "lambda x: 0.99 if x < 24000 else 0.999",
+      "last_scheduled_step": 24000,
+      "verbose": false
+    },
+
+    "image_data_format": "channels_last",
+    "continue_from_last_checkpoint": true,
+    "use_class_weights": true,
+    "ignore_classes": [0],
+    "class_weight_type": "median_frequency_balancing",
+    "__override_class_weights": [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    "save_values_on_early_exit": true
+}
