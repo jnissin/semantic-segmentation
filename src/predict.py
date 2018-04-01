@@ -17,6 +17,7 @@ from scipy import ndimage
 from utils import dataset_utils
 from utils import prediction_utils
 from utils import image_utils
+from PIL import Image
 
 from models import get_model
 
@@ -208,7 +209,7 @@ def get_new_figure(target_width, target_height, window_title):
     return figure
 
 
-def build_topk_segmentation_plot(flattened_masks, original_pil_image, file_name):
+def build_topk_segmentation_plot(flattened_masks, original_pil_image, file_name, output=None):
     # type: (list[np.ndarray], PIL.Image) -> None
 
     top_k = len(flattened_masks)
@@ -260,6 +261,13 @@ def build_topk_segmentation_plot(flattened_masks, original_pil_image, file_name)
         ticks = bounds - step_size * 0.5
         norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
 
+        if output is not None:
+            output_original_img = original_pil_image.copy().convert('RGBA')
+            output_segmented_img = segmented_img.copy().convert('RGBA')
+            output_segmented_img.putalpha(int(segmentation_map_alpha*255))
+            composite_img = Image.alpha_composite(output_original_img, output_segmented_img)
+            composite_img.save(output + '_top_{}_segmentation.png'.format(i+1))
+
         # Create the original image as background and combine with the segmentation mask
         plt_img = plt.imshow(original_pil_image, interpolation='bicubic', origin='upper')
         plt_img = plt.imshow(segmented_img, alpha=segmentation_map_alpha, interpolation='bicubic', origin='upper', cmap=cmap, norm=norm)
@@ -271,7 +279,7 @@ def build_topk_segmentation_plot(flattened_masks, original_pil_image, file_name)
     plt.tight_layout()
 
 
-def build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_name, ground_truth_mask):
+def build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_name, ground_truth_mask, output=None):
     # Provide accuracy correct / num unignored pixels
 
     top_k = len(flattened_predictions)
@@ -326,6 +334,13 @@ def build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_nam
         topk_accuracy_np_img[np_vals == ignored_val] = ignored_color
 
         topk_img = array_to_img(topk_accuracy_np_img)
+
+        if output is not None:
+            output_original_img = original_pil_image.copy().convert('RGBA')
+            output_top_k_img = topk_img.copy().convert('RGBA')
+            output_top_k_img.putalpha(int(segmentation_map_alpha*255))
+            composite_img = Image.alpha_composite(output_original_img, output_top_k_img)
+            composite_img.save(output + '_top_{}_accuracy.png'.format(i+1))
 
         # Add a new subplot
         figure.add_subplot(rows, cols, i+1, title='Top {} accuracy {:.2f}%'.format(i+1, topk_accuracy))
@@ -556,16 +571,16 @@ def main():
         ground_truth_np_img = img_to_array(ground_truth_pil_image)
         ground_truth_mask = dataset_utils.index_encode_mask(np_mask_img=ground_truth_np_img, material_class_information=material_class_information)
         print 'Building top k segmentation accuracy plot'
-        build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_name, ground_truth_mask)
+        build_topk_accuracy_plot(flattened_predictions, original_pil_image, file_name, ground_truth_mask, output=output_path)
 
     print 'Building top k segmentation plot'
-    build_topk_segmentation_plot(flattened_predictions, original_pil_image, file_name)
+    build_topk_segmentation_plot(flattened_predictions, original_pil_image, file_name, output=output_path)
 
     # Show all the plots
     plt.show()
 
-    if output_path is not None:
-        save_topk_segmentations(flattened_predictions, output_path)
+    #if output_path is not None:
+    #    save_topk_segmentations(flattened_predictions, output_path)
 
 
 if __name__ == '__main__':
