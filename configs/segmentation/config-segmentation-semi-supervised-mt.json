@@ -60,7 +60,7 @@
         "transfer_model_name": "enet-naive-upsampling-enhanced-encoder-only",
         "transfer_model_input_shape": [336, 336, 3],
         "transfer_model_num_classes": 24,
-        "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-enhanced-encoder-only/supervised-mt/checkpoints/teacher/teacher_weights.72-0.90.hdf5",
+        "transfer_model_weights_file_path": "model-data/enet-naive-upsampling-enhanced-encoder-only/semi-supervised-mt/checkpoints/teacher/teacher_weights.72-0.90.hdf5",
         "from_layer_index": 0,
         "to_layer_index": -1,
         "freeze_from_layer_index": null,
