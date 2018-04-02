@@ -36,7 +36,7 @@
     "initial_resized_image_cache_tar_file_path": "data/final/labeled/segments/segments_resize_mmi_cache.tar",
 
     "num_labeled_per_batch": 5,
-    "num_unlabeled_per_batch": 0,
+    "num_unlabeled_per_batch": 5,
     "validation_num_labeled_per_batch": 10,
     "validation_crop_shape": null,
     "validation_resize_shape": [1024, 1024],
