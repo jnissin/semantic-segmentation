@@ -5,13 +5,13 @@ from __future__ import print_function
 import multiprocessing
 import random
 import threading
-import time
 import os
 import six
 import sys
 import traceback
+import time
 
-from abc import abstractmethod
+from abc import abstractmethod, ABCMeta
 from multiprocessing.pool import ThreadPool
 from contextlib import closing
 
@@ -77,6 +77,9 @@ def init_pool(uuid, seed, seqs):
 
 
 class Sequence(object):
+
+    __metaclass__ = ABCMeta
+
     @abstractmethod
     def get_batch(self, e_idx, b_idx):
         # type: (int, int) -> (list, list)
@@ -129,6 +132,7 @@ class SequenceEnqueuer(object):
     The `enqueuer.get()` should be an infinite stream of datas.
 
     """
+    __metaclass__ = ABCMeta
 
     @abstractmethod
     def is_running(self):
@@ -179,6 +183,7 @@ class SequenceEnqueuer(object):
 
     def pause_sleep(self, pause_sleep_time):
         try:
+            import time
             time.sleep(pause_sleep_time)
         except (NameError, AttributeError, ValueError):
             import time
