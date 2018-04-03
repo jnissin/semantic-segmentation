@@ -1284,9 +1284,9 @@ class ExtendedModel(Model):
 
             # Reset metrics before evaluation run
             self.reset_metrics()
+            last_100_steps_stime = time.time()
 
             while steps_done < steps:
-                last_100_steps_stime = time.time()
                 generator_output = next(output_generator)
                 if not hasattr(generator_output, '__len__'):
                     raise ValueError('Output of generator should be a tuple '
@@ -1330,6 +1330,8 @@ class ExtendedModel(Model):
                 if verbose == 1:
                     if steps_done%100 == 0:
                         print('Step {}/{} complete, last 100 steps took: {} sec, ETA: {} sec'.format(steps_done, steps, time.time()-last_100_steps_stime, (steps-steps_done)*((time.time()-last_100_steps_stime)/100.0)))
+                        last_100_steps_stime = time.time()
+
         except Exception as e:
             if enqueuer is not None:
                 enqueuer.stop()
