@@ -8,4 +8,5 @@ logs/*
 checkpoints/*
 photos/*
 temp/*
+tmp/*
 slurm-logs/*
