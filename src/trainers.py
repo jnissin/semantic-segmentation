@@ -1701,7 +1701,7 @@ class MeanTeacherTrainerBase(TrainerBase):
         if settings.OVERRIDE_STEPS and settings.OVERRIDE_TEST_STEPS_PER_EPOCH is not None and settings.OVERRIDE_TEST_STEPS_PER_EPOCH > 0:
             return settings.OVERRIDE_TEST_STEPS_PER_EPOCH
 
-        return self.teacher_validation_data_iterator.num_steps_per_epoch
+        return self.teacher_test_data_iterator.num_steps_per_epoch
 
     @property
     def ema_smoothing_coefficient_function(self):
