@@ -2628,7 +2628,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             use_multiprocessing=settings.USE_MULTIPROCESSING,
             validation=True,
             trainer=self,
-            random_seed=self.random_seed)
+            random_seed=self.random_seed,
+            verbose=1)
 
         self.logger.log('Validation run complete - parsing metrics')
 
@@ -2651,7 +2652,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 use_multiprocessing=settings.USE_MULTIPROCESSING,
                 validation=True,
                 trainer=None,
-                random_seed=self.random_seed)
+                random_seed=self.random_seed,
+                verbose=1)
 
             self.logger.log('Teacher validation run complete - parsing metrics')
 
@@ -2675,7 +2677,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             use_multiprocessing=settings.USE_MULTIPROCESSING,
             test=True,
             trainer=self,
-            random_seed=self.random_seed)
+            random_seed=self.random_seed,
+            verbose=1)
 
         self.logger.log('Test run complete - parsing metrics')
 
@@ -2698,7 +2701,8 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 use_multiprocessing=settings.USE_MULTIPROCESSING,
                 test=True,
                 trainer=None,
-                random_seed=self.random_seed)
+                random_seed=self.random_seed,
+                verbose=1)
 
             self.logger.log('Teacher test run complete - parsing metrics')
 
@@ -3216,7 +3220,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             use_multiprocessing=settings.USE_MULTIPROCESSING,
             validation=True,
             trainer=self,
-            random_seed=self.random_seed)
+            random_seed=self.random_seed,
+            verbose=1)
 
         self.logger.log('Validation run complete - parsing metrics')
 
@@ -3239,7 +3244,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 use_multiprocessing=settings.USE_MULTIPROCESSING,
                 validation=True,
                 trainer=None,
-                random_seed=self.random_seed)
+                random_seed=self.random_seed,
+                verbose=1)
 
             self.logger.log('Teacher validation run complete - parsing metrics')
 
@@ -3263,7 +3269,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             use_multiprocessing=settings.USE_MULTIPROCESSING,
             test=True,
             trainer=self,
-            random_seed=self.random_seed)
+            random_seed=self.random_seed,
+            verbose=1)
 
         self.logger.log('Test run complete - parsing metrics')
 
@@ -3286,7 +3293,8 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                 use_multiprocessing=settings.USE_MULTIPROCESSING,
                 test=True,
                 trainer=None,
-                random_seed=self.random_seed)
+                random_seed=self.random_seed,
+                verbose=1)
 
             self.logger.log('Teacher test run complete - parsing metrics')
 
