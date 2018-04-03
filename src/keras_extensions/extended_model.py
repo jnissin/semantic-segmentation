@@ -1174,7 +1174,8 @@ class ExtendedModel(Model):
                            validation=False,
                            test=False,
                            trainer=None,
-                           random_seed=None):
+                           random_seed=None,
+                           verbose=0):
         """Evaluates the model on a data generator.
 
         The generator should return the same kind of data
@@ -1285,6 +1286,7 @@ class ExtendedModel(Model):
             self.reset_metrics()
 
             while steps_done < steps:
+                last_100_steps_stime = time.time()
                 generator_output = next(output_generator)
                 if not hasattr(generator_output, '__len__'):
                     raise ValueError('Output of generator should be a tuple '
@@ -1324,6 +1326,10 @@ class ExtendedModel(Model):
 
                 steps_done += 1
                 batch_sizes.append(batch_size)
+
+                if verbose:
+                    if steps_done%100 == 0:
+                        print('Step {}/{} complete, last 100 steps took: {} sec, ETA: {} sec'.format(steps_done, steps, time.time()-last_100_steps_stime, (steps-steps_done)*((time.time()-last_100_steps_stime)/100.0)))
         except Exception as e:
             if enqueuer is not None:
                 enqueuer.stop()
