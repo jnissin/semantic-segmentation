@@ -3359,9 +3359,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
             teacher_test_data_generator_params = self.test_data_generator_params
             teacher_test_data_generator_params.batch_data_format = BatchDataFormat.SUPERVISED
 
-            teacher_test_data_generator = ClassificationDataGenerator(labeled_data_set=self.validation_set,
+            teacher_test_data_generator = ClassificationDataGenerator(labeled_data_set=self.test_set,
                                                                       unlabeled_data_set=None,
-                                                                      num_labeled_per_batch=self.validation_num_labeled_per_batch,
+                                                                      num_labeled_per_batch=self.test_num_labeled_per_batch,
                                                                       num_unlabeled_per_batch=0,
                                                                       class_weights=self.class_weights,
                                                                       params=teacher_test_data_generator_params)
