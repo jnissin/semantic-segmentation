@@ -1327,7 +1327,7 @@ class ExtendedModel(Model):
                 steps_done += 1
                 batch_sizes.append(batch_size)
 
-                if verbose:
+                if verbose == 1:
                     if steps_done%100 == 0:
                         print('Step {}/{} complete, last 100 steps took: {} sec, ETA: {} sec'.format(steps_done, steps, time.time()-last_100_steps_stime, (steps-steps_done)*((time.time()-last_100_steps_stime)/100.0)))
         except Exception as e:
