@@ -2366,6 +2366,13 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     def per_channel_mean(self):
         # type: () -> np.ndarray
 
+        # Override for validation/test only
+        if self.running_mode == RunningMode.VALIDATION or self.running_mode == RunningMode.TEST:
+            if self.is_supervised_only_trainer:
+                return np.array(self.data_set_information.labeled_per_channel_mean, dtype=np.float32)
+            else:
+                return np.array(self.data_set_information.per_channel_mean, dtype=np.float32)
+
         if self.using_unlabeled_training_data:
             return np.array(self.data_set_information.per_channel_mean, dtype=np.float32)
         else:
@@ -2374,6 +2381,13 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
     @property
     def per_channel_stddev(self):
         # type: () -> np.ndarray
+
+        # Override for validation/test only
+        if self.running_mode == RunningMode.VALIDATION or self.running_mode == RunningMode.TEST:
+            if self.is_supervised_only_trainer:
+                return np.array(self.data_set_information.labeled_per_channel_stddev, dtype=np.float32)
+            else:
+                return np.array(self.data_set_information.per_channel_stddev, dtype=np.float32)
 
         if self.using_unlabeled_training_data:
             return np.array(self.data_set_information.per_channel_stddev, dtype=np.float32)
@@ -2884,6 +2898,13 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
     def per_channel_mean(self):
         # type: () -> np.ndarray
 
+        # Override for validation/test only
+        if self.running_mode == RunningMode.VALIDATION or self.running_mode == RunningMode.TEST:
+            if self.is_supervised_only_trainer:
+                return np.array(self.classification_data_set_config['per_channel_mean_labeled'], dtype=np.float32)
+            else:
+                return np.array(self.classification_data_set_config['per_channel_mean'], dtype=np.float32)
+
         if self.using_unlabeled_training_data:
             return np.array(self.classification_data_set_config['per_channel_mean'], dtype=np.float32)
         else:
@@ -2891,6 +2912,15 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
     @property
     def per_channel_stddev(self):
+        # type: () -> np.ndarray
+
+        # Override for validation/test only
+        if self.running_mode == RunningMode.VALIDATION or self.running_mode == RunningMode.TEST:
+            if self.is_supervised_only_trainer:
+                return np.array(self.classification_data_set_config['per_channel_stddev_labeled'], dtype=np.float32)
+            else:
+                return np.array(self.classification_data_set_config['per_channel_stddev'], dtype=np.float32)
+
         if self.using_unlabeled_training_data:
             return np.array(self.classification_data_set_config['per_channel_stddev'], dtype=np.float32)
         else:
