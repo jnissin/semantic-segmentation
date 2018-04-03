@@ -1725,7 +1725,7 @@ class MeanTeacherTrainerBase(TrainerBase):
     def teacher_weights_directory_path(self):
         if self.using_mean_teacher_method and self._teacher_weights_directory_path is None:
             if self.mean_teacher_method_config.get('override_teacher_model_checkpoint_file_path') is not None:
-                self._teacher_weights_directory_path = self.mean_teacher_method_config.get('override_techer_model_checkpoint_file_path')
+                self._teacher_weights_directory_path = self.mean_teacher_method_config.get('override_teacher_model_checkpoint_file_path')
                 return self._teacher_weights_directory_path
 
             self._teacher_weights_directory_path = self._populate_path_template(os.path.dirname(self.mean_teacher_method_config['teacher_model_checkpoint_file_path']))
