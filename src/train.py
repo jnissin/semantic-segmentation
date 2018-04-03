@@ -11,6 +11,7 @@ import psutil
 
 import settings
 
+from enums import RunningMode
 from utils.multiprocessing_utils import MultiprocessingManager
 
 _EARLY_EXIT_SIGNAL_HANDLER_CALLED = multiprocessing.Value('i', 0)
@@ -96,7 +97,12 @@ def main():
     ap.add_argument('-w', '--wdir', required=False, type=str, help="Path to working directory")
     ap.add_argument('--maxjobs', required=False, type=int, help="Maximum number of parallel jobs (threads/processes)")
     ap.add_argument('--maxmemory', required=False, type=int, help="Maximum memory available to this and child processes (GB)")
+    ap.add_argument('--mode', required=False, type=str, default='train', choices=['train', 'test', 'validation'], help="Running mode: train, test or validation?")
     args = vars(ap.parse_args())
+
+    running_mode_str_to_enum = {'train': RunningMode.TRAINING,
+                                'validation': RunningMode.VALIDATION,
+                                'test': RunningMode.TEST}
 
     trainer_type = args['trainer']
     trainer_super_type = trainer_type.split('_')[0]
@@ -106,6 +112,7 @@ def main():
     model_folder_name = args['mfolder']
     max_jobs = args['maxjobs']
     max_memory = args['maxmemory']
+    running_mode = running_mode_str_to_enum[args['mode']]
 
     if settings.DEBUG:
         print 'RUNNING IN DEBUG MODE'
@@ -156,18 +163,28 @@ def main():
         _TRAINER = SegmentationTrainer(trainer_type=trainer_type,
                                        model_name=model_name,
                                        model_folder_name=model_folder_name,
-                                       config_file_path=trainer_config_file_path)
+                                       config_file_path=trainer_config_file_path,
+                                       running_mode=running_mode)
     elif trainer_super_type == 'classification':
         from trainers import ClassificationTrainer
 
         _TRAINER = ClassificationTrainer(trainer_type=trainer_type,
                                          model_name=model_name,
                                          model_folder_name=model_folder_name,
-                                         config_file_path=trainer_config_file_path)
+                                         config_file_path=trainer_config_file_path,
+                                         running_mode=running_mode)
     else:
         raise ValueError('Unsupported trainer type: {}'.format(trainer_type))
 
-    history = _TRAINER.train()
+    if running_mode == RunningMode.TRAINING:
+        history = _TRAINER.train()
+    elif running_mode == RunningMode.VALIDATION:
+        _TRAINER.validate()
+    elif running_mode == RunningMode.TEST:
+        _TRAINER.test()
+    else:
+        raise ValueError('Invalid running mode: {}'.format(running_mode))
+
     sys.exit(0)
 
 

@@ -53,6 +53,8 @@ class ExtendedModel(Model):
         self._training_enqueuer_pre_created = False
         self.validation_enqueuer = None
         self._validation_enqueuer_pre_created = False
+        self.test_enqueuer = None
+        self._test_enqueuer_pre_created = False
 
         try:
             self.logger = Logger.instance()
@@ -66,6 +68,10 @@ class ExtendedModel(Model):
     @property
     def validation_enqueuer_pre_created(self):
         return self._validation_enqueuer_pre_created and self.validation_enqueuer is not None
+
+    @property
+    def test_enqueuer_pre_created(self):
+        return self._test_enqueuer_pre_created and self.test_enqueuer is not None
 
     def stop_training_loop(self):
         self.fit_generator_stopped = True
@@ -111,6 +117,17 @@ class ExtendedModel(Model):
 
         self.validation_enqueuer = enqueuer
         self._validation_enqueuer_pre_created = enqueuer is not None
+
+    def set_pre_created_test_enqueuer(self, enqueuer):
+        # type: (SequenceEnqueuer) -> None
+
+        # Pre-create test enqueuer
+        if self.test_enqueuer is not None:
+            self.test_enqueuer.stop()
+            self.test_enqueuer = None
+
+        self.test_enqueuer = enqueuer
+        self._test_enqueuer_pre_created = enqueuer is not None
 
     def write_cfm_to_file(self, epoch, cfm_key, cfm, file_path=None):
         # type: (int, str, np.ndarray, str) -> None
@@ -232,6 +249,41 @@ class ExtendedModel(Model):
             raise e
 
         return validation_enqueuer
+
+    @staticmethod
+    def pre_create_test_enqueuer(generator,
+                                 use_multiprocessing,
+                                 workers,
+                                 max_queue_size,
+                                 random_seed):
+        # type: (Sequence, bool, int, int, int) -> SequenceEnqueuer
+        wait_time = 0.01  # in seconds
+        test_generator_is_sequence = isinstance(generator, Sequence)
+
+        test_enqueuer = None
+
+        try:
+            if test_generator_is_sequence:
+                test_enqueuer = OrderedEnqueuer(generator,
+                                                use_multiprocessing=use_multiprocessing,
+                                                shuffle=False,
+                                                initial_epoch=0,
+                                                max_epoch=None,
+                                                seed=random_seed)
+            else:
+                test_enqueuer = GeneratorEnqueuer(generator,
+                                                  use_multiprocessing=use_multiprocessing,
+                                                  wait_time=wait_time,
+                                                  seed=random_seed)
+
+            test_enqueuer.start(workers=workers, max_queue_size=max_queue_size, start_paused=True)
+        except Exception as e:
+            if test_enqueuer is not None:
+                test_enqueuer.stop()
+
+            raise e
+
+        return test_enqueuer
 
     def compile(self, optimizer, loss=None, metrics=None, loss_weights=None,
                 sample_weight_mode=None, weighted_metrics=None,
@@ -1120,6 +1172,7 @@ class ExtendedModel(Model):
                            workers=1,
                            use_multiprocessing=False,
                            validation=False,
+                           test=False,
                            trainer=None,
                            random_seed=None):
         """Evaluates the model on a data generator.
@@ -1184,13 +1237,20 @@ class ExtendedModel(Model):
                                  ' `keras.utils.Sequence` class.')
 
         if validation and not self.validation_enqueuer_pre_created and generator is None:
-            raise ValueError('Invalid generator passed - must either pass a valid generator or pre create the enqueuer')
+            raise ValueError('Invalid generator passed for validation - must either pass a valid generator or pre create the enqueuer')
+
+        if test and not self.test_enqueuer_pre_created and generator is None:
+            raise ValueError('Invalid generator passed for test - must either pass a valid generator or pre create the enqueuer')
 
         enqueuer = None
 
         try:
             if validation and self.validation_enqueuer_pre_created:
                 enqueuer = self.validation_enqueuer
+                enqueuer.continue_run()
+                output_generator = enqueuer.get()
+            elif test and self.test_enqueuer_pre_created:
+                enqueuer = self.test_enqueuer
                 enqueuer.continue_run()
                 output_generator = enqueuer.get()
             else:
@@ -1242,7 +1302,7 @@ class ExtendedModel(Model):
 
                 if trainer is not None:
                     s_time = time.time()
-                    x, y = trainer.modify_batch_data(steps_done, x, y, validation)
+                    x, y = trainer.modify_batch_data(steps_done, x, y, validation or test)
                     self.logger.debug_log('Call to modify_batch_data took: {} s'.format(time.time()-s_time))
 
                 s_time = time.time()
@@ -1270,6 +1330,8 @@ class ExtendedModel(Model):
         finally:
             if validation and self.validation_enqueuer_pre_created:
                 self.validation_enqueuer.pause_run()
+            if test and self.test_enqueuer_pre_created:
+                self.test_enqueuer.pause_run()
             else:
                 if enqueuer is not None:
                     enqueuer.stop()

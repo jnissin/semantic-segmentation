@@ -34,7 +34,7 @@ from callbacks.optimizer_checkpoint import OptimizerCheckpoint
 from callbacks.stepwise_learning_rate_scheduler import StepwiseLearningRateScheduler
 from generators import DataGenerator, SegmentationDataGenerator, MINCDataSet, ClassificationDataGenerator
 from generators import DataGeneratorParameters, SegmentationDataGeneratorParameters, DataAugmentationParameters
-from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ClassWeightType, MaterialSampleIterationMode
+from enums import BatchDataFormat, SuperpixelSegmentationFunctionType, ClassWeightType, MaterialSampleIterationMode, RunningMode
 
 from logger import Logger
 from data_set import LabeledImageDataSet, UnlabeledImageDataSet
@@ -167,8 +167,8 @@ class TrainerBase:
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, trainer_type, model_name, model_folder_name, config_file_path):
-        # type: (str, str, str, str) -> None
+    def __init__(self, trainer_type, model_name, model_folder_name, config_file_path, running_mode=RunningMode.TRAINING):
+        # type: (str, str, str, str, RunningMode) -> None
 
         """
         Initializes the trainer i.e. seeds random, loads material class information and
@@ -179,6 +179,7 @@ class TrainerBase:
             :param model_name: name of the NN model to instantiate
             :param model_folder_name: name of the model folder (for saving data)
             :param config_file_path: path to the configuration file
+            :param running_mode: running mode
         # Returns
             Nothing
         """
@@ -186,6 +187,7 @@ class TrainerBase:
         self.trainer_type = TrainerType[trainer_type.upper()]
         self.model_name = model_name
         self.model_folder_name = model_folder_name
+        self.running_mode = running_mode
         self._log_folder_path = None
         self.config = None
         self.logger = None
@@ -193,11 +195,14 @@ class TrainerBase:
         self.training_set_labeled = None
         self.training_set_unlabeled = None
         self.validation_set = None
+        self.test_set = None
         self.training_data_generator = None
         self.validation_data_generator = None
+        self.test_data_generator = None
         self.model_wrapper = None
         self._training_data_enqueuer = None
         self._validation_data_enqueuer = None
+        self._test_data_enqueuer = None
 
         self._model_optimizer_lr_scalers = None
         self._initial_epoch = None
@@ -227,6 +232,7 @@ class TrainerBase:
         self.logger.log('############################################################\n\n')
         self.logger.log('Using Keras version: {}'.format(keras.__version__))
         self.logger.log('Using Tensorflow version: {}'.format(K.tf.__version__))
+        self.logger.log('Running mode: {}'.format(self.running_mode))
 
         self.logger.log('Patching keras TF backend get_session function')
         tensorflow_backend.get_session = get_tf_session
@@ -263,14 +269,20 @@ class TrainerBase:
         self.data_augmentation_parameters = self._get_data_augmentation_parameters()
 
         # Initialize data sets
-        self.training_set_labeled, self.training_set_unlabeled, self.validation_set = self._get_data_sets()
+        self.training_set_labeled, self.training_set_unlabeled, self.validation_set, self.test_set = self._get_data_sets()
 
         # Initialize data generators
-        self.training_data_generator, self.validation_data_generator = self._get_data_generators()
+        self.training_data_generator, self.validation_data_generator, self.test_data_generator = self._get_data_generators()
 
         # Get the iterator references
-        self.training_data_iterator = self.training_data_generator.get_data_set_iterator()
-        self.validation_data_iterator = self.validation_data_generator.get_data_set_iterator()
+        if self.running_mode == RunningMode.TRAINING:
+            self.training_data_iterator = self.training_data_generator.get_data_set_iterator()
+
+        if self.running_mode == RunningMode.TRAINING or self.running_mode == RunningMode.VALIDATION:
+            self.validation_data_iterator = self.validation_data_generator.get_data_set_iterator()
+
+        if self.running_mode == RunningMode.TEST:
+            self.test_data_iterator = self.test_data_generator.get_data_set_iterator()
 
         # Pre-create the enqueuers before model creation
         self._pre_create_enqueuers()
@@ -396,22 +408,35 @@ class TrainerBase:
     def _pre_create_enqueuers(self):
         self.logger.log('Pre-creating enqueuer(s) to avoid copying Tensorflow computational graph during process creation')
 
-        self._training_data_enqueuer = ExtendedModel\
-            .pre_create_training_enqueuer(generator=self.training_data_iterator,
-                                          epochs=self.num_epochs,
-                                          initial_epoch=self.initial_epoch,
-                                          use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                          shuffle=True,
-                                          workers=self.num_training_data_generation_workers,
-                                          max_queue_size=self.training_data_max_queue_size,
-                                          random_seed=self.random_seed)
+        if self.running_mode == RunningMode.TRAINING:
+            self.logger.log('Pre-creating training data enqueuer')
+            self._training_data_enqueuer = ExtendedModel\
+                .pre_create_training_enqueuer(generator=self.training_data_iterator,
+                                              epochs=self.num_epochs,
+                                              initial_epoch=self.initial_epoch,
+                                              use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                              shuffle=True,
+                                              workers=self.num_training_data_generation_workers,
+                                              max_queue_size=self.training_data_max_queue_size,
+                                              random_seed=self.random_seed)
 
-        self._validation_data_enqueuer = ExtendedModel\
-            .pre_create_validation_enqueuer(generator=self.validation_data_iterator,
-                                            use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                            workers=self.num_validation_data_generation_workers,
-                                            max_queue_size=self.validation_data_max_queue_size,
-                                            random_seed=self.random_seed)
+        if self.running_mode == RunningMode.TRAINING or self.running_mode == RunningMode.VALIDATION:
+            self.logger.log('Pre-creating validation data enqueuer')
+            self._validation_data_enqueuer = ExtendedModel\
+                .pre_create_validation_enqueuer(generator=self.validation_data_iterator,
+                                                use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                                workers=self.num_validation_data_generation_workers,
+                                                max_queue_size=self.validation_data_max_queue_size,
+                                                random_seed=self.random_seed)
+
+        if self.running_mode == RunningMode.TEST:
+            self.logger.log('Pre-creating test data enqueuer')
+            self._test_data_enqueuer = ExtendedModel\
+                .pre_create_test_enqueuer(generator=self.test_data_iterator,
+                                          use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                          workers=self.num_test_data_generation_workers,
+                                          max_queue_size=self.test_data_max_queue_size,
+                                          random_seed=self.random_seed)
 
     def _init_model(self):
         # type: () -> ModelBase
@@ -444,7 +469,7 @@ class TrainerBase:
         if self.continue_from_last_checkpoint:
             self._load_latest_weights_for_model(self.model, self.model_checkpoint_directory)
 
-            if self.training_data_generator is None or self.training_data_iterator.num_steps_per_epoch < 1:
+            if self.running_mode == RunningMode.TRAINING and (self.training_data_generator is None or self.training_data_iterator.num_steps_per_epoch < 1):
                 raise ValueError('Cannot determine initial step - training data generator is not initialized')
 
         if self.use_transfer_weights:
@@ -460,6 +485,7 @@ class TrainerBase:
         # Set the pre-created enqueuers
         self.model.set_pre_created_training_enqueuer(self._training_data_enqueuer)
         self.model.set_pre_created_validation_enqueuer(self._validation_data_enqueuer)
+        self.model.set_pre_created_test_enqueuer(self._test_data_enqueuer)
 
         return self.model_wrapper
 
@@ -785,6 +811,11 @@ class TrainerBase:
         return min(settings.MAX_NUMBER_OF_JOBS, settings.VALIDATION_DATA_GENERATOR_WORKERS)
 
     @property
+    def num_test_data_generation_workers(self):
+        # type: () -> int
+        return min(settings.MAX_NUMBER_OF_JOBS, settings.TEST_DATA_GENERATOR_WORKERS)
+
+    @property
     def training_data_max_queue_size(self):
         # type: () -> int
         return settings.TRAINING_DATA_MAX_QUEUE_SIZE
@@ -793,6 +824,11 @@ class TrainerBase:
     def validation_data_max_queue_size(self):
         # type: () -> int
         return settings.VALIDATION_DATA_MAX_QUEUE_SIZE
+
+    @property
+    def test_data_max_queue_size(self):
+        # type: () -> int
+        return settings.TEST_DATA_MAX_QUEUE_SIZE
 
     @property
     def num_labeled_per_batch(self):
@@ -836,6 +872,23 @@ class TrainerBase:
         return self._get_config_value('validation_resize_shape')
 
     @property
+    def test_num_labeled_per_batch(self):
+        # type: () -> int
+        if settings.OVERRIDE_BATCH_SIZE:
+            return settings.OVERRIDE_NUM_LABELED_PER_BATCH
+        return int(self._get_config_value('test_num_labeled_per_batch'))
+
+    @property
+    def test_crop_shape(self):
+        # type: () -> list
+        return self._get_config_value('test_crop_shape')
+
+    @property
+    def test_resize_shape(self):
+        # type: () -> list
+        return self._get_config_value('test_resize_shape')
+
+    @property
     def model(self):
         # type: () -> ExtendedModel
         if self.model_wrapper is not None:
@@ -864,6 +917,17 @@ class TrainerBase:
             return settings.OVERRIDE_VALIDATION_STEPS_PER_EPOCH
 
         return self.validation_data_iterator.num_steps_per_epoch
+
+    @property
+    def test_steps_per_epoch(self):
+        # type: () -> int
+        if self.test_data_iterator is None:
+            raise ValueError('Test data iterator has not been initialized')
+
+        if settings.OVERRIDE_STEPS and settings.OVERRIDE_TEST_STEPS_PER_EPOCH is not None and settings.OVERRIDE_TEST_STEPS_PER_EPOCH > 0:
+            return settings.OVERRIDE_TEST_STEPS_PER_EPOCH
+
+        return self.test_data_iterator.num_steps_per_epoch
 
     def _load_config_json(self, path):
         with open(path) as f:
@@ -1168,10 +1232,13 @@ class TrainerBase:
         # Try to find weights from the checkpoint path
         if os.path.isdir(weights_directory_path):
             weights_folder_path = weights_directory_path
+            weight_files = dataset_utils.get_files(weights_folder_path)
+        # If the path already specifies an exact file
+        elif os.path.isfile(weights_directory_path) and (".hdf5" in weights_directory_path) and os.path.exists(weights_directory_path):
+            return weights_directory_path
         else:
             weights_folder_path = os.path.dirname(weights_directory_path)
-
-        weight_files = dataset_utils.get_files(weights_folder_path)
+            weight_files = dataset_utils.get_files(weights_folder_path)
 
         # Filter early stop if need be
         if not include_early_stop:
@@ -1285,6 +1352,10 @@ class TrainerBase:
     @property
     def model_checkpoint_directory(self):
         keras_model_checkpoint = self._get_config_value('keras_model_checkpoint')
+
+        if keras_model_checkpoint.get('override_checkpoint_file_path') is not None:
+            return keras_model_checkpoint.get('override_checkpoint_file_path')
+        
         keras_model_checkpoint_dir = self._populate_path_template(os.path.dirname(keras_model_checkpoint.get('checkpoint_file_path')))
         return keras_model_checkpoint_dir
 
@@ -1310,6 +1381,14 @@ class TrainerBase:
             self.logger.profile_log('Writing Tensorflow GraphDef to: {}'.format(os.path.join(graph_def_file_folder, "graph_def")))
             K.tf.train.write_graph(K.get_session().graph_def, graph_def_file_folder, "graph_def", as_text=True)
             self.logger.profile_log('Writing Tensorflow GraphDef complete')
+
+    @abstractmethod
+    def test(self):
+        self.logger.log('Starting test at local time: {}'.format(datetime.datetime.now()))
+
+    @abstractmethod
+    def validate(self):
+        self.logger.log('Starting validation at local time: {}'.format(datetime.datetime.now()))
 
     def modify_batch_data(self, step_index, x, y, validation=False):
         # type: (int, list, list, bool) -> (list, list)
@@ -1352,17 +1431,18 @@ class TrainerBase:
         if self.model is not None:
             self.model.stop_training_loop()
 
-        if not self.save_values_on_early_exit:
-            self.logger.log('Save values on early exit is disabled')
-            return
+        if self.running_mode == RunningMode.TRAINING:
+            if not self.save_values_on_early_exit:
+                self.logger.log('Save values on early exit is disabled')
+                return
 
-        # Save student model weights
-        self.logger.log('Saving model weights')
-        self.save_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
+            # Save student model weights
+            self.logger.log('Saving model weights')
+            self.save_model_weights(epoch_index=self.last_completed_epoch, val_loss=-1.0, file_extension='.early-stop')
 
-        # Save optimizer settings
-        self.logger.log('Saving model optimizer settings')
-        self.save_optimizer_settings(model=self.model, file_extension='.early-stop')
+            # Save optimizer settings
+            self.logger.log('Saving model optimizer settings')
+            self.save_optimizer_settings(model=self.model, file_extension='.early-stop')
 
     def save_model_weights(self, epoch_index, val_loss, file_extension=''):
         file_path = self._populate_path_template(self.model_checkpoint_file_path, epoch=epoch_index, val_loss=val_loss) + file_extension
@@ -1394,6 +1474,25 @@ class TrainerBase:
             self.logger.profile_log('Saving profiling data to: {}'.format(profiling_timeline_file_path))
             self.profiling_timeliner.save(profiling_timeline_file_path)
 
+    def parse_evaluation_metrics_to_string(self, evaluation_outs, model, epoch_index=0, prefix=""):
+        # type: (list, ExtendedModel, int, str) -> str
+
+        # Parse all validation metrics to a single string
+        evaluation_outs_str = ""
+
+        for i in range(0, len(evaluation_outs)):
+            metric_name = model.metrics_names[i]
+
+            if model.using_cfm_metric and metric_name in model.metrics_cfm:
+                model.write_cfm_to_file(epoch=epoch_index,
+                                        cfm_key=prefix + metric_name,
+                                        cfm=evaluation_outs[i])
+            else:
+                evaluation_outs_str = evaluation_outs_str + "{}{}: {}, ".format(prefix, metric_name, evaluation_outs[i])
+
+        evaluation_outs_str = evaluation_outs_str[0:-2]
+        return evaluation_outs_str
+
 
 #############################################
 # MEAN TEACHER TRAINER BASE
@@ -1403,14 +1502,18 @@ class MeanTeacherTrainerBase(TrainerBase):
 
     __metaclass__ = ABCMeta
 
-    def __init__(self, trainer_type, model_name, model_folder_name, config_file_path):
+    def __init__(self, trainer_type, model_name, model_folder_name, config_file_path, running_mode):
+        # type: (str, str, str, str, RunningMode) -> None
 
         # Declare instance variables
         self.teacher_model_wrapper = None
         self.teacher_validation_data_generator = None
         self.teacher_validation_data_iterator = None
+        self.teacher_test_data_generator = None
+        self.teacher_test_data_iterator = None
         self._teacher_model_optimizer_lr_scalers = None
         self._teacher_validation_data_enqueuer = None
+        self._teacher_test_data_enqueuer = None
 
         self._mean_teacher_method_config = None
         self._ema_smoothing_coefficient_function = None
@@ -1418,7 +1521,11 @@ class MeanTeacherTrainerBase(TrainerBase):
         self._teacher_weights_directory_path = None
         self._teacher_model_checkpoint_file_path = None
 
-        super(MeanTeacherTrainerBase, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
+        super(MeanTeacherTrainerBase, self).__init__(trainer_type=trainer_type,
+                                                     model_name=model_name,
+                                                     model_folder_name=model_folder_name,
+                                                     config_file_path=config_file_path,
+                                                     running_mode=running_mode)
 
         # Trigger property initializations - raise errors if properties don't exist
         if self.using_mean_teacher_method:
@@ -1432,17 +1539,31 @@ class MeanTeacherTrainerBase(TrainerBase):
             self.teacher_validation_data_generator = self._get_teacher_validation_data_generator()
             self.teacher_validation_data_iterator = self.teacher_validation_data_generator.get_data_set_iterator()
 
+            if self.running_mode == RunningMode.TEST:
+                self.teacher_test_data_generator = self._get_teacher_test_data_generator()
+                self.teacher_test_data_iterator = self.teacher_test_data_generator.get_data_set_iterator()
+
     def _pre_create_enqueuers(self):
         super(MeanTeacherTrainerBase, self)._pre_create_enqueuers()
 
         if self.using_mean_teacher_method:
-            self.logger.log('Pre-creating teacher validation enqueuer to avoid copying Tensorflow computational graph during process creation')
-            self._teacher_validation_data_enqueuer = ExtendedModel\
-                .pre_create_validation_enqueuer(generator=self.teacher_validation_data_iterator,
-                                                use_multiprocessing=settings.USE_MULTIPROCESSING,
-                                                workers=self.num_validation_data_generation_workers,
-                                                max_queue_size=self.validation_data_max_queue_size,
-                                                random_seed=self.random_seed)
+            if self.running_mode == RunningMode.TRAINING or self.running_mode == RunningMode.VALIDATION:
+                self.logger.log('Pre-creating teacher validation data enqueuer')
+                self._teacher_validation_data_enqueuer = ExtendedModel\
+                    .pre_create_validation_enqueuer(generator=self.teacher_validation_data_iterator,
+                                                    use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                                    workers=self.num_validation_data_generation_workers,
+                                                    max_queue_size=self.validation_data_max_queue_size,
+                                                    random_seed=self.random_seed)
+
+            if self.running_mode == RunningMode.TEST:
+                self.logger.log('Pre-creating teacher test data enqueuer')
+                self._teacher_validation_data_enqueuer = ExtendedModel\
+                    .pre_create_validation_enqueuer(generator=self.teacher_test_data_iterator,
+                                                    use_multiprocessing=settings.USE_MULTIPROCESSING,
+                                                    workers=self.num_test_data_generation_workers,
+                                                    max_queue_size=self.test_data_max_queue_size,
+                                                    random_seed=self.random_seed)
 
     def _init_model(self):
         parent_model = super(MeanTeacherTrainerBase, self)._init_model()
@@ -1477,6 +1598,9 @@ class MeanTeacherTrainerBase(TrainerBase):
 
             # Set the validation data enqueuer
             self.teacher_model.set_pre_created_validation_enqueuer(self._teacher_validation_data_enqueuer)
+
+            # Set the test data enqueuer
+            self.teacher_model.set_pre_created_test_enqueuer(self._teacher_test_data_enqueuer)
 
         return parent_model
 
@@ -1515,6 +1639,10 @@ class MeanTeacherTrainerBase(TrainerBase):
 
     @abstractmethod
     def _get_teacher_validation_data_generator(self):
+        pass
+
+    @abstractmethod
+    def _get_teacher_test_data_generator(self):
         pass
 
     @property
@@ -1565,6 +1693,17 @@ class MeanTeacherTrainerBase(TrainerBase):
         return self.teacher_validation_data_iterator.num_steps_per_epoch
 
     @property
+    def teacher_test_steps_per_epoch(self):
+        # type: () -> int
+        if self.teacher_validation_data_iterator is None:
+            raise ValueError('Teacher test data iterator has not been initialized')
+
+        if settings.OVERRIDE_STEPS and settings.OVERRIDE_TEST_STEPS_PER_EPOCH is not None and settings.OVERRIDE_TEST_STEPS_PER_EPOCH > 0:
+            return settings.OVERRIDE_TEST_STEPS_PER_EPOCH
+
+        return self.teacher_validation_data_iterator.num_steps_per_epoch
+
+    @property
     def ema_smoothing_coefficient_function(self):
         if self.using_mean_teacher_method and self._ema_smoothing_coefficient_function is None:
             ema_coefficient_schedule_function = self.mean_teacher_method_config['ema_smoothing_coefficient_function']
@@ -1585,6 +1724,10 @@ class MeanTeacherTrainerBase(TrainerBase):
     @property
     def teacher_weights_directory_path(self):
         if self.using_mean_teacher_method and self._teacher_weights_directory_path is None:
+            if self.mean_teacher_method_config.get('override_teacher_model_checkpoint_file_path') is not None:
+                self._teacher_weights_directory_path = self.mean_teacher_method_config.get('override_techer_model_checkpoint_file_path')
+                return self._teacher_weights_directory_path
+
             self._teacher_weights_directory_path = self._populate_path_template(os.path.dirname(self.mean_teacher_method_config['teacher_model_checkpoint_file_path']))
             self.logger.log('Teacher weights directory path: {}'.format(self._teacher_weights_directory_path))
 
@@ -1878,8 +2021,9 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                  trainer_type,
                  model_name,
                  model_folder_name,
-                 config_file_path):
-        # type: (str, str, str, str, str) -> ()
+                 config_file_path,
+                 running_mode):
+        # type: (str, str, str, str, RunningMode) -> ()
 
         # Declare instance variables
         self._label_generation_function = None
@@ -1888,12 +2032,17 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         self._class_weights = None
         self._training_data_generator_params = None
         self._validation_data_generator_params = None
+        self._test_data_generator_params = None
         self._superpixel_params = None
         self._superpixel_label_generation_function_type = SuperpixelSegmentationFunctionType.NONE
         self._superpixel_unlabeled_cost_coefficient_function = None
         self._material_sample_iteration_mode = None
 
-        super(SegmentationTrainer, self).__init__(trainer_type=trainer_type, model_name=model_name, model_folder_name=model_folder_name, config_file_path=config_file_path)
+        super(SegmentationTrainer, self).__init__(trainer_type=trainer_type,
+                                                  model_name=model_name,
+                                                  model_folder_name=model_folder_name,
+                                                  config_file_path=config_file_path,
+                                                  running_mode=running_mode)
 
         # Trigger property initializations - raise errors if don't exist
         if self.using_superpixel_method:
@@ -2117,6 +2266,36 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
         return self._validation_data_generator_params
 
     @property
+    def test_data_generator_params(self):
+        if self._test_data_generator_params is None:
+            self._test_data_generator_params = SegmentationDataGeneratorParameters(
+                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
+                material_class_information=self.material_class_information,
+                num_color_channels=self.num_color_channels,
+                name='test',
+                num_crop_reattempts=self.num_crop_reattempts,
+                random_seed=self.random_seed,
+                crop_shapes=self.test_crop_shape,
+                resize_shapes=self.test_resize_shape,
+                use_per_channel_mean_normalization=True,
+                per_channel_mean=self.per_channel_mean,
+                use_per_channel_stddev_normalization=True,
+                per_channel_stddev=self.per_channel_stddev,
+                use_data_augmentation=False,
+                use_material_samples=False,
+                use_selective_attention=False,
+                use_adaptive_sampling=False,
+                data_augmentation_params=None,
+                shuffle_data_after_epoch=True,
+                div2_constraint=self.div2_constraint,
+                generate_mean_teacher_data=False,
+                resized_image_cache_path=self.resized_image_cache_path,
+                superpixel_segmentation_function=SuperpixelSegmentationFunctionType.NONE,
+                superpixel_mask_cache_path=None)
+
+        return self._test_data_generator_params
+
+    @property
     def num_classes(self):
         return len(self.material_class_information)
 
@@ -2262,6 +2441,20 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                                              material_samples=self.data_set_information.validation_set.material_samples)
         self.logger.log('Labeled validation set creation took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
 
+        # Labeled test set
+        test_set = None
+
+        if self.running_mode == RunningMode.TEST:
+            self.logger.log('Creating test set')
+            stime = time.time()
+            test_set = LabeledImageDataSet('test_set',
+                                           path_to_photo_archive=self.path_to_labeled_photos,
+                                           path_to_mask_archive=self.path_to_labeled_masks,
+                                           photo_file_list=self.data_set_information.test_set.labeled_photos,
+                                           mask_file_list=self.data_set_information.test_set.labeled_masks,
+                                           material_samples=self.data_set_information.test_set.material_samples)
+            self.logger.log('Labeled test set creation took: {} s, size: {}'.format(time.time() - stime, test_set.size))
+
         if training_set_unlabeled is not None:
             total_data_set_size = training_set_labeled.size + training_set_unlabeled.size + validation_set.size
         else:
@@ -2269,7 +2462,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
         self.logger.log('Total data set size (training + val): {}'.format(total_data_set_size))
 
-        return training_set_labeled, training_set_unlabeled, validation_set
+        return training_set_labeled, training_set_unlabeled, validation_set, test_set
 
     def _get_data_generators(self):
         self.logger.log('Initializing data generators')
@@ -2301,6 +2494,19 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             params=self.validation_data_generator_params,
             class_weights=self.class_weights)
 
+        test_data_generator = None
+
+        if self.running_mode == RunningMode.TEST:
+            self.logger.log('Creating test data generator')
+
+            test_data_generator = SegmentationDataGenerator(
+                labeled_data_set=self.test_set,
+                unlabeled_data_set=None,
+                num_labeled_per_batch=self.test_num_labeled_per_batch,
+                num_unlabeled_per_batch=0,
+                params=self.test_data_generator_params,
+                class_weights=self.class_weights)
+
         self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
         self.logger.log('Using material samples: {}'.format(training_data_generator.use_material_samples))
         self.logger.log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
@@ -2308,7 +2514,7 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
 
         self._init_teacher_data_generators()
 
-        return training_data_generator, validation_data_generator
+        return training_data_generator, validation_data_generator, test_data_generator
 
     def _get_teacher_validation_data_generator(self):
         # Note: The teacher has a supervised batch data format for validation data generation
@@ -2328,6 +2534,27 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
                 params=teacher_validation_data_generator_params)
 
             return teacher_validation_data_generator
+
+        return None
+
+    def _get_teacher_test_data_generator(self):
+        # Note: The teacher has a supervised batch data format for validation data generation
+        # because it doesn't have the semi-supervised loss lambda layer since we need to predict with it
+        if self.using_mean_teacher_method:
+            self.logger.log('Creating teacher test data generator')
+
+            teacher_test_data_generator_params = self.test_data_generator_params
+            teacher_test_data_generator_params.batch_data_format = BatchDataFormat.SUPERVISED
+
+            teacher_test_data_generator = SegmentationDataGenerator(
+                labeled_data_set=self.test_set,
+                unlabeled_data_set=None,
+                num_labeled_per_batch=self.test_num_labeled_per_batch,
+                num_unlabeled_per_batch=0,
+                class_weights=self.class_weights,
+                params=teacher_test_data_generator_params)
+
+            return teacher_test_data_generator
 
         return None
 
@@ -2374,6 +2601,100 @@ class SegmentationTrainer(MeanTeacherTrainerBase):
             random_seed=self.random_seed)
 
         return history
+
+    def validate(self):
+        # type: () -> ()
+        super(SegmentationTrainer, self).validate()
+
+        validation_metrics = self.model.evaluate_generator(
+            generator=self.validation_data_iterator if not self.model.validation_enqueuer_pre_created else None,
+            steps=self.validation_steps_per_epoch,
+            max_queue_size=self.validation_data_max_queue_size,
+            workers=self.num_validation_data_generation_workers,
+            use_multiprocessing=settings.USE_MULTIPROCESSING,
+            validation=True,
+            trainer=self,
+            random_seed=self.random_seed)
+
+        self.logger.log('Validation run complete - parsing metrics')
+
+        validation_metrics_str = self.parse_evaluation_metrics_to_string(
+            evaluation_outs=validation_metrics,
+            model=self.model,
+            epoch_index=-1,
+            prefix='s_val_')
+
+        self.logger.log(validation_metrics_str)
+
+        if self.using_mean_teacher_method and self.teacher_model is not None:
+            self.logger.log('Starting validation run using the teacher model')
+
+            teacher_validation_metrics = self.teacher_model.evaluate_generator(
+                generator=self.teacher_validation_data_iterator if not self.teacher_model.validation_enqueuer_pre_created else None,
+                steps=self.teacher_validation_steps_per_epoch,
+                max_queue_size=self.validation_data_max_queue_size,
+                workers=self.num_validation_data_generation_workers,
+                use_multiprocessing=settings.USE_MULTIPROCESSING,
+                validation=True,
+                trainer=None,
+                random_seed=self.random_seed)
+
+            self.logger.log('Teacher validation run complete - parsing metrics')
+
+            teacher_validation_metrics_str = self.parse_evaluation_metrics_to_string(
+                evaluation_outs=teacher_validation_metrics,
+                model=self.teacher_model,
+                epoch_index=-1,
+                prefix='t_val_')
+
+            self.logger.log(teacher_validation_metrics_str)
+
+    def test(self):
+        # type: () -> ()
+        super(SegmentationTrainer, self).test()
+
+        test_metrics = self.model.evaluate_generator(
+            generator=self.test_data_iterator,
+            steps=self.test_steps_per_epoch,
+            max_queue_size=self.test_data_max_queue_size,
+            workers=self.num_test_data_generation_workers,
+            use_multiprocessing=settings.USE_MULTIPROCESSING,
+            test=True,
+            trainer=self,
+            random_seed=self.random_seed)
+
+        self.logger.log('Test run complete - parsing metrics')
+
+        test_metrics_str = self.parse_evaluation_metrics_to_string(
+            evaluation_outs=test_metrics,
+            model=self.model,
+            epoch_index=-1,
+            prefix='s_test_')
+
+        self.logger.log(test_metrics_str)
+
+        if self.using_mean_teacher_method and self.teacher_model is not None:
+            self.logger.log('Starting test run using the teacher model')
+
+            teacher_test_metrics = self.teacher_model.evaluate_generator(
+                generator=self.teacher_test_data_iterator if not self.teacher_model.test_enqueuer_pre_created else None,
+                steps=self.teacher_test_steps_per_epoch,
+                max_queue_size=self.test_data_max_queue_size,
+                workers=self.num_test_data_generation_workers,
+                use_multiprocessing=settings.USE_MULTIPROCESSING,
+                test=True,
+                trainer=None,
+                random_seed=self.random_seed)
+
+            self.logger.log('Teacher test run complete - parsing metrics')
+
+            teacher_test_metrics_str = self.parse_evaluation_metrics_to_string(
+                evaluation_outs=teacher_test_metrics,
+                model=self.teacher_model,
+                epoch_index=-1,
+                prefix='t_test_')
+
+            self.logger.log(teacher_test_metrics_str)
 
     def handle_early_exit(self):
         super(SegmentationTrainer, self).handle_early_exit()
@@ -2498,7 +2819,9 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                  trainer_type,
                  model_name,
                  model_folder_name,
-                 config_file_path):
+                 config_file_path,
+                 running_mode):
+        # type: (str, str, str, str, RunningMode) -> None
 
         # Declare instance variables
         self._classification_data_set_config = None
@@ -2506,11 +2829,13 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
         self._training_data_generator_params = None
         self._validation_data_generator_params = None
+        self._test_data_generator_params = None
 
         super(ClassificationTrainer, self).__init__(trainer_type=trainer_type,
                                                     model_name=model_name,
                                                     model_folder_name=model_folder_name,
-                                                    config_file_path=config_file_path)
+                                                    config_file_path=config_file_path,
+                                                    running_mode=running_mode)
 
     @property
     def path_to_labeled_photos(self):
@@ -2653,6 +2978,29 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
         return self._validation_data_generator_params
 
+    @property
+    def test_data_generator_params(self):
+        if self._test_data_generator_params is None:
+            self._test_data_generator_params = DataGeneratorParameters(
+                batch_data_format=BatchDataFormat.SEMI_SUPERVISED,
+                num_color_channels=self.num_color_channels,
+                name='test',
+                random_seed=self.random_seed,
+                crop_shapes=self.test_crop_shape,
+                resize_shapes=self.test_resize_shape,
+                use_per_channel_mean_normalization=True,
+                per_channel_mean=self.per_channel_mean,
+                use_per_channel_stddev_normalization=True,
+                per_channel_stddev=self.per_channel_stddev,
+                use_data_augmentation=False,
+                data_augmentation_params=None,
+                shuffle_data_after_epoch=True,
+                div2_constraint=self.div2_constraint,
+                generate_mean_teacher_data=False,
+                resized_image_cache_path=self.resized_image_cache_path)
+
+        return self._test_data_generator_params
+
     # TrainerBase implementations
 
     @property
@@ -2710,7 +3058,18 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                                      data_set_file_path=self.path_to_validation_set_file)
         self.logger.log('Validation set construction took: {} s, size: {}'.format(time.time()-stime, validation_set.size))
 
-        return training_set_labeled, training_set_unlabeled, validation_set
+        test_set = None
+
+        if self.running_mode == RunningMode.TEST:
+            self.logger.log('Creating test set')
+            stime = time.time()
+            test_set = MINCDataSet(name='test_set',
+                                   path_to_photo_archive=self.path_to_labeled_photos,
+                                   label_mappings_file_path=self.path_to_label_mapping_file,
+                                   data_set_file_path=self.path_to_test_set_file)
+            self.logger.log('Test set construction took: {} s, size: {}'.format(time.time()-stime, test_set.size))
+
+        return training_set_labeled, training_set_unlabeled, validation_set, test_set
 
     def _get_data_generators(self):
         # type: () -> (DataGenerator, DataGenerator)
@@ -2742,13 +3101,24 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                                                                 class_weights=self.class_weights,
                                                                 params=self.validation_data_generator_params)
 
+        test_data_generator = None
+
+        if self.running_mode == RunningMode.TEST:
+            self.logger.log('Creating test data generator')
+            test_data_generator = ClassificationDataGenerator(labeled_data_set=self.test_set,
+                                                              unlabeled_data_set=None,
+                                                              num_labeled_per_batch=self.test_num_labeled_per_batch,
+                                                              num_unlabeled_per_batch=0,
+                                                              class_weights=self.class_weights,
+                                                              params=self.test_data_generator_params)
+
         self.logger.log('Using unlabeled training data: {}'.format(self.using_unlabeled_training_data))
         self.logger.log('Using per-channel mean: {}'.format(training_data_generator.per_channel_mean))
         self.logger.log('Using per-channel stddev: {}'.format(training_data_generator.per_channel_stddev))
 
         self._init_teacher_data_generators()
 
-        return training_data_generator, validation_data_generator
+        return training_data_generator, validation_data_generator, test_data_generator
 
     @property
     def num_classes(self):
@@ -2804,6 +3174,100 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
 
         return history
 
+    def validate(self):
+        # type: () -> ()
+        super(ClassificationTrainer, self).validate()
+
+        validation_metrics = self.model.evaluate_generator(
+            generator=self.validation_data_iterator if not self.model.validation_enqueuer_pre_created else None,
+            steps=self.validation_steps_per_epoch,
+            max_queue_size=self.validation_data_max_queue_size,
+            workers=self.num_validation_data_generation_workers,
+            use_multiprocessing=settings.USE_MULTIPROCESSING,
+            validation=True,
+            trainer=self,
+            random_seed=self.random_seed)
+
+        self.logger.log('Validation run complete - parsing metrics')
+
+        validation_metrics_str = self.parse_evaluation_metrics_to_string(
+            evaluation_outs=validation_metrics,
+            model=self.model,
+            epoch_index=-1,
+            prefix='s_val_')
+
+        self.logger.log(validation_metrics_str)
+
+        if self.using_mean_teacher_method and self.teacher_model is not None:
+            self.logger.log('Starting validation run using the teacher model')
+
+            teacher_validation_metrics = self.teacher_model.evaluate_generator(
+                generator=self.teacher_validation_data_iterator if not self.teacher_model.validation_enqueuer_pre_created else None,
+                steps=self.teacher_validation_steps_per_epoch,
+                max_queue_size=self.validation_data_max_queue_size,
+                workers=self.num_validation_data_generation_workers,
+                use_multiprocessing=settings.USE_MULTIPROCESSING,
+                validation=True,
+                trainer=None,
+                random_seed=self.random_seed)
+
+            self.logger.log('Teacher validation run complete - parsing metrics')
+
+            teacher_validation_metrics_str = self.parse_evaluation_metrics_to_string(
+                evaluation_outs=teacher_validation_metrics,
+                model=self.teacher_model,
+                epoch_index=-1,
+                prefix='t_val_')
+
+            self.logger.log(teacher_validation_metrics_str)
+
+    def test(self):
+        # type: () -> ()
+        super(ClassificationTrainer, self).test()
+
+        test_metrics = self.model.evaluate_generator(
+            generator=self.test_data_iterator if not self.model.test_enqueuer_pre_created else None,
+            steps=self.test_steps_per_epoch,
+            max_queue_size=self.test_data_max_queue_size,
+            workers=self.num_test_data_generation_workers,
+            use_multiprocessing=settings.USE_MULTIPROCESSING,
+            test=True,
+            trainer=self,
+            random_seed=self.random_seed)
+
+        self.logger.log('Test run complete - parsing metrics')
+
+        test_metrics_str = self.parse_evaluation_metrics_to_string(
+            evaluation_outs=test_metrics,
+            model=self.model,
+            epoch_index=-1,
+            prefix='s_test_')
+
+        self.logger.log(test_metrics_str)
+
+        if self.using_mean_teacher_method and self.teacher_model is not None:
+            self.logger.log('Starting test run using the teacher model')
+
+            teacher_test_metrics = self.teacher_model.evaluate_generator(
+                generator=self.teacher_test_data_iterator if not self.teacher_model.test_enqueuer_pre_created else None,
+                steps=self.teacher_test_steps_per_epoch,
+                max_queue_size=self.test_data_max_queue_size,
+                workers=self.num_test_data_generation_workers,
+                use_multiprocessing=settings.USE_MULTIPROCESSING,
+                test=True,
+                trainer=None,
+                random_seed=self.random_seed)
+
+            self.logger.log('Teacher test run complete - parsing metrics')
+
+            teacher_test_metrics_str = self.parse_evaluation_metrics_to_string(
+                evaluation_outs=teacher_test_metrics,
+                model=self.teacher_model,
+                epoch_index=-1,
+                prefix='t_test_')
+
+            self.logger.log(teacher_test_metrics_str)
+
     def _get_model_lambda_loss_type(self):
         # type: () -> ModelLambdaLossType
         if self.trainer_type == TrainerType.CLASSIFICATION_SUPERVISED:
@@ -2848,6 +3312,23 @@ class ClassificationTrainer(MeanTeacherTrainerBase):
                                                                             params=teacher_validation_data_generator_params)
 
             return teacher_validation_data_generator
+
+        return None
+
+    def _get_teacher_test_data_generator(self):
+        if self.using_mean_teacher_method:
+
+            teacher_test_data_generator_params = self.test_data_generator_params
+            teacher_test_data_generator_params.batch_data_format = BatchDataFormat.SUPERVISED
+
+            teacher_test_data_generator = ClassificationDataGenerator(labeled_data_set=self.validation_set,
+                                                                      unlabeled_data_set=None,
+                                                                      num_labeled_per_batch=self.validation_num_labeled_per_batch,
+                                                                      num_unlabeled_per_batch=0,
+                                                                      class_weights=self.class_weights,
+                                                                      params=teacher_test_data_generator_params)
+
+            return teacher_test_data_generator
 
         return None
 

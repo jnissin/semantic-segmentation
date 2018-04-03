@@ -39,3 +39,9 @@ class MaterialSampleIterationMode(Enum):
     UNIFORM_MIN = 1     # Sample each material class uniformly. Set the number of steps per epoch according to min class num samples.
     UNIFORM_MEAN = 2    # Sample each class uniformly. Set the number of steps per epoch according to mean samples per class.
     UNIQUE = 3          # Iterate through all the unique samples once within epoch - means no balancing
+
+
+class RunningMode(Enum):
+    TRAINING = 0
+    VALIDATION = 1
+    TEST = 2
