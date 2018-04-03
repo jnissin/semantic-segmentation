@@ -1217,7 +1217,9 @@ class ExtendedModel(Model):
         wait_time = 0.01
         all_outs = []
         batch_sizes = []
-        is_sequence_or_pre_created_enq = isinstance(generator, Sequence) or (validation and isinstance(self.validation_enqueuer, SequenceEnqueuer))
+        is_sequence_or_pre_created_enq = isinstance(generator, Sequence) or\
+                                         (validation and isinstance(self.validation_enqueuer, SequenceEnqueuer)) or\
+                                         (test and isinstance(self.test_enqueuer, SequenceEnqueuer))
 
         if not is_sequence_or_pre_created_enq and use_multiprocessing and workers > 1:
             warnings.warn(
