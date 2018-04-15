@@ -704,7 +704,13 @@ class DataGenerator(object):
 
         if img_height_div2 < self.div2_constraint or img_width_div2 < self.div2_constraint:
             target_shape = dataset_utils.get_required_image_dimensions((img.height, img.width), self.div2_constraint)
-            img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
+
+            # If one of the dimensions needs to stay the same - only use padding
+            if target_shape[0] == img.height or target_shape[1] == img.width:
+                img = image_utils.pil_pad_image_to_shape(img, shape=target_shape, cval=cval)
+            # Otherwise resize and pad
+            else:
+                img = image_utils.pil_resize_image_with_padding(img, shape=target_shape, cval=cval, interp=interp)
 
         return img
 
